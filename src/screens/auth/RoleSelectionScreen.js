@@ -100,7 +100,7 @@ const RoleSelectionScreen = ({ navigation }) => {
             !selectedRole && styles.continueButtonDisabled
           ]}
           disabled={!selectedRole}
-          onPress={() => console.log('Continue with role:', selectedRole)}
+          onPress={() => navigation.navigate('Register', { role: selectedRole })}
         >
           <Text style={styles.continueButtonText}>
             {selectedRole ? 'Continue' : 'Select a role to continue'}
