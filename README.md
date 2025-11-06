@@ -293,7 +293,7 @@ This is a course project for CS407 Mobile App Development at UW-Madison.
 
 ---
 
-**Project Repository:** [GitHub Link]
+**Project Repository:** [[GitHub Link]](https://github.com/singhgurraj/ninofi)
 
 ---
 
