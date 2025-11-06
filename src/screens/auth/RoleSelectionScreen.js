@@ -1,130 +1,101 @@
-import { useState } from 'react';
-import {
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
-} from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useDispatch } from 'react-redux';
+import { setRole } from '../../store/authSlice';
 
 const RoleSelectionScreen = ({ navigation }) => {
-  const [selectedRole, setSelectedRole] = useState(null);
+  const dispatch = useDispatch();
 
   const roles = [
     {
       id: 'homeowner',
       title: 'Homeowner',
-      icon: '🏠',
       description: 'Manage renovation projects, fund escrow accounts, and approve milestone payments',
+      icon: 'home',
       benefits: ['Secure payments', 'Verified contractors'],
       color: '#4CAF50',
     },
     {
       id: 'contractor',
       title: 'Contractor',
-      icon: '👷',
       description: 'Find projects, manage teams, submit milestones, and receive guaranteed payments',
+      icon: 'hard-hat',
       benefits: ['Reliable payments', 'Project management'],
       color: '#2196F3',
     },
     {
       id: 'worker',
       title: 'Worker',
-      icon: '🔨',
       description: 'Browse available gigs, work on projects, and get paid for completed tasks',
+      icon: 'hammer',
       benefits: ['Quick gigs', 'Fair compensation'],
       color: '#FF9800',
     },
   ];
 
-  const handleRoleSelect = (roleId) => {
-    setSelectedRole(roleId);
-    console.log('Selected role:', roleId);
+  const selectRole = (role) => {
+    dispatch(setRole(role));
+    navigation.navigate('Register', { role });
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-        >
-            <Text style={styles.backText}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Choose Your Role</Text>
-          <Text style={styles.subtitle}>
-            Select how you'll be using NINOFI to get started
-          </Text>
-        </View>
-
-        <View style={styles.rolesContainer}>
-          {roles.map((role) => (
-            <TouchableOpacity
-              key={role.id}
-              style={[
-                styles.roleCard,
-                selectedRole === role.id && styles.roleCardSelected,
-                { borderColor: selectedRole === role.id ? role.color : '#E0E0E0' }
-              ]}
-              onPress={() => handleRoleSelect(role.id)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.roleHeader}>
-                <Text style={styles.roleIcon}>{role.icon}</Text>
-                <Text style={styles.roleTitle}>{role.title}</Text>
-                {selectedRole === role.id && (
-                  <View style={[styles.checkmark, { backgroundColor: role.color }]}>
-                    <Text style={styles.checkmarkText}>✓</Text>
-                  </View>
-                )}
-              </View>
-              
-              <Text style={styles.roleDescription}>{role.description}</Text>
-              
-              <View style={styles.benefitsContainer}>
-                {role.benefits.map((benefit, index) => (
-                  <View key={index} style={styles.benefit}>
-                    <Text style={styles.benefitText}>• {benefit}</Text>
-                  </View>
-                ))}
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
+    <View style={styles.container}>
+      <View style={styles.header}>
         <TouchableOpacity 
-          style={[
-            styles.continueButton,
-            !selectedRole && styles.continueButtonDisabled
-          ]}
-          disabled={!selectedRole}
-          onPress={() => navigation.navigate('Register', { role: selectedRole })}
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
         >
-          <Text style={styles.continueButtonText}>
-            {selectedRole ? 'Continue' : 'Select a role to continue'}
-          </Text>
+          <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
+      </View>
 
-        <TouchableOpacity style={styles.linkButton}>
-          <Text style={styles.linkText}>
-            Already have an account? Sign in
-          </Text>
+      <Text style={styles.title}>Choose Your Role</Text>
+      <Text style={styles.subtitle}>
+        Select how you'll be using NINOFI to get started
+      </Text>
+
+      {roles.map((role) => (
+        <TouchableOpacity
+          key={role.id}
+          style={[styles.roleCard, { borderLeftColor: role.color }]}
+          onPress={() => selectRole(role.id)}
+        >
+          <View style={styles.roleHeader}>
+            <Icon name={role.icon} size={40} color={role.color} />
+            <Text style={styles.roleTitle}>{role.title}</Text>
+          </View>
+          <Text style={styles.roleDescription}>{role.description}</Text>
+          <View style={styles.benefits}>
+            {role.benefits.map((benefit, index) => (
+              <Text key={index} style={styles.benefit}>
+                • {benefit}
+              </Text>
+            ))}
+          </View>
         </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+      ))}
+
+      <TouchableOpacity 
+        onPress={() => navigation.navigate('Login')}
+        style={styles.loginButton}
+      >
+        <Text style={styles.loginLink}>
+          Already have an account? Sign in
+        </Text>
+      </TouchableOpacity>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    padding: 20,
+    backgroundColor: '#f5f5f5',
   },
   header: {
-    padding: 20,
-    paddingTop: 10,
+    marginBottom: 10,
   },
   backButton: {
     width: 40,
@@ -138,104 +109,62 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginTop: 10,
     marginBottom: 10,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
     color: '#666',
-    lineHeight: 24,
-  },
-  rolesContainer: {
-    padding: 20,
-    paddingTop: 0,
+    marginBottom: 30,
+    textAlign: 'center',
   },
   roleCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: '#fff',
     padding: 20,
-    marginBottom: 16,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
+    marginBottom: 15,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    elevation: 2,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  roleCardSelected: {
-    backgroundColor: '#F5F9FF',
+    shadowRadius: 4,
   },
   roleHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  roleIcon: {
-    fontSize: 32,
-    marginRight: 12,
+    marginBottom: 10,
   },
   roleTitle: {
     fontSize: 20,
     fontWeight: '600',
-    flex: 1,
-  },
-  checkmark: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkmarkText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: 'bold',
+    marginLeft: 15,
   },
   roleDescription: {
     fontSize: 14,
     color: '#666',
+    marginBottom: 10,
     lineHeight: 20,
-    marginBottom: 12,
   },
-  benefitsContainer: {
+  benefits: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   benefit: {
-    marginRight: 16,
-  },
-  benefitText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#888',
+    marginRight: 15,
   },
-  continueButton: {
-    backgroundColor: '#1976D2',
-    margin: 20,
-    paddingVertical: 16,
-    borderRadius: 8,
+  loginButton: {
+    marginTop: 20,
+    padding: 15,
     alignItems: 'center',
   },
-  continueButtonDisabled: {
-    backgroundColor: '#CCCCCC',
-  },
-  continueButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  linkButton: {
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    alignItems: 'center',
-  },
-  linkText: {
-    color: '#1976D2',
-    fontSize: 14,
+  loginLink: {
     textAlign: 'center',
+    color: '#2196F3',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });
 

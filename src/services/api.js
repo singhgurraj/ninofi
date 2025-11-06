@@ -44,6 +44,9 @@ api.interceptors.response.use(
   }
 );
 
+// In-memory store for mock users (temporary until backend is built)
+const mockUsers = {};
+
 // Auth API calls
 export const authAPI = {
   login: async (email, password) => {
@@ -51,19 +54,41 @@ export const authAPI = {
     // return api.post('/auth/login', { email, password });
     
     // Mock response for now
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       setTimeout(() => {
-        resolve({
-          data: {
-            user: {
-              id: '1',
-              email,
-              fullName: 'Test User',
-              role: 'homeowner',
+        // Check if user exists in our mock store
+        const user = mockUsers[email];
+        
+        if (user && user.password === password) {
+          // User exists and password matches
+          resolve({
+            data: {
+              user: {
+                id: user.id,
+                email: user.email,
+                fullName: user.fullName,
+                role: user.role,
+              },
+              token: 'mock-jwt-token-' + Date.now(),
             },
-            token: 'mock-jwt-token-12345',
-          },
-        });
+          });
+        } else if (user) {
+          // User exists but wrong password
+          reject(new Error('Invalid password'));
+        } else {
+          // User doesn't exist - create default homeowner for demo
+          resolve({
+            data: {
+              user: {
+                id: '1',
+                email,
+                fullName: email.split('@')[0],
+                role: 'homeowner',
+              },
+              token: 'mock-jwt-token-' + Date.now(),
+            },
+          });
+        }
       }, 1000);
     });
   },
@@ -73,17 +98,38 @@ export const authAPI = {
     // return api.post('/auth/register', userData);
     
     // Mock response for now
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       setTimeout(() => {
+        // Check if user already exists
+        if (mockUsers[userData.email]) {
+          reject(new Error('User already exists'));
+          return;
+        }
+
+        // Create new user
+        const newUser = {
+          id: Date.now().toString(),
+          email: userData.email,
+          fullName: userData.fullName,
+          role: userData.role || 'homeowner',
+          password: userData.password, // Store password for mock login
+        };
+
+        // Save to mock store
+        mockUsers[userData.email] = newUser;
+
+        console.log('Registered user:', newUser.email, 'as', newUser.role);
+        console.log('All users:', Object.keys(mockUsers));
+
         resolve({
           data: {
             user: {
-              id: '1',
-              email: userData.email,
-              fullName: userData.fullName,
-              role: userData.role || 'homeowner',
+              id: newUser.id,
+              email: newUser.email,
+              fullName: newUser.fullName,
+              role: newUser.role,
             },
-            token: 'mock-jwt-token-12345',
+            token: 'mock-jwt-token-' + Date.now(),
           },
         });
       }, 1000);
