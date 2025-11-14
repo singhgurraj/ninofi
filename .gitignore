@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+.expo-shared/
+.DS_Store
+.env*
+coverage/
+yarn.lock
+npm-debug.log*
+.vscode/
+expo-env.d.ts
