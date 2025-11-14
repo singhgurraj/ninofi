@@ -16,6 +16,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { register } from '../../services/auth';
+import palette from '../../styles/palette';
 
 const RegisterScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
@@ -420,7 +421,7 @@ const RegisterScreen = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.background,
   },
   keyboardView: {
     flex: 1,
@@ -456,7 +457,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   headerLink: {
-    color: '#1976D2',
+    color: palette.primary,
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 6,
@@ -474,7 +475,7 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 24,
-    color: '#333',
+    color: palette.text,
   },
   backTextSmall: {
     fontSize: 22,
@@ -489,6 +490,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     textAlign: 'center',
     alignSelf: 'stretch',
+    color: palette.text,
   },
   titleSmall: {
     fontSize: 28,
@@ -502,7 +504,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: palette.muted,
   },
   subtitleSmall: {
     fontSize: 15,
@@ -514,6 +516,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 0,
+    backgroundColor: 'transparent',
   },
   formSmall: {
     paddingHorizontal: 16,
@@ -538,7 +541,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     marginBottom: 8,
-    color: '#333',
+    color: palette.text,
   },
   labelSmall: {
     fontSize: 15,
@@ -550,11 +553,12 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
     borderRadius: 8,
     padding: 15,
     fontSize: 16,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F9F6FF',
+    color: palette.text,
   },
   inputSmall: {
     padding: 13,
@@ -568,9 +572,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
     borderRadius: 8,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F9F6FF',
   },
   passwordContainerSmall: {
     borderRadius: 6,
@@ -602,6 +606,7 @@ const styles = StyleSheet.create({
   },
   eyeText: {
     fontSize: 20,
+    color: palette.muted,
   },
   eyeTextSmall: {
     fontSize: 18,
@@ -637,7 +642,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderWidth: 2,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
     borderRadius: 4,
     marginRight: 10,
     alignItems: 'center',
@@ -652,8 +657,8 @@ const styles = StyleSheet.create({
     height: 20,
   },
   checkboxChecked: {
-    backgroundColor: '#1976D2',
-    borderColor: '#1976D2',
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   checkmark: {
     color: '#FFFFFF',
@@ -669,7 +674,7 @@ const styles = StyleSheet.create({
   checkboxText: {
     flex: 1,
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
     lineHeight: 20,
   },
   checkboxTextSmall: {
@@ -681,11 +686,11 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   link: {
-    color: '#1976D2',
+    color: palette.primary,
     fontWeight: '500',
   },
   registerButton: {
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     paddingVertical: 16,
     borderRadius: 8,
     alignItems: 'center',
@@ -700,7 +705,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   registerButtonDisabled: {
-    backgroundColor: '#CCCCCC',
+    backgroundColor: '#CBB5FF',
   },
   registerButtonText: {
     color: '#FFFFFF',
