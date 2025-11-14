@@ -10,6 +10,7 @@ import {
     TextInput,
     TouchableOpacity,
     View,
+    Image,
     useWindowDimensions
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -221,11 +222,9 @@ const LoginScreen = ({ navigation }) => {
               ]}
               disabled={isLoading}
             >
-              <Text style={[
-                styles.socialIcon,
-                isSmallScreen && styles.socialIconSmall,
-                isExtraSmallScreen && styles.socialIconExtraSmall
-              ]}>🍎</Text>
+              <View style={styles.socialIconWrap}>
+                <Image source={require('../../../assets/images/747.png')} style={styles.socialLogo} />
+              </View>
               <Text style={[
                 styles.socialButtonText,
                 isSmallScreen && styles.socialButtonTextSmall,
@@ -241,11 +240,9 @@ const LoginScreen = ({ navigation }) => {
               ]}
               disabled={isLoading}
             >
-              <Text style={[
-                styles.socialIcon,
-                isSmallScreen && styles.socialIconSmall,
-                isExtraSmallScreen && styles.socialIconExtraSmall
-              ]}>🔵</Text>
+              <View style={[styles.socialIconWrap, styles.googleIconOffset]}>
+                <Image source={require('../../../assets/images/google.png')} style={styles.socialLogo} />
+              </View>
               <Text style={[
                 styles.socialButtonText,
                 isSmallScreen && styles.socialButtonTextSmall,
@@ -544,6 +541,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginBottom: 8,
   },
+  socialIconWrap: {
+    width: 32,
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  googleIconOffset: {
+    marginRight: 4,
+  },
   socialIcon: {
     fontSize: 20,
     marginRight: 10,
@@ -555,6 +560,12 @@ const styles = StyleSheet.create({
   socialIconExtraSmall: {
     fontSize: 16,
     marginRight: 6,
+  },
+  socialLogo: {
+    width: 24,
+    height: 24,
+    marginRight: 10,
+    resizeMode: 'contain',
   },
   socialButtonText: {
     fontSize: 16,
