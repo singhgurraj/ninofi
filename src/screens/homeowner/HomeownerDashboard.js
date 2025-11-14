@@ -7,22 +7,16 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
+import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { logout } from '../../services/auth';
 
 const HomeownerDashboard = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const { projects } = useSelector((state) => state.projects);
-  const dispatch = useDispatch();
 
   const stats = {
     activeProjects: projects?.length || 0,
     inEscrow: projects?.reduce((sum, project) => sum + (project.budget || 0), 0),
-  };
-
-  const handleLogout = async () => {
-    await dispatch(logout());
   };
 
   return (
@@ -37,12 +31,6 @@ const HomeownerDashboard = ({ navigation }) => {
           <View style={styles.headerButtons}>
             <TouchableOpacity style={styles.notificationButton}>
               <Text style={styles.notificationIcon}>🔔</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.notificationButton}
-              onPress={handleLogout}
-            >
-              <Text style={styles.notificationIcon}>🚪</Text>
             </TouchableOpacity>
           </View>
         </View>

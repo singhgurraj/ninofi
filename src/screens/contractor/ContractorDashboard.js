@@ -6,14 +6,11 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
+import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { logout } from '../../services/auth';
 
 const ContractorDashboard = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
-  const dispatch = useDispatch();
-
   // Mock data
   const stats = {
     earnings: 8450,
@@ -44,10 +41,6 @@ const ContractorDashboard = ({ navigation }) => {
     },
   ];
 
-  const handleLogout = async () => {
-    await dispatch(logout());
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -60,12 +53,6 @@ const ContractorDashboard = ({ navigation }) => {
           <View style={styles.headerButtons}>
             <TouchableOpacity style={styles.notificationButton}>
               <Text style={styles.notificationIcon}>🔔</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.notificationButton}
-              onPress={handleLogout}
-            >
-              <Text style={styles.notificationIcon}>🚪</Text>
             </TouchableOpacity>
           </View>
         </View>
