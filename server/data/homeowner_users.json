@@ -1,0 +1,17 @@
+[
+  {
+    "fullName": "Test User",
+    "email": "test@example.com",
+    "phone": "1234567890",
+    "role": "homeowner"
+  },
+  {
+    "fullName": "Jack Mack",
+    "email": "a;sklfja;sldkfj@gmail.com",
+    "phone": "1234920303",
+    "password": "oasjdf;laksjdf;laksjdf",
+    "confirmPassword": "oasjdf;laksjdf;laksjdf",
+    "role": "homeowner",
+    "registrationDate": "2025-11-14T20:10:47.480Z"
+  }
+]
