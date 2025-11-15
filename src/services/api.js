@@ -1,7 +1,23 @@
+import Constants from 'expo-constants';
 import axios from 'axios';
 
-// TODO: Replace with your actual backend URL
-const API_BASE_URL = 'http://localhost:5000/api';
+const resolveBaseUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+
+  const host =
+    Constants.expoConfig?.hostUri?.split(':')[0] ||
+    Constants.manifest?.debuggerHost?.split(':')[0];
+
+  if (host) {
+    return `http://${host}:3001/api`;
+  }
+
+  return 'http://127.0.0.1:3001/api';
+};
+
+const API_BASE_URL = resolveBaseUrl();
 
 // Create axios instance
 const api = axios.create({
@@ -44,101 +60,16 @@ api.interceptors.response.use(
   }
 );
 
-// In-memory store for mock users (temporary until backend is built)
-const mockUsers = {};
-
-// Auth API calls
 export const authAPI = {
   login: async (email, password) => {
-    // TODO: Connect to actual backend
-    // return api.post('/auth/login', { email, password });
-    
-    // Mock response for now
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        // Check if user exists in our mock store
-        const user = mockUsers[email];
-        
-        if (user && user.password === password) {
-          // User exists and password matches
-          resolve({
-            data: {
-              user: {
-                id: user.id,
-                email: user.email,
-                fullName: user.fullName,
-                role: user.role,
-              },
-              token: 'mock-jwt-token-' + Date.now(),
-            },
-          });
-        } else if (user) {
-          // User exists but wrong password
-          reject(new Error('Invalid password'));
-        } else {
-          // User doesn't exist - create default homeowner for demo
-          resolve({
-            data: {
-              user: {
-                id: '1',
-                email,
-                fullName: email.split('@')[0],
-                role: 'homeowner',
-              },
-              token: 'mock-jwt-token-' + Date.now(),
-            },
-          });
-        }
-      }, 1000);
-    });
+    return api.post('/auth/login', { email, password });
   },
 
   register: async (userData) => {
-    // TODO: Connect to actual backend
-    // return api.post('/auth/register', userData);
-    
-    // Mock response for now
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        // Check if user already exists
-        if (mockUsers[userData.email]) {
-          reject(new Error('User already exists'));
-          return;
-        }
-
-        // Create new user
-        const newUser = {
-          id: Date.now().toString(),
-          email: userData.email,
-          fullName: userData.fullName,
-          role: userData.role || 'homeowner',
-          password: userData.password, // Store password for mock login
-        };
-
-        // Save to mock store
-        mockUsers[userData.email] = newUser;
-
-        console.log('Registered user:', newUser.email, 'as', newUser.role);
-        console.log('All users:', Object.keys(mockUsers));
-
-        resolve({
-          data: {
-            user: {
-              id: newUser.id,
-              email: newUser.email,
-              fullName: newUser.fullName,
-              role: newUser.role,
-            },
-            token: 'mock-jwt-token-' + Date.now(),
-          },
-        });
-      }, 1000);
-    });
+    return api.post('/auth/register', userData);
   },
 
   logout: async () => {
-    // TODO: Connect to actual backend
-    // return api.post('/auth/logout');
     return Promise.resolve();
   },
 };
