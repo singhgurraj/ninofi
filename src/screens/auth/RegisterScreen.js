@@ -1,24 +1,33 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
+    Keyboard,
     Platform,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    View
+    View,
+    useWindowDimensions
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { register } from '../../services/auth';
+import palette from '../../styles/palette';
 
 const RegisterScreen = ({ route, navigation }) => {
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
+  const usableHeight = height - (insets.top + insets.bottom);
+  const isSmallScreen = usableHeight < 780;
+  const isExtraSmallScreen = usableHeight < 680;
   const dispatch = useDispatch();
   const { isLoading } = useSelector((state) => state.auth);
   const selectedRole = route.params?.role || 'homeowner';
+  const roleLabel = selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
   
   const [formData, setFormData] = useState({
     fullName: '',
@@ -30,6 +39,23 @@ const RegisterScreen = ({ route, navigation }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [agreeToTerms, setAgreeToTerms] = useState(false);
+  const [isInputFocused, setInputFocused] = useState(false);
+  const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isKeyboardVisible && !isInputFocused && scrollRef.current) {
+      scrollRef.current.scrollTo({ y: 0, animated: true });
+    }
+  }, [isKeyboardVisible, isInputFocused]);
 
   const handleRegister = async () => {
     // Validation
@@ -68,47 +94,134 @@ const RegisterScreen = ({ route, navigation }) => {
     }
   };
 
+  const handleInputFocus = () => setInputFocused(true);
+  const handleInputBlur = () => setInputFocused(false);
+
   const updateField = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const keyboardPadding = isExtraSmallScreen ? 200 : isSmallScreen ? 160 : 140;
+  const defaultBottomPadding = 0;
+  const dynamicPaddingBottom = (isKeyboardVisible || isInputFocused) ? keyboardPadding : defaultBottomPadding;
+  const scrollContentStyle = [
+    styles.scrollContent,
+    { paddingBottom: dynamicPaddingBottom },
+    isSmallScreen && styles.scrollContentSmall,
+    isExtraSmallScreen && styles.scrollContentExtraSmall
+  ];
+  const scrollEnabled = isInputFocused || isKeyboardVisible;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <View style={styles.header}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Text style={styles.backText}>←</Text>
-            </TouchableOpacity>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>
-              Sign up as a {selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1)}
-            </Text>
-          </View>
+        <View style={styles.screenContent}>
+          <ScrollView 
+            ref={scrollRef}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={scrollContentStyle}
+            bounces={false}
+            scrollEnabled={scrollEnabled}
+            keyboardShouldPersistTaps="handled"
+            style={styles.scrollView}
+          >
+            <View style={[
+              styles.header,
+              isSmallScreen && styles.headerSmall,
+              isExtraSmallScreen && styles.headerExtraSmall
+            ]}>
+              <TouchableOpacity 
+                style={styles.backButton}
+                onPress={() => navigation.goBack()}
+              >
+                <Text style={[
+                  styles.backText,
+                  isSmallScreen && styles.backTextSmall,
+                  isExtraSmallScreen && styles.backTextExtraSmall
+                ]}>←</Text>
+              </TouchableOpacity>
+              <Text
+                style={[
+                  styles.title,
+                  isSmallScreen && styles.titleSmall,
+                  isExtraSmallScreen && styles.titleExtraSmall
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {`Create ${roleLabel} Account`}
+              </Text>
+              <View style={styles.headerLinkRow}>
+                <Text style={[
+                  styles.subtitle,
+                  isSmallScreen && styles.subtitleSmall,
+                  isExtraSmallScreen && styles.subtitleExtraSmall
+                ]}>
+                  Already have an account?
+                </Text>
+                <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+                  <Text style={[
+                    styles.headerLink,
+                    isSmallScreen && styles.headerLinkSmall,
+                    isExtraSmallScreen && styles.headerLinkExtraSmall
+                  ]}>
+                    Sign In
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
 
-          <View style={styles.form}>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Full Name *</Text>
+          <View style={[
+            styles.form,
+            isSmallScreen && styles.formSmall,
+            isExtraSmallScreen && styles.formExtraSmall
+          ]}>
+            <View style={[
+              styles.inputContainer,
+              isSmallScreen && styles.inputContainerSmall,
+              isExtraSmallScreen && styles.inputContainerExtraSmall
+            ]}>
+              <Text style={[
+                styles.label,
+                isSmallScreen && styles.labelSmall,
+                isExtraSmallScreen && styles.labelExtraSmall
+              ]}>Full Name *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  isSmallScreen && styles.inputSmall,
+                  isExtraSmallScreen && styles.inputExtraSmall
+                ]}
                 placeholder="Enter your full name"
                 value={formData.fullName}
                 onChangeText={(value) => updateField('fullName', value)}
                 autoCapitalize="words"
                 editable={!isLoading}
+                onFocus={handleInputFocus}
+                onBlur={handleInputBlur}
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Email *</Text>
+            <View style={[
+              styles.inputContainer,
+              isSmallScreen && styles.inputContainerSmall,
+              isExtraSmallScreen && styles.inputContainerExtraSmall
+            ]}>
+              <Text style={[
+                styles.label,
+                isSmallScreen && styles.labelSmall,
+                isExtraSmallScreen && styles.labelExtraSmall
+              ]}>Email *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  isSmallScreen && styles.inputSmall,
+                  isExtraSmallScreen && styles.inputExtraSmall
+                ]}
                 placeholder="Enter your email"
                 value={formData.email}
                 onChangeText={(value) => updateField('email', value)}
@@ -116,99 +229,191 @@ const RegisterScreen = ({ route, navigation }) => {
                 autoCapitalize="none"
                 autoComplete="email"
                 editable={!isLoading}
+                onFocus={handleInputFocus}
+                onBlur={handleInputBlur}
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Phone Number *</Text>
+            <View style={[
+              styles.inputContainer,
+              isSmallScreen && styles.inputContainerSmall,
+              isExtraSmallScreen && styles.inputContainerExtraSmall
+            ]}>
+              <Text style={[
+                styles.label,
+                isSmallScreen && styles.labelSmall,
+                isExtraSmallScreen && styles.labelExtraSmall
+              ]}>Phone Number *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  isSmallScreen && styles.inputSmall,
+                  isExtraSmallScreen && styles.inputExtraSmall
+                ]}
                 placeholder="(555) 123-4567"
                 value={formData.phone}
                 onChangeText={(value) => updateField('phone', value)}
                 keyboardType="phone-pad"
                 editable={!isLoading}
+                onFocus={handleInputFocus}
+                onBlur={handleInputBlur}
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password *</Text>
-              <View style={styles.passwordContainer}>
+            <View style={[
+              styles.inputContainer,
+              isSmallScreen && styles.inputContainerSmall,
+              isExtraSmallScreen && styles.inputContainerExtraSmall
+            ]}>
+              <Text style={[
+                styles.label,
+                isSmallScreen && styles.labelSmall,
+                isExtraSmallScreen && styles.labelExtraSmall
+              ]}>Password *</Text>
+              <View style={[
+                styles.passwordContainer,
+                isSmallScreen && styles.passwordContainerSmall,
+                isExtraSmallScreen && styles.passwordContainerExtraSmall
+              ]}>
                 <TextInput
-                  style={styles.passwordInput}
+                  style={[
+                    styles.passwordInput,
+                    isSmallScreen && styles.passwordInputSmall,
+                    isExtraSmallScreen && styles.passwordInputExtraSmall
+                  ]}
                   placeholder="Create a password"
                   value={formData.password}
                   onChangeText={(value) => updateField('password', value)}
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
                   editable={!isLoading}
+                  onFocus={handleInputFocus}
+                  onBlur={handleInputBlur}
                 />
                 <TouchableOpacity 
                   onPress={() => setShowPassword(!showPassword)}
-                  style={styles.eyeButton}
+                  style={[
+                    styles.eyeButton,
+                    isSmallScreen && styles.eyeButtonSmall,
+                    isExtraSmallScreen && styles.eyeButtonExtraSmall
+                  ]}
                 >
-                  <Text style={styles.eyeText}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                  <Text style={[
+                    styles.eyeText,
+                    isSmallScreen && styles.eyeTextSmall,
+                    isExtraSmallScreen && styles.eyeTextExtraSmall
+                  ]}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.hint}>At least 8 characters</Text>
+              <Text style={[
+                styles.hint,
+                isSmallScreen && styles.hintSmall,
+                isExtraSmallScreen && styles.hintExtraSmall
+              ]}>At least 8 characters</Text>
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Confirm Password *</Text>
-              <View style={styles.passwordContainer}>
+            <View style={[
+              styles.inputContainer,
+              isSmallScreen && styles.inputContainerSmall,
+              isExtraSmallScreen && styles.inputContainerExtraSmall
+            ]}>
+              <Text style={[
+                styles.label,
+                isSmallScreen && styles.labelSmall,
+                isExtraSmallScreen && styles.labelExtraSmall
+              ]}>Confirm Password *</Text>
+              <View style={[
+                styles.passwordContainer,
+                isSmallScreen && styles.passwordContainerSmall,
+                isExtraSmallScreen && styles.passwordContainerExtraSmall
+              ]}>
                 <TextInput
-                  style={styles.passwordInput}
+                  style={[
+                    styles.passwordInput,
+                    isSmallScreen && styles.passwordInputSmall,
+                    isExtraSmallScreen && styles.passwordInputExtraSmall
+                  ]}
                   placeholder="Confirm your password"
                   value={formData.confirmPassword}
                   onChangeText={(value) => updateField('confirmPassword', value)}
                   secureTextEntry={!showConfirmPassword}
                   autoCapitalize="none"
                   editable={!isLoading}
+                  onFocus={handleInputFocus}
+                  onBlur={handleInputBlur}
                 />
                 <TouchableOpacity 
                   onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                  style={styles.eyeButton}
+                  style={[
+                    styles.eyeButton,
+                    isSmallScreen && styles.eyeButtonSmall,
+                    isExtraSmallScreen && styles.eyeButtonExtraSmall
+                  ]}
                 >
-                  <Text style={styles.eyeText}>{showConfirmPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                  <Text style={[
+                    styles.eyeText,
+                    isSmallScreen && styles.eyeTextSmall,
+                    isExtraSmallScreen && styles.eyeTextExtraSmall
+                  ]}>{showConfirmPassword ? '👁️' : '👁️‍🗨️'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
             <TouchableOpacity 
-              style={styles.checkboxContainer}
+              style={[
+                styles.checkboxContainer,
+                isSmallScreen && styles.checkboxContainerSmall,
+                isExtraSmallScreen && styles.checkboxContainerExtraSmall
+              ]}
               onPress={() => setAgreeToTerms(!agreeToTerms)}
               disabled={isLoading}
             >
-              <View style={[styles.checkbox, agreeToTerms && styles.checkboxChecked]}>
-                {agreeToTerms && <Text style={styles.checkmark}>✓</Text>}
+              <View style={[
+                styles.checkbox,
+                isSmallScreen && styles.checkboxSmall,
+                isExtraSmallScreen && styles.checkboxExtraSmall,
+                agreeToTerms && styles.checkboxChecked
+              ]}>
+                {agreeToTerms && <Text style={[
+                  styles.checkmark,
+                  isSmallScreen && styles.checkmarkSmall,
+                  isExtraSmallScreen && styles.checkmarkExtraSmall
+                ]}>✓</Text>}
               </View>
-              <Text style={styles.checkboxText}>
+              <Text style={[
+                styles.checkboxText,
+                isSmallScreen && styles.checkboxTextSmall,
+                isExtraSmallScreen && styles.checkboxTextExtraSmall
+              ]}>
                 I agree to the <Text style={styles.link}>Terms of Service</Text> and{' '}
                 <Text style={styles.link}>Privacy Policy</Text>
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
-              style={[styles.registerButton, (!agreeToTerms || isLoading) && styles.registerButtonDisabled]}
+              style={[
+                styles.registerButton,
+                isSmallScreen && styles.registerButtonSmall,
+                isExtraSmallScreen && styles.registerButtonExtraSmall,
+                (!agreeToTerms || isLoading) && styles.registerButtonDisabled
+              ]}
               onPress={handleRegister}
               disabled={!agreeToTerms || isLoading}
             >
               {isLoading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.registerButtonText}>Create Account</Text>
+                <Text style={[
+                  styles.registerButtonText,
+                  isSmallScreen && styles.registerButtonTextSmall,
+                  isExtraSmallScreen && styles.registerButtonTextExtraSmall
+                ]}>Create Account</Text>
               )}
             </TouchableOpacity>
-
-            <View style={styles.loginContainer}>
-              <Text style={styles.loginText}>Already have an account? </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-                <Text style={styles.loginLink}>Sign In</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </View>
+    </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -216,14 +421,52 @@ const RegisterScreen = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.background,
   },
   keyboardView: {
     flex: 1,
   },
+  screenContent: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
+  scrollContentSmall: {},
+  scrollContentExtraSmall: {},
   header: {
     padding: 20,
     paddingTop: 10,
+  },
+  headerSmall: {
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 6,
+  },
+  headerExtraSmall: {
+    paddingHorizontal: 12,
+    paddingTop: 0,
+    paddingBottom: 4,
+  },
+  headerLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  headerLink: {
+    color: palette.primary,
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  headerLinkSmall: {
+    fontSize: 15,
+  },
+  headerLinkExtraSmall: {
+    fontSize: 14,
   },
   backButton: {
     width: 40,
@@ -232,124 +475,248 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 24,
-    color: '#333',
+    color: palette.text,
+  },
+  backTextSmall: {
+    fontSize: 22,
+  },
+  backTextExtraSmall: {
+    fontSize: 20,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     marginTop: 20,
     marginBottom: 10,
+    textAlign: 'center',
+    alignSelf: 'stretch',
+    color: palette.text,
+  },
+  titleSmall: {
+    fontSize: 28,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  titleExtraSmall: {
+    fontSize: 24,
+    marginTop: 12,
+    marginBottom: 6,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: palette.muted,
+  },
+  subtitleSmall: {
+    fontSize: 15,
+  },
+  subtitleExtraSmall: {
+    fontSize: 14,
   },
   form: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 0,
+    backgroundColor: 'transparent',
+  },
+  formSmall: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 0,
+  },
+  formExtraSmall: {
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 0,
   },
   inputContainer: {
     marginBottom: 20,
+  },
+  inputContainerSmall: {
+    marginBottom: 16,
+  },
+  inputContainerExtraSmall: {
+    marginBottom: 12,
   },
   label: {
     fontSize: 16,
     fontWeight: '500',
     marginBottom: 8,
-    color: '#333',
+    color: palette.text,
+  },
+  labelSmall: {
+    fontSize: 15,
+    marginBottom: 6,
+  },
+  labelExtraSmall: {
+    fontSize: 14,
+    marginBottom: 4,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
     borderRadius: 8,
     padding: 15,
     fontSize: 16,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F9F6FF',
+    color: palette.text,
+  },
+  inputSmall: {
+    padding: 13,
+    fontSize: 15,
+  },
+  inputExtraSmall: {
+    padding: 11,
+    fontSize: 14,
   },
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
     borderRadius: 8,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F9F6FF',
+  },
+  passwordContainerSmall: {
+    borderRadius: 6,
+  },
+  passwordContainerExtraSmall: {
+    borderRadius: 6,
   },
   passwordInput: {
     flex: 1,
     padding: 15,
     fontSize: 16,
   },
+  passwordInputSmall: {
+    padding: 13,
+    fontSize: 15,
+  },
+  passwordInputExtraSmall: {
+    padding: 11,
+    fontSize: 14,
+  },
   eyeButton: {
     padding: 15,
   },
+  eyeButtonSmall: {
+    padding: 12,
+  },
+  eyeButtonExtraSmall: {
+    padding: 10,
+  },
   eyeText: {
     fontSize: 20,
+    color: palette.muted,
+  },
+  eyeTextSmall: {
+    fontSize: 18,
+  },
+  eyeTextExtraSmall: {
+    fontSize: 16,
   },
   hint: {
     fontSize: 12,
     color: '#888',
     marginTop: 5,
   },
+  hintSmall: {
+    fontSize: 11,
+    marginTop: 4,
+  },
+  hintExtraSmall: {
+    fontSize: 10,
+    marginTop: 3,
+  },
   checkboxContainer: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 20,
   },
+  checkboxContainerSmall: {
+    marginBottom: 16,
+  },
+  checkboxContainerExtraSmall: {
+    marginBottom: 12,
+  },
   checkbox: {
     width: 24,
     height: 24,
     borderWidth: 2,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
     borderRadius: 4,
     marginRight: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  checkboxSmall: {
+    width: 22,
+    height: 22,
+  },
+  checkboxExtraSmall: {
+    width: 20,
+    height: 20,
+  },
   checkboxChecked: {
-    backgroundColor: '#1976D2',
-    borderColor: '#1976D2',
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   checkmark: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
   },
+  checkmarkSmall: {
+    fontSize: 14,
+  },
+  checkmarkExtraSmall: {
+    fontSize: 13,
+  },
   checkboxText: {
     flex: 1,
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
     lineHeight: 20,
   },
+  checkboxTextSmall: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  checkboxTextExtraSmall: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
   link: {
-    color: '#1976D2',
+    color: palette.primary,
     fontWeight: '500',
   },
   registerButton: {
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     paddingVertical: 16,
     borderRadius: 8,
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 0,
+  },
+  registerButtonSmall: {
+    paddingVertical: 14,
+    marginBottom: 0,
+  },
+  registerButtonExtraSmall: {
+    paddingVertical: 12,
+    marginBottom: 0,
   },
   registerButtonDisabled: {
-    backgroundColor: '#CCCCCC',
+    backgroundColor: '#CBB5FF',
   },
   registerButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
   },
-  loginContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 10,
+  registerButtonTextSmall: {
+    fontSize: 17,
   },
-  loginText: {
-    color: '#666',
+  registerButtonTextExtraSmall: {
     fontSize: 16,
-  },
-  loginLink: {
-    color: '#1976D2',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
 

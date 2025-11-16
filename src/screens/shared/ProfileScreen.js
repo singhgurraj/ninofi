@@ -16,6 +16,7 @@ import { logout } from '../../services/auth';
 const ProfileScreen = ({ navigation }) => {
   const { user, role } = useSelector((state) => state.auth);
   const dispatch = useDispatch();
+  const hasNavigation = Boolean(navigation);
 
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
@@ -69,12 +70,16 @@ const ProfileScreen = ({ navigation }) => {
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={styles.backText}>←</Text>
-          </TouchableOpacity>
+          {hasNavigation ? (
+            <TouchableOpacity 
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Text style={styles.backText}>←</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.backButtonPlaceholder} />
+          )}
           <Text style={styles.headerTitle}>Profile</Text>
           <TouchableOpacity onPress={() => setIsEditing(!isEditing)}>
             <Text style={styles.editButton}>{isEditing ? 'Cancel' : 'Edit'}</Text>
@@ -267,6 +272,10 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     justifyContent: 'center',
+  },
+  backButtonPlaceholder: {
+    width: 40,
+    height: 40,
   },
   backText: {
     fontSize: 24,

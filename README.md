@@ -1,46 +1,322 @@
-# Welcome to your Expo app 👋
+# NINOFI
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**Milestone-Based Escrow & Project Management Platform for Home Renovation**
 
-## Get started
+NINOFI is a mobile-first platform that builds trust between homeowners, contractors, and workers by combining secure payments, digital contracts, verification, and real-time tools for transparent construction management.
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## 📱 About The Project
 
-2. Start the app
+NINOFI solves the trust problem in home renovation projects by:
+- **Protecting homeowners** with milestone-based escrow (funds released only when work is approved)
+- **Guaranteeing contractors** reliable payments upon milestone completion
+- **Empowering workers** with fair compensation for completed gigs
 
-   ```bash
-   npx expo start
-   ```
+### Key Features
 
-In the output, you'll find options to open the app in a
+- 🔒 **Escrow Protection** - Funds held securely until work is approved
+- ✅ **Milestone Tracking** - Break projects into manageable, trackable milestones
+- 📸 **Photo Verification** - Document progress with photo uploads
+- 📍 **GPS Check-in** - Verify worker presence at job sites
+- 💰 **Secure Payments** - Multiple payment methods with instant or bank transfer
+- 👤 **Role-Based Dashboards** - Customized experience for Homeowners, Contractors, and Workers
+- 📊 **Wallet & Analytics** - Track earnings, spending, and transaction history
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+---
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 🚀 Tech Stack
 
-## Get a fresh project
+### Frontend
+- **Framework:** React Native with Expo
+- **Navigation:** React Navigation 6.x
+- **State Management:** Redux Toolkit with Redux Persist
+- **Image Handling:** Expo Image Picker
+- **Icons:** React Native Vector Icons
+- **HTTP Client:** Axios
 
-When you're ready, run:
+### Backend (In Development)
+- **Server:** Node.js with Express.js
+- **Database:** PostgreSQL
+- **Authentication:** JWT (JSON Web Tokens)
+- **File Storage:** AWS S3 / Cloudinary (planned)
+- **API Architecture:** RESTful API
 
-```bash
-npm run reset-project
+---
+
+## 📂 Project Structure
+```
+ninofi/
+├── src/
+│   ├── navigation/
+│   │   └── AppNavigator.js           # Main navigation logic
+│   ├── screens/
+│   │   ├── auth/                     # Authentication screens
+│   │   │   ├── WelcomeScreen.js
+│   │   │   ├── RoleSelectionScreen.js
+│   │   │   ├── LoginScreen.js
+│   │   │   └── RegisterScreen.js
+│   │   ├── homeowner/                # Homeowner screens
+│   │   │   ├── HomeownerDashboard.js
+│   │   │   ├── CreateProjectScreen.js
+│   │   │   ├── ProjectDetailsScreen.js
+│   │   │   ├── FundProjectScreen.js
+│   │   │   └── ReviewMilestoneScreen.js
+│   │   ├── contractor/               # Contractor screens
+│   │   │   ├── ContractorDashboard.js
+│   │   │   └── SubmitMilestoneScreen.js
+│   │   ├── worker/                   # Worker screens
+│   │   │   └── WorkerDashboard.js
+│   │   └── shared/                   # Shared screens
+│   │       ├── ProfileScreen.js
+│   │       └── WalletScreen.js
+│   ├── store/
+│   │   ├── store.js                  # Redux store configuration
+│   │   └── authSlice.js              # Authentication slice
+│   └── services/
+│       ├── api.js                    # API service layer
+│       └── auth.js                   # Authentication service
+├── App.js                            # Root component
+├── package.json
+└── README.md
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-## Learn more
+## 🛠️ Installation & Setup
 
-To learn more about developing your project with Expo, look at the following resources:
+### Prerequisites
+- Node.js (v16 or higher)
+- npm or yarn
+- Expo CLI
+- iOS Simulator (Mac) or Android Emulator
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### Installation Steps
+
+1. **Clone the repository**
+```bash
+   git clone https://github.com/yourusername/ninofi.git
+   cd ninofi
+```
+
+2. **Install dependencies**
+```bash
+   npm install
+   # or
+   yarn install
+```
+
+3. **Install Expo CLI globally (if not already installed)**
+```bash
+   npm install -g expo-cli
+```
+
+4. **Start the development server**
+```bash
+   npx expo start
+```
+
+5. **Run on device**
+   - Press `i` for iOS simulator
+   - Press `a` for Android emulator
+   - Scan QR code with Expo Go app on physical device
+
+---
+
+## 👥 User Roles
+
+### Homeowner
+- Create and manage renovation projects
+- Set budgets and define milestones
+- Fund projects via escrow
+- Review and approve contractor work
+- Release payments upon satisfaction
+
+### Contractor
+- Browse and apply for projects
+- Submit milestone completions with photos
+- GPS check-in at job sites
+- Receive guaranteed payments
+- Track earnings and project history
+
+### Worker
+- Browse available gigs nearby
+- Apply for construction tasks
+- Complete work and get paid
+- Build reputation through ratings
+
+---
+
+## 📱 Key Screens
+
+### Authentication Flow
+1. **Welcome Screen** - Onboarding with feature highlights
+2. **Role Selection** - Choose user type (Homeowner/Contractor/Worker)
+3. **Registration** - Sign up with email or social login
+4. **Login** - Secure authentication with JWT
+
+### Homeowner Flow
+1. **Dashboard** - Project overview, stats, quick actions
+2. **Create Project** - 3-step wizard with milestone breakdown
+3. **Fund Project** - Escrow deposit with payment options
+4. **Project Details** - Progress tracking, milestone status
+5. **Review Milestone** - Approve/reject contractor submissions
+
+### Contractor Flow
+1. **Dashboard** - Earnings, active projects, payments
+2. **Submit Milestone** - Photo upload, GPS check-in, work description
+3. **Wallet** - Transaction history, withdrawal options
+4. **Profile** - Stats, verification badges, settings
+
+---
+
+## 🎨 Design Decisions
+
+- **Color Scheme:** Blue (#1976D2) for trust and professionalism
+- **Layout:** Card-based design for mobile-friendly scanning
+- **Typography:** Clear, readable fonts with proper hierarchy
+- **Iconography:** Emoji + vector icons for friendly UX
+- **Navigation:** Stack-based with role-specific routing
+- **Feedback:** Progress indicators, status badges, loading states
+
+---
+
+## ✅ Current Implementation Status
+
+### ✅ Completed (Frontend)
+- [x] Authentication flow (Welcome, Role Selection, Login, Register)
+- [x] All 3 role-based dashboards
+- [x] Project creation with 3-step wizard
+- [x] Milestone breakdown and tracking
+- [x] Fund project with escrow UI
+- [x] Submit milestone with photo upload
+- [x] Review & approve milestone workflow
+- [x] Profile screen with edit capability
+- [x] Wallet with transaction history
+- [x] Navigation between all screens
+- [x] Redux state management
+- [x] Mock API for development
+
+### 🔄 In Progress
+- [ ] Node.js/Express backend setup
+- [ ] PostgreSQL database schema
+- [ ] User authentication API endpoints
+- [ ] Project & milestone CRUD APIs
+- [ ] File upload to cloud storage
+
+### 🔜 Planned Features
+- [ ] Real payment gateway integration (Stripe)
+- [ ] Push notifications
+- [ ] Real-time messaging
+- [ ] Contractor verification (ID upload)
+- [ ] Invoice generation (PDF)
+- [ ] Dispute resolution system
+- [ ] Rating & review system
+
+---
+
+## 🧪 Testing
+
+### Test Accounts (Mock Data)
+
+Create test accounts by registering with these roles:
+
+**Homeowner:**
+- Email: `homeowner@test.com`
+- Password: `test123`
+
+**Contractor:**
+- Email: `contractor@test.com`
+- Password: `test123`
+
+**Worker:**
+- Email: `worker@test.com`
+- Password: `test123`
+
+### Testing User Flows
+
+1. **Complete Project Flow (Homeowner)**
+   - Register → Create Project → Fund Project → Review Milestone → Approve
+
+2. **Milestone Submission (Contractor)**
+   - Register → Browse Projects → Submit Milestone → Upload Photos → GPS Check-in
+
+3. **Gig Workflow (Worker)**
+   - Register → Browse Gigs → Apply → View Wallet
+
+---
+
+## 🤝 Contributing
+
+This is a course project for CS407 Mobile App Development at UW-Madison.
+
+**Team Members:**
+- **Gurraj Singh** (gsingh62@wisc.edu)
+- **Kunal Singh** (kdsingh@wisc.edu) 
+- **Arjun Bharadhwaj** (bharadhwaj@wisc.edu) 
+- **Rohit Sriram** (rsriram2@wisc.edu) 
+
+---
+
+## 📅 Project Milestones
+
+### Milestone 1 (October 27) ✅
+- Main app layout with login and role selection
+- Basic project and milestone creation
+- Simple contractor/homeowner workflow
+
+### Milestone 2 (November 10) ✅ (Frontend Complete)
+- Funding milestones UI
+- Photo upload functionality
+- Approve/reject workflow
+- Full project flow with test data
+
+### Milestone 3 (November 24) 🔄
+- Contractor verification (ID checks, GPS)
+- Invoice generation
+- Admin panel for testing
+
+### Milestone 4 (December 8) 🔜
+- Dispute process
+- Rating system
+- Final polish and bug fixes
+- Demo preparation
+
+---
+
+## 🐛 Known Issues
+
+- Mock API doesn't persist data between app restarts (backend will fix this)
+- Photo uploads currently stored locally (will move to cloud storage)
+- Payment processing is UI-only (integration with Stripe planned)
+- GPS check-in is simulated (real location tracking coming)
+
+---
+
+**Project Repository:** [[GitHub Link]](https://github.com/singhgurraj/ninofi)
+
+---
+
+## 🙏 Acknowledgments
+
+- **User Feedback:** Antonio R. (Contractor) and Mukesh P. (Homeowner)
+
+---
+
+## 🚀 Future Enhancements
+
+- Multi-language support
+- Dark mode
+- AI-powered project estimation
+- Contractor marketplace
+- Insurance integration
+- Progress timeline visualization
+- Voice notes for milestone updates
+- Video call integration for consultations
+
+---
+
+**Built with ❤️ by Team NINOFI**
 
 ## Join the community
 

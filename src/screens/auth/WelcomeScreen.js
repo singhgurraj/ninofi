@@ -1,88 +1,37 @@
+import React from 'react';
 import {
-    Dimensions,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions
 } from 'react-native';
-
-const { width, height } = Dimensions.get('window');
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const WelcomeScreen = ({ navigation }) => {
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {/* Logo Section */}
-        <View style={styles.logoSection}>
-          <View style={styles.logoPlaceholder}>
-            <Text style={styles.logoText}>🏠</Text>
-          </View>
-          <Text style={styles.title}>NINOFI</Text>
-        </View>
+  const { height } = useWindowDimensions();
+  const isCompact = height < 720;
 
-        {/* Welcome Text */}
-        <View style={styles.welcomeSection}>
-          <Text style={styles.welcomeTitle}>Welcome to NINOFI</Text>
-          <Text style={styles.welcomeSubtitle}>
-            The trusted platform for home renovation and construction projects with 
-            milestone-based escrow protection
+  return (
+    <SafeAreaView edges={['top', 'bottom']} style={styles.container}>
+      <View style={styles.backgroundLayer}>
+        <View style={styles.backgroundGlow} />
+        <View style={styles.backgroundBlob} />
+      </View>
+
+      <View style={styles.content}>
+        <View style={styles.textBlock}>
+          <Text style={[styles.headline, isCompact && styles.headlineCompact]}>
+            {`Ninofi —\nconstruction,\ndone quick.`}
           </Text>
         </View>
 
-        {/* Features */}
-        <View style={styles.featuresSection}>
-          <View style={styles.feature}>
-            <Text style={styles.featureIcon}>🔒</Text>
-            <View style={styles.featureText}>
-              <Text style={styles.featureTitle}>Secure Escrow Protection</Text>
-              <Text style={styles.featureDescription}>
-                Funds released only when milestones are approved
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.feature}>
-            <Text style={styles.featureIcon}>✅</Text>
-            <View style={styles.featureText}>
-              <Text style={styles.featureTitle}>Verified Contractors</Text>
-              <Text style={styles.featureDescription}>
-                ID checks, licensing, and insurance verification
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.feature}>
-            <Text style={styles.featureIcon}>📱</Text>
-            <View style={styles.featureText}>
-              <Text style={styles.featureTitle}>Mobile-First Experience</Text>
-              <Text style={styles.featureDescription}>
-                Real-time approvals and progress tracking on-the-go
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.buttonSection}>
-          <TouchableOpacity 
-            style={styles.primaryButton}
-            onPress={() => navigation.navigate('RoleSelection')}
-          >
-            <Text style={styles.primaryButtonText}>Get Started</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.secondaryButton}
-            onPress={() => console.log('Learn More')}
-          >
-            <Text style={styles.secondaryButtonText}>Learn More</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Skip */}
-        <TouchableOpacity onPress={() => console.log('Skip')}>
-          <Text style={styles.skipText}>Skip Introduction</Text>
+        <TouchableOpacity
+          style={styles.nextButton}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('RoleSelection')}
+        >
+          <Text style={styles.nextIcon}>→</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -92,107 +41,78 @@ const WelcomeScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#F3ECFF',
+  },
+  backgroundLayer: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+  },
+  backgroundGlow: {
+    position: 'absolute',
+    width: '140%',
+    height: '70%',
+    top: -80,
+    left: -20,
     backgroundColor: '#FFFFFF',
+    opacity: 0.4,
+    borderBottomRightRadius: 220,
+    borderBottomLeftRadius: 220,
+  },
+  backgroundBlob: {
+    position: 'absolute',
+    width: 380,
+    height: 380,
+    borderRadius: 190,
+    backgroundColor: '#E4D6FF',
+    opacity: 0.7,
+    bottom: -120,
+    right: -60,
+    transform: [{ rotate: '-18deg' }],
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
-    justifyContent: 'space-between',
+    paddingHorizontal: 30,
+    paddingTop: 50,
+    paddingBottom: 40,
+    justifyContent: 'flex-start',
+    gap: 60,
   },
-  logoSection: {
-    alignItems: 'center',
+  textBlock: {
     marginTop: 40,
   },
-  logoPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#E3F2FD',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
+  headline: {
+    fontSize: 40,
+    fontWeight: '700',
+    color: '#1C1C1C',
+    lineHeight: 46,
+    letterSpacing: -0.5,
   },
-  logoText: {
-    fontSize: 50,
+  headlineCompact: {
+    fontSize: 34,
+    lineHeight: 40,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#1976D2',
-  },
-  welcomeSection: {
-    alignItems: 'center',
+  nextButton: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#7E4DFF',
     marginTop: 30,
-  },
-  welcomeTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  welcomeSubtitle: {
-    fontSize: 16,
-    color: '#666666',
-    textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: 20,
-  },
-  featuresSection: {
-    marginTop: 40,
-  },
-  feature: {
-    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 25,
+    alignSelf: 'flex-start',
+    shadowColor: '#7E4DFF',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    elevation: 8,
   },
-  featureIcon: {
-    fontSize: 30,
-    marginRight: 15,
-  },
-  featureText: {
-    flex: 1,
-  },
-  featureTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  featureDescription: {
-    fontSize: 14,
-    color: '#666666',
-  },
-  buttonSection: {
-    marginTop: 40,
-  },
-  primaryButton: {
-    backgroundColor: '#1976D2',
-    paddingVertical: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  primaryButtonText: {
+  nextIcon: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 28,
     fontWeight: '600',
-    textAlign: 'center',
-  },
-  secondaryButton: {
-    borderWidth: 2,
-    borderColor: '#1976D2',
-    paddingVertical: 16,
-    borderRadius: 8,
-  },
-  secondaryButtonText: {
-    color: '#1976D2',
-    fontSize: 18,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  skipText: {
-    color: '#666666',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 30,
   },
 });
 

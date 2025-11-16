@@ -6,13 +6,11 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
-import { logout } from '../../services/auth';
+import { useSelector } from 'react-redux';
+import palette from '../../styles/palette';
 
 const ContractorDashboard = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
-  const dispatch = useDispatch();
-
   // Mock data
   const stats = {
     earnings: 8450,
@@ -43,10 +41,6 @@ const ContractorDashboard = ({ navigation }) => {
     },
   ];
 
-  const handleLogout = async () => {
-    await dispatch(logout());
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -57,22 +51,10 @@ const ContractorDashboard = ({ navigation }) => {
             <Text style={styles.role}>Licensed Contractor</Text>
           </View>
           <View style={styles.headerButtons}>
-  <TouchableOpacity style={styles.notificationButton}>
-    <Text style={styles.notificationIcon}>🔔</Text>
-  </TouchableOpacity>
-  <TouchableOpacity 
-    style={styles.notificationButton}
-    onPress={() => navigation.navigate('Profile')}
-  >
-    <Text style={styles.notificationIcon}>⚙️</Text>
-  </TouchableOpacity>
-  <TouchableOpacity 
-    style={styles.notificationButton}
-    onPress={handleLogout}
-  >
-    <Text style={styles.notificationIcon}>🚪</Text>
-  </TouchableOpacity>
-</View>
+            <TouchableOpacity style={styles.notificationButton}>
+              <Text style={styles.notificationIcon}>🔔</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Stats Cards */}
@@ -210,14 +192,16 @@ const ContractorDashboard = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: palette.background,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
   },
   headerButtons: {
     flexDirection: 'row',
@@ -227,16 +211,17 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 5,
+    color: palette.text,
   },
   role: {
     fontSize: 16,
-    color: '#666',
+    color: palette.muted,
   },
   settingsButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F1EAFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -250,19 +235,22 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   statValue: {
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 5,
+    color: palette.text,
   },
   statLabel: {
     fontSize: 12,
-    color: '#666',
+    color: palette.muted,
   },
   section: {
     padding: 20,
@@ -278,10 +266,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     marginBottom: 15,
+    color: palette.text,
   },
   viewAll: {
     fontSize: 14,
-    color: '#1976D2',
+    color: palette.primary,
     fontWeight: '500',
   },
   quickActions: {
@@ -291,9 +280,9 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
   },
   actionIcon: {
@@ -307,27 +296,29 @@ const styles = StyleSheet.create({
   },
   actionButtonOutline: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
   },
   actionIconOutline: {
     fontSize: 20,
     marginBottom: 5,
   },
   actionTextOutline: {
-    color: '#333',
+    color: palette.text,
     fontSize: 14,
     fontWeight: '600',
   },
   projectCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 20,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 15,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   projectHeader: {
     flexDirection: 'row',
@@ -339,18 +330,19 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     flex: 1,
+    color: palette.text,
   },
   projectStatus: {
     fontSize: 12,
-    color: '#4CAF50',
-    backgroundColor: '#E8F5E9',
+    color: palette.primary,
+    backgroundColor: '#EEE4FF',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
   },
   projectClient: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
     marginBottom: 15,
   },
   milestoneInfo: {
@@ -361,31 +353,33 @@ const styles = StyleSheet.create({
   },
   milestoneLabel: {
     fontSize: 14,
-    color: '#333',
+    color: palette.text,
   },
   milestoneAmount: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1976D2',
+    color: palette.primary,
   },
   progressBar: {
     height: 6,
-    backgroundColor: '#E0E0E0',
+    backgroundColor: '#E6DAFF',
     borderRadius: 3,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     borderRadius: 3,
   },
   paymentCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   paymentInfo: {
     flex: 1,
@@ -394,15 +388,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     marginBottom: 4,
+    color: palette.text,
   },
   paymentDate: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
   },
   paymentAmount: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#4CAF50',
+    color: '#41C87A',
   },
 });
 

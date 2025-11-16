@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useDispatch } from 'react-redux';
+import palette from '../../styles/palette';
 import { setRole } from '../../store/authSlice';
 
 const RoleSelectionScreen = ({ navigation }) => {
@@ -55,10 +56,11 @@ const RoleSelectionScreen = ({ navigation }) => {
         Select how you'll be using NINOFI to get started
       </Text>
 
+      <View style={styles.cardStack}>
       {roles.map((role) => (
         <TouchableOpacity
           key={role.id}
-          style={[styles.roleCard, { borderLeftColor: role.color }]}
+          style={[styles.roleCard, { borderLeftColor: role.color, backgroundColor: '#F9F6FF' }]}
           onPress={() => selectRole(role.id)}
         >
           <View style={styles.roleHeader}>
@@ -75,6 +77,7 @@ const RoleSelectionScreen = ({ navigation }) => {
           </View>
         </TouchableOpacity>
       ))}
+      </View>
 
       <TouchableOpacity 
         onPress={() => navigation.navigate('Login')}
@@ -92,7 +95,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: palette.background,
   },
   header: {
     marginBottom: 10,
@@ -104,31 +107,36 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 24,
-    color: '#333',
+    color: palette.text,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     marginBottom: 10,
     textAlign: 'center',
+    color: palette.text,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: palette.muted,
     marginBottom: 30,
     textAlign: 'center',
   },
+  cardStack: {
+    marginTop: 20,
+  },
   roleCard: {
-    backgroundColor: '#fff',
+    backgroundColor: palette.surface,
     padding: 20,
     marginBottom: 15,
-    borderRadius: 10,
+    borderRadius: 14,
     borderLeftWidth: 4,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    borderColor: palette.border,
+    shadowColor: '#7E4DFF',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
   },
   roleHeader: {
     flexDirection: 'row',
@@ -139,10 +147,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     marginLeft: 15,
+    color: palette.text,
   },
   roleDescription: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
     marginBottom: 10,
     lineHeight: 20,
   },
@@ -152,7 +161,7 @@ const styles = StyleSheet.create({
   },
   benefit: {
     fontSize: 12,
-    color: '#888',
+    color: palette.muted,
     marginRight: 15,
   },
   loginButton: {
@@ -162,7 +171,7 @@ const styles = StyleSheet.create({
   },
   loginLink: {
     textAlign: 'center',
-    color: '#2196F3',
+    color: palette.primary,
     fontSize: 16,
     fontWeight: '500',
   },

@@ -2,18 +2,15 @@ import React from 'react';
 import {
   SafeAreaView,
   ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
-import { useDispatch, useSelector } from 'react-redux';
-import { logout } from '../../services/auth';
+import { useSelector } from 'react-redux';
 
 const HomeownerDashboard = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const { projects } = useSelector((state) => state.projects);
-  const dispatch = useDispatch();
 
   const stats = {
     activeProjects: projects?.length || 0,
@@ -34,22 +31,10 @@ const HomeownerDashboard = ({ navigation }) => {
             <Text style={styles.role}>Homeowner</Text>
           </View>
           <View style={styles.headerButtons}>
-  <TouchableOpacity style={styles.notificationButton}>
-    <Text style={styles.notificationIcon}>🔔</Text>
-  </TouchableOpacity>
-  <TouchableOpacity 
-    style={styles.notificationButton}
-    onPress={() => navigation.navigate('Profile')}
-  >
-    <Text style={styles.notificationIcon}>⚙️</Text>
-  </TouchableOpacity>
-  <TouchableOpacity 
-    style={styles.notificationButton}
-    onPress={handleLogout}
-  >
-    <Text style={styles.notificationIcon}>🚪</Text>
-  </TouchableOpacity>
-</View>
+            <TouchableOpacity style={styles.notificationButton}>
+              <Text style={styles.notificationIcon}>🔔</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Stats Cards */}
@@ -138,193 +123,5 @@ const HomeownerDashboard = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  headerButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  greeting: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  role: {
-    fontSize: 16,
-    color: '#666',
-  },
-  notificationButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notificationIcon: {
-    fontSize: 20,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    padding: 20,
-    gap: 15,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  statIcon: {
-    fontSize: 32,
-    marginBottom: 10,
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  statLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  section: {
-    padding: 20,
-    paddingTop: 10,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 15,
-  },
-  viewAll: {
-    fontSize: 14,
-    color: '#1976D2',
-    fontWeight: '500',
-  },
-  quickActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: '#1976D2',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  actionIcon: {
-    fontSize: 24,
-    marginBottom: 8,
-  },
-  actionText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  actionButtonOutline: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#1976D2',
-  },
-  actionIconOutline: {
-    fontSize: 24,
-    marginBottom: 8,
-  },
-  actionTextOutline: {
-    color: '#1976D2',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  projectCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 15,
-  },
-  projectHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  projectTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    flex: 1,
-  },
-  projectStatus: {
-    fontSize: 12,
-    color: '#4CAF50',
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  projectContractor: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 15,
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  progressLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  progressValue: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  progressBar: {
-    height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
-    marginBottom: 15,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#1976D2',
-    borderRadius: 4,
-  },
-  projectFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  budget: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  viewDetails: {
-    fontSize: 14,
-    color: '#1976D2',
-    fontWeight: '500',
-  },
-});
 
 export default HomeownerDashboard;

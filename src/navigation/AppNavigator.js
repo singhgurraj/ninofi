@@ -45,6 +45,7 @@ const AppNavigator = () => {
 
   return (
     <Stack.Navigator 
+      key={isAuthenticated ? 'app-stack' : 'auth-stack'}
       initialRouteName={isAuthenticated ? "Dashboard" : "Welcome"}
       screenOptions={{
         headerShown: false,
