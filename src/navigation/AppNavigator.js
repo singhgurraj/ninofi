@@ -10,6 +10,9 @@ import WelcomeScreen from '../screens/auth/WelcomeScreen';
 
 // Dashboard screens
 import ContractorDashboard from '../screens/contractor/ContractorDashboard';
+import DocumentUploadScreen from '../screens/contractor/DocumentUploadScreen';
+import SelfieVerificationScreen from '../screens/contractor/SelfieVerificationScreen';
+import VerificationScreen from '../screens/contractor/VerificationScreen';
 import HomeownerDashboard from '../screens/homeowner/HomeownerDashboard';
 import WorkerDashboard from '../screens/worker/WorkerDashboard';
 
@@ -92,6 +95,21 @@ const AppNavigator = () => {
   name="SubmitMilestone" 
   component={SubmitMilestoneScreen}
   options={{ title: 'Submit Milestone' }}
+/>
+<Stack.Screen 
+  name="Verification" 
+  component={VerificationScreen}
+  options={{ title: 'Account Verification' }}
+/>
+<Stack.Screen 
+  name="DocumentUpload" 
+  component={DocumentUploadScreen}
+  options={{ title: 'Upload Document' }}
+/>
+<Stack.Screen 
+  name="SelfieVerification" 
+  component={SelfieVerificationScreen}
+  options={{ title: 'Selfie Verification' }}
 />
 <Stack.Screen 
   name="Profile" 
