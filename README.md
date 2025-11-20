@@ -49,34 +49,42 @@ NINOFI solves the trust problem in home renovation projects by:
 ninofi/
 ├── src/
 │   ├── navigation/
-│   │   └── AppNavigator.js           # Main navigation logic
+│   │   └── AppNavigator.js           
 │   ├── screens/
-│   │   ├── auth/                     # Authentication screens
+│   │   ├── auth/                     
 │   │   │   ├── WelcomeScreen.js
 │   │   │   ├── RoleSelectionScreen.js
 │   │   │   ├── LoginScreen.js
 │   │   │   └── RegisterScreen.js
-│   │   ├── homeowner/                # Homeowner screens
+│   │   ├── homeowner/                
 │   │   │   ├── HomeownerDashboard.js
 │   │   │   ├── CreateProjectScreen.js
 │   │   │   ├── ProjectDetailsScreen.js
 │   │   │   ├── FundProjectScreen.js
 │   │   │   └── ReviewMilestoneScreen.js
-│   │   ├── contractor/               # Contractor screens
+│   │   ├── contractor/               
 │   │   │   ├── ContractorDashboard.js
-│   │   │   └── SubmitMilestoneScreen.js
-│   │   ├── worker/                   # Worker screens
+│   │   │   ├── SubmitMilestoneScreen.js
+│   │   │   ├── VerificationScreen.js          
+│   │   │   ├── DocumentUploadScreen.js       
+│   │   │   └── SelfieVerificationScreen.js    
+│   │   ├── worker/                   
 │   │   │   └── WorkerDashboard.js
-│   │   └── shared/                   # Shared screens
+│   │   └── shared/                   
 │   │       ├── ProfileScreen.js
 │   │       └── WalletScreen.js
+│   ├── components/                   
+│   │   ├── VerificationBadge.js      
+│   │   └── DocumentCard.js          
 │   ├── store/
-│   │   ├── store.js                  # Redux store configuration
-│   │   └── authSlice.js              # Authentication slice
-│   └── services/
-│       ├── api.js                    # API service layer
-│       └── auth.js                   # Authentication service
-├── App.js                            # Root component
+│   │   ├── store.js              
+│   │   └── authSlice.js             
+│   ├── services/
+│   │   ├── api.js                  
+│   │   └── auth.js                   
+│   └── styles/                       
+│       └── palette.js                
+├── App.js                            
 ├── package.json
 └── README.md
 ```
