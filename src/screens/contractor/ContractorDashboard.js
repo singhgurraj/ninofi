@@ -7,6 +7,7 @@ import {
     View,
 } from 'react-native';
 import { useSelector } from 'react-redux';
+import VerificationBadge from '../../components/VerificationBadge';
 import palette from '../../styles/palette';
 
 const ContractorDashboard = ({ navigation }) => {
@@ -55,6 +56,25 @@ const ContractorDashboard = ({ navigation }) => {
               <Text style={styles.notificationIcon}>🔔</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Verification Banner */}
+        <View style={styles.verificationCard}>
+          <View style={styles.verificationHeader}>
+            <View>
+              <Text style={styles.verificationTitle}>Account Verification</Text>
+              <Text style={styles.verificationMessage}>
+                Complete verification to unlock all payouts and top projects.
+              </Text>
+            </View>
+            <VerificationBadge status="pending" />
+          </View>
+          <TouchableOpacity
+            style={styles.verificationButton}
+            onPress={() => navigation.navigate('Verification')}
+          >
+            <Text style={styles.verificationButtonText}>View Status</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Stats Cards */}
@@ -206,6 +226,48 @@ const styles = StyleSheet.create({
   headerButtons: {
     flexDirection: 'row',
     gap: 10,
+  },
+  verificationCard: {
+    margin: 20,
+    marginTop: 10,
+    backgroundColor: palette.surface,
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#3B2A68',
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  verificationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 16,
+  },
+  verificationTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: palette.text,
+    marginBottom: 4,
+  },
+  verificationMessage: {
+    color: palette.muted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  verificationButton: {
+    backgroundColor: palette.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  verificationButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
   },
   greeting: {
     fontSize: 24,
