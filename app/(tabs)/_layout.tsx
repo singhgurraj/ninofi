@@ -1,9 +1,9 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { useSelector } from 'react-redux';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -24,7 +24,9 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home-sharp" color={color} size={size ?? 26} />
+          ),
         }}
       />
       {isAuthenticated && (
@@ -33,21 +35,18 @@ export default function TabLayout() {
             name="invoices"
             options={{
               title: 'Invoices',
-              tabBarIcon: ({ color }) => <IconSymbol size={28} name="doc.text.fill" color={color} />,
-            }}
-          />
-          <Tabs.Screen
-            name="explore"
-            options={{
-              title: 'Explore',
-              tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="document-text-sharp" color={color} size={size ?? 24} />
+              ),
             }}
           />
           <Tabs.Screen
             name="settings"
             options={{
               title: 'Settings',
-              tabBarIcon: ({ color }) => <IconSymbol size={28} name="gearshape.fill" color={color} />,
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="settings-sharp" color={color} size={size ?? 24} />
+              ),
             }}
           />
         </>

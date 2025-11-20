@@ -1,14 +1,15 @@
 import {
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import VerificationBadge from '../../components/VerificationBadge';
 import palette from '../../styles/palette';
+import { glassCard, pillButton, pillButtonText, shadowCard } from '../../styles/ui';
 
 const ContractorDashboard = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
@@ -45,23 +46,46 @@ const ContractorDashboard = ({ navigation }) => {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>{user?.fullName || 'Contractor'}</Text>
-            <Text style={styles.role}>Licensed Contractor</Text>
-          </View>
-          <View style={styles.headerButtons}>
+        {/* Hero */}
+        <View style={styles.heroCard}>
+          <View style={styles.heroHeader}>
+            <View>
+              <Text style={styles.heroGreeting}>Hi {user?.fullName || 'Contractor'}</Text>
+              <Text style={styles.heroSubtitle}>Licensed Contractor</Text>
+            </View>
             <TouchableOpacity style={styles.notificationButton}>
               <Text style={styles.notificationIcon}>🔔</Text>
             </TouchableOpacity>
           </View>
+          <View style={styles.heroStatsRow}>
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatLabel}>This Month</Text>
+              <Text style={styles.heroStatValue}>${stats.earnings}</Text>
+            </View>
+            <View style={styles.heroDivider} />
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatLabel}>Active</Text>
+              <Text style={styles.heroStatValue}>{stats.activeProjects}</Text>
+            </View>
+            <View style={styles.heroDivider} />
+            <View style={styles.heroStat}>
+              <Text style={styles.heroStatLabel}>Rating</Text>
+              <Text style={styles.heroStatValue}>{stats.rating}</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.heroButton}
+            onPress={() => navigation.navigate('Wallet')}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.heroButtonText}>View Wallet</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Verification Banner */}
         <View style={styles.verificationCard}>
           <View style={styles.verificationHeader}>
-            <View>
+            <View style={styles.verificationCopy}>
               <Text style={styles.verificationTitle}>Account Verification</Text>
               <Text style={styles.verificationMessage}>
                 Complete verification to unlock all payouts and top projects.
@@ -77,63 +101,44 @@ const ContractorDashboard = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>${stats.earnings}</Text>
-            <Text style={styles.statLabel}>This Month</Text>
-          </View>
-          
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{stats.activeProjects}</Text>
-            <Text style={styles.statLabel}>Active Projects</Text>
-          </View>
-          
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{stats.rating}</Text>
-            <Text style={styles.statLabel}>Rating</Text>
-          </View>
-        </View>
-
         {/* Quick Actions */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickActions}>
+          <View style={styles.cardGrid}>
             <TouchableOpacity 
-              style={styles.actionButton}
+              style={[styles.actionCard, shadowCard]}
               onPress={() => console.log('Find Jobs - Coming soon')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
-              <Text style={styles.actionText}>Find Jobs</Text>
+              <Text style={styles.actionTitle}>Find Jobs</Text>
+              <Text style={styles.actionText}>Browse nearby gigs</Text>
             </TouchableOpacity>
-            
             <TouchableOpacity 
-              style={styles.actionButton}
+              style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('SubmitMilestone', {
                 project: projects[0],
                 milestone: { name: projects[0].nextMilestone, amount: projects[0].amount }
             })}
             >
               <Text style={styles.actionIcon}>📸</Text>
-              <Text style={styles.actionText}>Submit Work</Text>
+              <Text style={styles.actionTitle}>Submit Work</Text>
+              <Text style={styles.actionText}>Send milestone evidence</Text>
             </TouchableOpacity>
-          </View>
-          
-          <View style={styles.quickActions}>
             <TouchableOpacity 
-              style={styles.actionButtonOutline}
+              style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Wallet')}
             >
-              <Text style={styles.actionIconOutline}>💰</Text>
-              <Text style={styles.actionTextOutline}>My Wallet</Text>
+              <Text style={styles.actionIcon}>💰</Text>
+              <Text style={styles.actionTitle}>My Wallet</Text>
+              <Text style={styles.actionText}>Balance & transfers</Text>
             </TouchableOpacity>
-            
             <TouchableOpacity 
-              style={styles.actionButtonOutline}
+              style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Profile')}
             >
-              <Text style={styles.actionIconOutline}>👤</Text>
-              <Text style={styles.actionTextOutline}>My Profile</Text>
+              <Text style={styles.actionIcon}>👤</Text>
+              <Text style={styles.actionTitle}>My Profile</Text>
+              <Text style={styles.actionText}>Licenses & docs</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -214,6 +219,72 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  heroCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    padding: 18,
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#3B2A68',
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+    backgroundColor: '#7E4DFF',
+  },
+  heroHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  heroGreeting: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  heroSubtitle: {
+    color: '#EAE5FF',
+    marginTop: 4,
+  },
+  heroStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 14,
+    padding: 12,
+    gap: 8,
+  },
+  heroStat: {
+    flex: 1,
+  },
+  heroStatLabel: {
+    color: '#EAE5FF',
+    fontSize: 12,
+  },
+  heroStatValue: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  heroDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  heroButton: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  heroButtonText: {
+    color: palette.primary,
+    fontWeight: '700',
+    fontSize: 15,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -229,23 +300,30 @@ const styles = StyleSheet.create({
   },
   verificationCard: {
     margin: 20,
-    marginTop: 10,
+    marginTop: 12,
     backgroundColor: palette.surface,
-    borderRadius: 18,
-    padding: 20,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
     borderColor: palette.border,
     shadowColor: '#3B2A68',
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    elevation: 6,
   },
   verificationHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
     marginBottom: 16,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    rowGap: 8,
+  },
+  verificationCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   verificationTitle: {
     fontSize: 18,
@@ -263,6 +341,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
+    marginTop: 4,
   },
   verificationButtonText: {
     color: '#FFFFFF',
@@ -327,7 +406,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: '600',
-    marginBottom: 15,
+    marginBottom: 12,
     color: palette.text,
   },
   viewAll: {
@@ -335,44 +414,37 @@ const styles = StyleSheet.create({
     color: palette.primary,
     fontWeight: '500',
   },
-  quickActions: {
+  cardGrid: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 10,
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 8,
   },
-  actionButton: {
-    flex: 1,
-    backgroundColor: palette.primary,
-    padding: 15,
-    borderRadius: 16,
-    alignItems: 'center',
+  actionCard: {
+    flexBasis: '48%',
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#3B2A68',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   actionIcon: {
     fontSize: 20,
-    marginBottom: 5,
+    marginBottom: 6,
+  },
+  actionTitle: {
+    fontWeight: '700',
+    color: palette.text,
   },
   actionText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  actionButtonOutline: {
-    flex: 1,
-    backgroundColor: palette.surface,
-    padding: 15,
-    borderRadius: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  actionIconOutline: {
-    fontSize: 20,
-    marginBottom: 5,
-  },
-  actionTextOutline: {
-    color: palette.text,
-    fontSize: 14,
-    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 4,
+    fontSize: 12,
   },
   projectCard: {
     backgroundColor: palette.surface,

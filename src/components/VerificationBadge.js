@@ -59,17 +59,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
     gap: 4,
+    maxWidth: '100%',
   },
   icon: {
     fontSize: 12,
   },
   label: {
-    fontSize: 12,
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: '600',
+    flexShrink: 1,
   },
 });
 

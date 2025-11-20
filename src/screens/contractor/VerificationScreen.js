@@ -135,7 +135,7 @@ const VerificationScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <View>
+          <View style={styles.headerCopy}>
             <Text style={styles.title}>Account Verification</Text>
             <Text style={styles.subtitle}>Secure your payouts and boost homeowner trust.</Text>
           </View>
@@ -222,6 +222,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
     marginBottom: 20,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  headerCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   title: {
     fontSize: 24,
