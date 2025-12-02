@@ -4,6 +4,7 @@ import {
   fetchProjectsStart,
   fetchProjectsSuccess,
   updateProject,
+  deleteProject,
 } from '../store/projectSlice';
 import { projectAPI } from './api';
 
@@ -40,6 +41,19 @@ export const saveProject = (project) => async (dispatch) => {
     return { success: true, data: saved };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to save project';
+    return { success: false, error: message };
+  }
+};
+
+export const removeProject = (projectId, userId) => async (dispatch) => {
+  if (!projectId) return { success: false, error: 'Missing projectId' };
+  try {
+    const apiFn = projectAPI.deleteProjectForUser || projectAPI.deleteProject;
+    await apiFn(projectId, userId);
+    dispatch(deleteProject(projectId));
+    return { success: true };
+  } catch (error) {
+    const message = error.response?.data?.message || 'Failed to delete project';
     return { success: false, error: message };
   }
 };

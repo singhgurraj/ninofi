@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { saveProject } from '../../services/projects';
+import { saveProject, removeProject } from '../../services/projects';
 
 const CreateProjectScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
@@ -272,11 +272,11 @@ const CreateProjectScreen = ({ navigation, route }) => {
           <Text style={styles.addButtonText}>+ Add Milestone</Text>
         </TouchableOpacity>
 
-        {formData.budget && (
+        {formData.estimatedBudget && (
           <View style={styles.totalContainer}>
             <Text style={styles.totalLabel}>Total Milestones: ${totalAmount}</Text>
-            <Text style={styles.budgetLabel}>Project Budget: ${formData.budget}</Text>
-            {totalAmount > parseFloat(formData.budget) && (
+            <Text style={styles.budgetLabel}>Project Budget: ${formData.estimatedBudget}</Text>
+            {totalAmount > parseFloat(formData.estimatedBudget) && (
               <Text style={styles.warningText}>⚠️ Total exceeds budget</Text>
             )}
           </View>
@@ -300,7 +300,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
             >
               <Text style={styles.backText}>←</Text>
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Create New Project</Text>
+            <Text style={styles.headerTitle}>
+              {existingProject ? 'Edit Project' : 'Create New Project'}
+            </Text>
             <View style={styles.placeholder} />
           </View>
 
@@ -333,10 +335,43 @@ const CreateProjectScreen = ({ navigation, route }) => {
               onPress={handleContinue}
             >
               <Text style={styles.primaryButtonText}>
-                {step === 3 ? 'Create Project' : 'Continue'}
+                {step === 3 ? (existingProject ? 'Submit Changes' : 'Create Project') : 'Continue'}
               </Text>
             </TouchableOpacity>
           </View>
+
+          {existingProject && (
+            <View style={styles.deleteContainer}>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() =>
+                  Alert.alert(
+                    'Delete Project',
+                    'Are you sure you want to delete this project?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: async () => {
+                          const result = await dispatch(
+                            removeProject(existingProject.id, user?.id)
+                          );
+                          if (result?.success) {
+                            navigation.navigate('ProjectsList');
+                          } else {
+                            Alert.alert('Error', result?.error || 'Failed to delete project');
+                          }
+                        },
+                      },
+                    ]
+                  )
+                }
+              >
+                <Text style={styles.deleteButtonText}>Delete Project</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -541,6 +576,21 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     flex: 1,
+  },
+  deleteContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+  },
+  deleteButton: {
+    marginTop: 10,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    color: '#B91C1C',
+    fontWeight: '700',
   },
 });
 

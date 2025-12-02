@@ -86,6 +86,8 @@ export const projectAPI = {
   createProject: async (projectData) => api.post('/projects', projectData),
   updateProject: async (id, projectData) => api.put(`/projects/${id}`, projectData),
   deleteProject: async (id) => api.delete(`/projects/${id}`),
+  deleteProjectForUser: async (id, userId) =>
+    api.delete(`/projects/${id}`, { data: userId ? { userId } : undefined }),
 };
 
 // Invoice API calls (mocked for now)

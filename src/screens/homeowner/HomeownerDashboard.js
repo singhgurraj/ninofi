@@ -98,7 +98,7 @@ const HomeownerDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Active Projects</Text>
-            <TouchableOpacity onPress={() => console.log('View All - Coming soon')}>
+            <TouchableOpacity onPress={() => navigation.navigate('ProjectsList')}>
               <Text style={styles.viewAll}>View All</Text>
             </TouchableOpacity>
           </View>
