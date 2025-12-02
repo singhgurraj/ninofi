@@ -811,7 +811,7 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = pa.contractor_id
-        WHERE pa.id = $1
+        WHERE pa.id::text = $1
       `,
       [applicationId]
     );
@@ -831,7 +831,7 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
 
     await client.query('BEGIN');
     await client.query(
-      'UPDATE project_applications SET status = $1 WHERE id = $2',
+      'UPDATE project_applications SET status = $1 WHERE id::text = $2',
       [newStatus, applicationId]
     );
 
