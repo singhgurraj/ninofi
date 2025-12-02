@@ -1,17 +1,21 @@
 const express = require('express');
-const fs = require('fs-extra');
-const path = require('path');
 const cors = require('cors');
 const crypto = require('crypto');
+const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const DATA_DIR = path.join(__dirname, 'data');
-const USERS_SUFFIX = '_users.json';
+const SALT_ROUNDS = 10;
 const ENV_VARIABLES = [
   { key: 'PORT', label: 'Server port' },
   { key: 'NODE_ENV', label: 'Node environment' },
+  { key: 'JWT_SECRET', label: 'JWT signing secret' },
+  { key: 'JWT_EXPIRES_IN', label: 'JWT expiration (e.g., 7d, 1h)' },
   { key: 'DATABASE_URL', label: 'PostgreSQL connection URL (Railway)' },
+  { key: 'DATABASE_SSL', label: 'Force Postgres SSL (true/false)' },
+  { key: 'PGSSLMODE', label: 'Postgres SSL mode (require/disable)' },
   { key: 'PGHOST', label: 'Postgres host' },
   { key: 'PGPORT', label: 'Postgres port' },
   { key: 'PGUSER', label: 'Postgres user' },
@@ -28,73 +32,123 @@ const ENV_VARIABLES = [
   { key: 'RAILWAY_STATIC_URL', label: 'Railway static URL' },
 ];
 
-fs.ensureDirSync(DATA_DIR);
-
 app.use(cors());
 app.use(express.json());
 
-const getRoleFilePath = (role) => {
-  const normalizedRole = (role || 'unknown').toLowerCase();
-  return {
-    normalizedRole,
-    filePath: path.join(DATA_DIR, `${normalizedRole}${USERS_SUFFIX}`),
-  };
-};
+const normalizeRole = (role) => (role || 'unknown').toLowerCase();
 
-const readUsersByRole = async (role) => {
-  const { filePath } = getRoleFilePath(role);
-  if (!(await fs.pathExists(filePath))) {
-    return [];
+const buildSslConfig = () => {
+  const sslFlag = (process.env.PGSSLMODE || process.env.DATABASE_SSL || '').toLowerCase();
+  if (['disable', 'off', 'false', '0'].includes(sslFlag)) return false;
+  if (['require', 'true', '1', 'on'].includes(sslFlag)) return { rejectUnauthorized: false };
+  if (process.env.DATABASE_URL && /railway/i.test(process.env.DATABASE_URL)) {
+    return { rejectUnauthorized: false };
   }
-  try {
-    const users = await fs.readJson(filePath);
-    return Array.isArray(users) ? users : [];
-  } catch {
-    return [];
-  }
+  return false;
 };
 
-const writeUsersByRole = async (role, users) => {
-  const { filePath } = getRoleFilePath(role);
-  await fs.writeJson(filePath, users, { spaces: 2 });
-};
+const connectionString = process.env.DATABASE_URL;
+const pool = connectionString
+  ? new Pool({
+      connectionString,
+      ssl: buildSslConfig(),
+    })
+  : null;
 
-const sanitizeUser = (user) => {
-  const { password, confirmPassword, ...safeUser } = user;
-  return safeUser;
-};
-
-const findUserByEmail = async (email) => {
-  const files = await fs.readdir(DATA_DIR).catch(() => []);
-  for (const file of files) {
-    if (!file.endsWith(USERS_SUFFIX)) continue;
-    const role = file.replace(USERS_SUFFIX, '');
-    const filePath = path.join(DATA_DIR, file);
-    let users = [];
-    try {
-      users = await fs.readJson(filePath);
-    } catch {
-      users = [];
-    }
-
-    if (!Array.isArray(users)) continue;
-
-    const user = users.find(
-      (record) => record.email?.toLowerCase() === email?.toLowerCase()
-    );
-    if (user) {
-      return { user, users, role, filePath };
-    }
+const initDb = async () => {
+  if (!pool) {
+    throw new Error('DATABASE_URL env var is not set');
   }
 
-  return { user: null, users: [], role: null, filePath: null };
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      role TEXT NOT NULL,
+      password_hash TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'email_normalized'
+      ) THEN
+        ALTER TABLE users ADD COLUMN email_normalized TEXT GENERATED ALWAYS AS (lower(email)) STORED;
+      END IF;
+    END
+    $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'users_email_normalized_key'
+      ) THEN
+        ALTER TABLE users ADD CONSTRAINT users_email_normalized_key UNIQUE (email_normalized);
+      END IF;
+    END
+    $$;
+  `);
+
+  await pool.query('CREATE INDEX IF NOT EXISTS users_role_idx ON users (role)');
+  await pool.query('CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC)');
 };
 
-const generateToken = () => {
-  if (crypto.randomUUID) {
-    return `mock-jwt-${crypto.randomUUID()}`;
+const dbReady = (async () => {
+  if (!pool) {
+    console.warn('DATABASE_URL not set; API auth endpoints will fail until it is provided.');
+    return;
   }
-  return `mock-jwt-${crypto.randomBytes(16).toString('hex')}`;
+  await initDb();
+})().catch((error) => {
+  console.error('Database initialization failed:', error);
+  throw error;
+});
+
+const assertDbReady = async () => {
+  if (!pool) {
+    throw new Error('DATABASE_URL env var is not set');
+  }
+  return dbReady;
+};
+
+const mapDbUser = (row = {}) => ({
+  id: row.id,
+  fullName: row.full_name,
+  email: row.email,
+  phone: row.phone || '',
+  role: row.role,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+});
+
+const getUserByEmail = async (email) => {
+  await assertDbReady();
+  const result = await pool.query(
+    'SELECT * FROM users WHERE email_normalized = lower($1) LIMIT 1',
+    [email || '']
+  );
+  return result.rows[0] || null;
+};
+
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET env var is not set');
+  }
+  return secret;
+};
+
+const signJwt = (userId) => {
+  const secret = getJwtSecret();
+  const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
+  return jwt.sign({ sub: userId }, secret, { expiresIn });
 };
 
 const redactValue = (value = '') => {
@@ -127,17 +181,18 @@ app.get('/', (req, res) => {
     <h1>Ninofi API Server</h1>
     <p>Available endpoints:</p>
     <ul>
-      <li>POST /api/auth/register - Register a new user</li>
-      <li>POST /api/auth/login - Login with existing user</li>
-      <li>POST /api/users - (Legacy) Save raw user data</li>
-      <li>GET /api/users/:role - Fetch users for a role</li>
+      <li>POST /api/auth/register - Register a new user (Postgres)</li>
+      <li>POST /api/auth/login - Login with existing user (Postgres)</li>
+      <li>POST /api/users - (Legacy) Save raw user data to Postgres</li>
+      <li>GET /api/users/:role - Fetch users for a role (Postgres)</li>
       <li>GET /env - View environment variables (Railway, Postgres, Redis)</li>
     </ul>
   `);
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (_req, res) => {
+  const dbStatus = pool ? 'configured' : 'missing DATABASE_URL';
+  res.json({ status: 'ok', db: dbStatus, timestamp: new Date().toISOString() });
 });
 
 app.get('/env', (_req, res) => {
@@ -329,32 +384,38 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    const existingUser = await findUserByEmail(email);
-    if (existingUser.user) {
+    const normalizedRole = normalizeRole(role);
+    await assertDbReady();
+
+    const existingUser = await getUserByEmail(email);
+    if (existingUser) {
       return res.status(409).json({ message: 'User already exists' });
     }
 
-    const newUser = {
-      id: Date.now().toString(),
-      fullName,
-      email,
-      phone: phone || '',
-      role: role.toLowerCase(),
-      password,
-      createdAt: new Date().toISOString(),
-    };
-
-    const users = await readUsersByRole(role);
-    users.push(newUser);
-    await writeUsersByRole(role, users);
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    const userId =
+      crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const result = await pool.query(
+      `
+        INSERT INTO users (id, full_name, email, phone, role, password_hash)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [userId, fullName, email, phone || '', normalizedRole, passwordHash]
+    );
 
     return res.status(201).json({
-      user: sanitizeUser(newUser),
-      token: generateToken(),
+      user: mapDbUser(result.rows[0]),
+      token: signJwt(userId),
     });
   } catch (error) {
     console.error('Error registering user:', error);
-    return res.status(500).json({ message: 'Failed to register user' });
+    const message = !pool
+      ? 'Database is not configured (set DATABASE_URL)'
+      : error?.message?.includes('JWT_SECRET')
+      ? 'JWT secret is not configured (set JWT_SECRET)'
+      : 'Failed to register user';
+    return res.status(500).json({ message });
   }
 });
 
@@ -366,51 +427,111 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
-    const { user } = await findUserByEmail(email);
-    if (!user || user.password !== password) {
+    await assertDbReady();
+    const user = await getUserByEmail(email);
+    if (!user || !user.password_hash) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const passwordMatches = await bcrypt.compare(password, user.password_hash);
+    if (!passwordMatches) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     return res.json({
-      user: sanitizeUser(user),
-      token: generateToken(),
+      user: mapDbUser(user),
+      token: signJwt(user.id),
     });
   } catch (error) {
     console.error('Error logging in:', error);
-    return res.status(500).json({ message: 'Failed to login' });
+    const message = !pool
+      ? 'Database is not configured (set DATABASE_URL)'
+      : error?.message?.includes('JWT_SECRET')
+      ? 'JWT secret is not configured (set JWT_SECRET)'
+      : 'Failed to login';
+    return res.status(500).json({ message });
   }
 });
 
 // Legacy endpoints retained for compatibility
 app.post('/api/users', async (req, res) => {
   try {
-    const userData = req.body;
-    const role = userData.role || 'unknown';
-    const users = await readUsersByRole(role);
-    users.push(userData);
-    await writeUsersByRole(role, users);
-    res.status(201).json({ success: true });
+    const userData = req.body || {};
+    const { email, role } = userData;
+
+    if (!email || !role) {
+      return res.status(400).json({ success: false, message: 'Email and role are required' });
+    }
+
+    await assertDbReady();
+
+    const existingUser = await getUserByEmail(email);
+    if (existingUser) {
+      return res.status(409).json({ success: false, message: 'User already exists' });
+    }
+
+    const passwordHash = userData.password
+      ? await bcrypt.hash(userData.password, SALT_ROUNDS)
+      : null;
+    const userId =
+      crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+
+    const result = await pool.query(
+      `
+        INSERT INTO users (id, full_name, email, phone, role, password_hash)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [
+        userId,
+        userData.fullName || userData.name || 'Unnamed',
+        email,
+        userData.phone || '',
+        normalizeRole(role),
+        passwordHash,
+      ]
+    );
+
+    res.status(201).json({ success: true, user: mapDbUser(result.rows[0]) });
   } catch (error) {
     console.error('Error saving user data:', error);
-    res.status(500).json({ success: false, error: 'Failed to save user data' });
+    const errorMessage = pool
+      ? 'Failed to save user data'
+      : 'Database is not configured (set DATABASE_URL)';
+    res.status(500).json({ success: false, error: errorMessage });
   }
 });
 
 app.get('/api/users/:role', async (req, res) => {
   try {
     const { role } = req.params;
-    const users = await readUsersByRole(role);
-    res.json(users);
+    await assertDbReady();
+    const result = await pool.query(
+      'SELECT * FROM users WHERE role = $1 ORDER BY created_at DESC',
+      [normalizeRole(role)]
+    );
+    res.json(result.rows.map(mapDbUser));
   } catch (error) {
     console.error('Error fetching users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
+    const errorMessage = pool
+      ? 'Failed to fetch users'
+      : 'Database is not configured (set DATABASE_URL)';
+    res.status(500).json({ error: errorMessage });
   }
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  (async () => {
+    try {
+      await dbReady;
+      app.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+    } catch (error) {
+      console.error('Server failed to start:', error);
+      process.exit(1);
+    }
+  })();
 }
 
 module.exports = app;
