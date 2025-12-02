@@ -977,6 +977,91 @@ app.get('/api/applications/contractor/:contractorId', async (req, res) => {
   }
 });
 
+app.get('/api/projects/contractor/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT
+          p.*,
+          u.id AS owner_id,
+          u.full_name AS owner_full_name,
+          u.email AS owner_email,
+          u.phone AS owner_phone,
+          u.profile_photo_url AS owner_profile_photo_url,
+          u.rating AS owner_rating,
+          m.id AS milestone_id,
+          m.name AS milestone_name,
+          m.amount AS milestone_amount,
+          m.description AS milestone_description,
+          m.position AS milestone_position,
+          m.created_at AS milestone_created_at,
+          pm.id AS media_id,
+          pm.url AS media_url,
+          pm.label AS media_label,
+          pm.created_at AS media_created_at
+        FROM project_applications pa
+        JOIN projects p ON p.id = pa.project_id
+        JOIN users u ON u.id = p.user_id
+        LEFT JOIN milestones m ON m.project_id = p.id
+        LEFT JOIN project_media pm ON pm.project_id = p.id
+        WHERE pa.contractor_id = $1 AND pa.status = 'accepted'
+        ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
+      `,
+      [contractorId]
+    );
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      if (!grouped.has(row.id)) {
+        grouped.set(row.id, {
+          project: row,
+          milestones: [],
+          media: [],
+        });
+      }
+      if (row.milestone_id) {
+        grouped.get(row.id).milestones.push(
+          mapMilestoneRow({
+            id: row.milestone_id,
+            name: row.milestone_name,
+            amount: row.milestone_amount,
+            description: row.milestone_description,
+            position: row.milestone_position,
+            created_at: row.milestone_created_at,
+          })
+        );
+      }
+      if (row.media_id) {
+        grouped.get(row.id).media.push(
+          mapMediaRow({
+            id: row.media_id,
+            url: row.media_url,
+            label: row.media_label,
+            created_at: row.media_created_at,
+          })
+        );
+      }
+    }
+
+    const projects = Array.from(grouped.values()).map(({ project, milestones, media }) =>
+      mapProjectRow(project, milestones, media)
+    );
+
+    return res.json(projects);
+  } catch (error) {
+    console.error('Error fetching contractor projects:', error);
+    const message = pool
+      ? 'Failed to fetch projects'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 app.delete('/api/applications/:applicationId', async (req, res) => {
   const client = await pool.connect();
   try {

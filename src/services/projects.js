@@ -110,4 +110,8 @@ export const loadContractorApplications = (contractorId) => projectAPI.getApplic
 export const withdrawApplication = (applicationId, contractorId) => async (dispatch) => {
   await projectAPI.deleteApplication(applicationId, contractorId);
   dispatch(withdrawApplicationLocal(applicationId));
+  if (contractorId) {
+    dispatch(loadOpenProjects(contractorId));
+    dispatch(loadContractorProjects(contractorId));
+  }
 };

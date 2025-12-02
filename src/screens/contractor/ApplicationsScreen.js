@@ -29,7 +29,7 @@ const ApplicationsScreen = () => {
   const handleWithdraw = async (applicationId) => {
     try {
       await withdrawApplication(applicationId, user?.id);
-      setApplications((prev) => prev.filter((a) => a.id !== applicationId));
+      fetchApps();
     } catch (err) {
       Alert.alert('Error', err.response?.data?.message || 'Failed to withdraw application');
     }
