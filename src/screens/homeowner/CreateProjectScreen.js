@@ -18,6 +18,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const existingProject = route?.params?.project;
+  const origin = route?.params?.origin || null;
 
   const [step, setStep] = useState(1);
   const [projectType, setProjectType] = useState(existingProject?.projectType || '');
@@ -132,7 +133,11 @@ const CreateProjectScreen = ({ navigation, route }) => {
       const result = await dispatch(saveProject(projectPayload));
       if (result?.success) {
         Alert.alert('Success', `Project ${existingProject ? 'updated' : 'created'}!`, [
-          { text: 'OK', onPress: () => navigation.navigate('Dashboard') },
+          {
+            text: 'OK',
+            onPress: () =>
+              navigation.navigate(origin === 'ProjectsList' ? 'ProjectsList' : 'Dashboard'),
+          },
         ]);
       } else {
         Alert.alert('Error', result?.error || 'Failed to save project');
@@ -358,7 +363,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
                             removeProject(existingProject.id, user?.id)
                           );
                           if (result?.success) {
-                            navigation.navigate('ProjectsList');
+                            navigation.navigate(
+                              origin === 'ProjectsList' ? 'ProjectsList' : 'Dashboard'
+                            );
                           } else {
                             Alert.alert('Error', result?.error || 'Failed to delete project');
                           }

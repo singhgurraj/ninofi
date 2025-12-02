@@ -42,6 +42,12 @@ const ProjectsListScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Your Projects</Text>
+        <TouchableOpacity
+          style={styles.homeButton}
+          onPress={() => navigation.navigate('Dashboard')}
+        >
+          <Text style={styles.homeButtonText}>Go to Dashboard</Text>
+        </TouchableOpacity>
         {isLoading && <Text style={styles.muted}>Loading…</Text>}
         {!isLoading && (!projects || projects.length === 0) && (
           <Text style={styles.muted}>No projects yet.</Text>
@@ -59,7 +65,9 @@ const ProjectsListScreen = ({ navigation }) => {
               <View style={styles.cardActions}>
                 <TouchableOpacity
                   style={styles.action}
-                  onPress={() => navigation.navigate('CreateProject', { project })}
+                  onPress={() =>
+                    navigation.navigate('CreateProject', { project, origin: 'ProjectsList' })
+                  }
                 >
                   <Text style={styles.actionText}>Edit</Text>
                 </TouchableOpacity>
@@ -97,6 +105,15 @@ const styles = StyleSheet.create({
   cardMeta: { color: palette.muted, marginTop: 4, fontSize: 13 },
   address: { marginTop: 10, color: palette.text },
   cardActions: { flexDirection: 'column', gap: 8 },
+  homeButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: palette.primary,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  homeButtonText: { color: '#fff', fontWeight: '600' },
   action: {
     paddingVertical: 6,
     paddingHorizontal: 10,

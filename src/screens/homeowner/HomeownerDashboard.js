@@ -125,7 +125,7 @@ const HomeownerDashboard = ({ navigation }) => {
             <TouchableOpacity 
               key={project.id}
               style={styles.projectCard}
-              onPress={() => navigation.navigate('CreateProject', { project })}
+              onPress={() => navigation.navigate('CreateProject', { project, origin: 'Dashboard' })}
             >
               <View style={styles.projectHeader}>
                 <Text style={styles.projectTitle}>{project.title}</Text>
