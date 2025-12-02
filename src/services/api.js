@@ -2,10 +2,12 @@ import Constants from 'expo-constants';
 import axios from 'axios';
 
 const resolveBaseUrl = () => {
+  // Preferred: explicit env var for Railway
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
+  // Fallbacks for local dev via Expo tunnels/lan
   const host =
     Constants.expoConfig?.hostUri?.split(':')[0] ||
     Constants.manifest?.debuggerHost?.split(':')[0];
