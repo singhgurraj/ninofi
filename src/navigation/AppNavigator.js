@@ -59,8 +59,8 @@ const AppNavigator = () => {
 
   const DashboardComponent = getDashboardScreen();
 
-  const MainAppStack = () => (
-    <MainStack.Navigator screenOptions={{ headerShown: false }}>
+const MainAppStack = () => (
+  <MainStack.Navigator screenOptions={{ headerShown: false }}>
       <MainStack.Screen
         name="Dashboard"
         component={DashboardComponent}

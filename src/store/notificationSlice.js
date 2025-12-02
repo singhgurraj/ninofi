@@ -6,15 +6,27 @@ const notificationSlice = createSlice({
     items: [],
   },
   reducers: {
+    setNotifications: (state, action) => {
+      const list = Array.isArray(action.payload) ? action.payload : [];
+      state.items = list.map((n) => ({
+        id: n.id || nanoid(),
+        createdAt: n.createdAt || new Date().toISOString(),
+        read: !!n.read,
+        ...n,
+      }));
+    },
     addNotification: {
       reducer: (state, action) => {
-        state.items.unshift(action.payload);
+        const exists = state.items.find((n) => n.id === action.payload.id);
+        if (!exists) {
+          state.items.unshift(action.payload);
+        }
       },
       prepare: (data) => ({
         payload: {
-          id: nanoid(),
-          createdAt: new Date().toISOString(),
-          read: false,
+          id: data?.id || nanoid(),
+          createdAt: data?.createdAt || new Date().toISOString(),
+          read: data?.read ?? false,
           ...data,
         },
       }),
@@ -29,7 +41,7 @@ const notificationSlice = createSlice({
   },
 });
 
-export const { addNotification, markNotificationRead, clearNotifications } =
+export const { setNotifications, addNotification, markNotificationRead, clearNotifications } =
   notificationSlice.actions;
 
 export default notificationSlice.reducer;

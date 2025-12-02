@@ -33,8 +33,8 @@ const NotificationsScreen = () => {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Notifications</Text>
         {items.length === 0 && <Text style={styles.muted}>No notifications.</Text>}
-        {items.map((n) => (
-          <View key={n.id} style={styles.card}>
+        {items.map((n, idx) => (
+          <View key={n.id || idx} style={styles.card}>
             <Text style={styles.cardTitle}>{n.title}</Text>
             <Text style={styles.cardBody}>{n.body}</Text>
             {n.data?.contractorName && (
