@@ -1,4 +1,4 @@
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 import { useState } from 'react';
 import {
   Alert,
@@ -54,10 +54,16 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
           style: 'destructive',
           onPress: async () => {
             await dispatch(logout());
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Welcome' }],
-            });
+            const rootNav =
+              navigation.getParent?.()?.getParent?.() ||
+              navigation.getParent?.() ||
+              navigation;
+            rootNav.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'Welcome' }],
+              })
+            );
           }
         }
       ]
