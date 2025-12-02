@@ -17,6 +17,14 @@ const ProjectsListScreen = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const { projects, isLoading } = useSelector((state) => state.projects);
 
+  useEffect(() => {
+    const parent = navigation.getParent?.();
+    const unsubscribe = parent?.addListener('tabPress', () => {
+      navigation.navigate('Dashboard');
+    });
+    return unsubscribe;
+  }, [navigation]);
+
   const fetchProjects = useCallback(() => {
     if (user?.id) {
       dispatch(loadProjectsForUser(user.id));
@@ -42,12 +50,6 @@ const ProjectsListScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Your Projects</Text>
-        <TouchableOpacity
-          style={styles.homeButton}
-          onPress={() => navigation.navigate('Dashboard')}
-        >
-          <Text style={styles.homeButtonText}>Go to Dashboard</Text>
-        </TouchableOpacity>
         {isLoading && <Text style={styles.muted}>Loading…</Text>}
         {!isLoading && (!projects || projects.length === 0) && (
           <Text style={styles.muted}>No projects yet.</Text>
