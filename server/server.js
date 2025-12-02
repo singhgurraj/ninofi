@@ -344,6 +344,20 @@ const mapApplicationRow = (row = {}) => ({
         role: row.contractor_role,
       }
     : null,
+  projectTitle: row.project_title,
+  projectAddress: row.project_address,
+  estimatedBudget:
+    row.estimated_budget !== null && row.estimated_budget !== undefined
+      ? Number(row.estimated_budget)
+      : null,
+  owner: row.owner_id
+    ? {
+        id: row.owner_id,
+        fullName: row.owner_full_name,
+        email: row.owner_email,
+        phone: row.owner_phone,
+      }
+    : null,
 });
 
 const mapNotificationRow = (row = {}) => ({
@@ -958,7 +972,9 @@ app.get('/api/applications/contractor/:contractorId', async (req, res) => {
           p.address AS project_address,
           p.estimated_budget,
           p.user_id AS owner_id,
-          u.full_name AS owner_full_name
+          u.full_name AS owner_full_name,
+          u.email AS owner_email,
+          u.phone AS owner_phone
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = p.user_id

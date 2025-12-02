@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import palette from '../../styles/palette';
 import { loadContractorApplications, withdrawApplication } from '../../services/projects';
 
 const ApplicationsScreen = () => {
+  const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -28,7 +29,7 @@ const ApplicationsScreen = () => {
 
   const handleWithdraw = async (applicationId) => {
     try {
-      await withdrawApplication(applicationId, user?.id);
+      await dispatch(withdrawApplication(applicationId, user?.id));
       fetchApps();
     } catch (err) {
       Alert.alert('Error', err.response?.data?.message || 'Failed to withdraw application');
@@ -47,6 +48,12 @@ const ApplicationsScreen = () => {
           <View key={app.id} style={styles.card}>
             <Text style={styles.cardTitle}>{app.projectTitle || 'Project'}</Text>
             <Text style={styles.meta}>Status: {app.status}</Text>
+            {app.estimatedBudget !== undefined && app.estimatedBudget !== null && (
+              <Text style={styles.meta}>
+                Budget: ${Number(app.estimatedBudget || 0).toLocaleString()}
+              </Text>
+            )}
+            {app.projectAddress ? <Text style={styles.meta}>{app.projectAddress}</Text> : null}
             {app.message ? <Text style={styles.meta}>Note: {app.message}</Text> : null}
             <Text style={styles.meta}>Owner: {app.owner?.fullName || app.owner_full_name || ''}</Text>
             <View style={styles.actions}>
