@@ -9,6 +9,9 @@ const initialState = {
   isLoadingOpen: false,
   openError: null,
   appliedProjectIds: [],
+  contractorProjects: [],
+  isLoadingContractor: false,
+  contractorError: null,
 };
 
 const projectSlice = createSlice({
@@ -67,6 +70,18 @@ const projectSlice = createSlice({
         state.openProjects = state.openProjects.filter((p) => p.id !== id);
       }
     },
+    fetchContractorProjectsStart: (state) => {
+      state.isLoadingContractor = true;
+      state.contractorError = null;
+    },
+    fetchContractorProjectsSuccess: (state, action) => {
+      state.isLoadingContractor = false;
+      state.contractorProjects = action.payload;
+    },
+    fetchContractorProjectsFailure: (state, action) => {
+      state.isLoadingContractor = false;
+      state.contractorError = action.payload;
+    },
   },
 });
 
@@ -83,6 +98,9 @@ export const {
   fetchOpenProjectsSuccess,
   fetchOpenProjectsFailure,
   applyForProject,
+  fetchContractorProjectsStart,
+  fetchContractorProjectsSuccess,
+  fetchContractorProjectsFailure,
 } = projectSlice.actions;
 
 export default projectSlice.reducer;

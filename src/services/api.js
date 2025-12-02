@@ -83,6 +83,8 @@ export const setAuthToken = (token) => {
 // Project API calls
 export const projectAPI = {
   getProjectsForUser: async (userId) => api.get(`/projects/user/${userId}`),
+  getProjectsForContractor: async (contractorId) =>
+    api.get(`/projects/contractor/${contractorId}`),
   getOpenProjects: async (contractorId) =>
     api.get('/projects/open', { params: contractorId ? { contractorId } : {} }),
   createProject: async (projectData) => api.post('/projects', projectData),

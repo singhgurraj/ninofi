@@ -33,9 +33,8 @@ const NotificationsScreen = ({ navigation }) => {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Notifications</Text>
         {items.length === 0 && <Text style={styles.muted}>No notifications.</Text>}
-        {items.map((n, idx) => {
-          const key = `${n.id || 'local'}-${idx}`;
-          return (
+        {Array.from(new Map(items.map((n, idx) => [n.id || `local-${idx}`, n])).entries()).map(
+          ([key, n]) => (
             <TouchableOpacity
               key={key}
               style={styles.card}
@@ -52,8 +51,8 @@ const NotificationsScreen = ({ navigation }) => {
                 <Text style={styles.meta}>Project: {n.data.projectTitle}</Text>
               )}
             </TouchableOpacity>
-          );
-        })}
+          )
+        )}
       </ScrollView>
     </SafeAreaView>
   );

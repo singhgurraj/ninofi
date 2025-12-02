@@ -9,6 +9,9 @@ import {
   fetchOpenProjectsSuccess,
   fetchOpenProjectsFailure,
   applyForProject,
+  fetchContractorProjectsStart,
+  fetchContractorProjectsSuccess,
+  fetchContractorProjectsFailure,
 } from '../store/projectSlice';
 import { projectAPI } from './api';
 
@@ -83,6 +86,20 @@ export const applyToProject = (projectId, contractorId, message) => async (dispa
     return { success: true };
   } catch (error) {
     const msg = error.response?.data?.message || 'Failed to apply';
+    return { success: false, error: msg };
+  }
+};
+
+export const loadContractorProjects = (contractorId) => async (dispatch) => {
+  if (!contractorId) return { success: false, error: 'Missing contractorId' };
+  try {
+    dispatch(fetchContractorProjectsStart());
+    const response = await projectAPI.getProjectsForContractor(contractorId);
+    dispatch(fetchContractorProjectsSuccess(response.data || []));
+    return { success: true };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to load projects';
+    dispatch(fetchContractorProjectsFailure(msg));
     return { success: false, error: msg };
   }
 };

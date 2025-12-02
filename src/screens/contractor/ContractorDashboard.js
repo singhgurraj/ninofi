@@ -12,12 +12,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import VerificationBadge from '../../components/VerificationBadge';
 import palette from '../../styles/palette';
 import { glassCard, pillButton, pillButtonText, shadowCard } from '../../styles/ui';
-import { loadOpenProjects } from '../../services/projects';
+import { loadOpenProjects, loadContractorProjects } from '../../services/projects';
 
 const ContractorDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
-  const { openProjects, isLoadingOpen } = useSelector((state) => state.projects);
+  const { openProjects, isLoadingOpen, contractorProjects, isLoadingContractor } = useSelector((state) => state.projects);
   const stats = {
     earnings: 8450,
     activeProjects: 0,
@@ -27,6 +27,7 @@ const ContractorDashboard = ({ navigation }) => {
   const loadProjects = useCallback(() => {
     if (user?.id) {
       dispatch(loadOpenProjects(user.id));
+      dispatch(loadContractorProjects(user.id));
     }
   }, [dispatch, user?.id]);
 
@@ -145,8 +146,26 @@ const ContractorDashboard = ({ navigation }) => {
             </TouchableOpacity>
           </View>
 
-          {isLoadingOpen && <Text style={styles.muted}>Loading projects…</Text>}
-          {!isLoadingOpen && <Text style={styles.muted}>No active projects yet.</Text>}
+          {isLoadingContractor && <Text style={styles.muted}>Loading projects…</Text>}
+          {!isLoadingContractor && (!contractorProjects || contractorProjects.length === 0) && (
+            <Text style={styles.muted}>No active projects yet.</Text>
+          )}
+          {!isLoadingContractor &&
+            contractorProjects?.map((project) => (
+              <View key={project.id} style={styles.projectCard}>
+                <View style={styles.projectHeader}>
+                  <Text style={styles.projectTitle}>{project.title}</Text>
+                  <Text style={styles.projectStatus}>{project.projectType || 'Project'}</Text>
+                </View>
+                <Text style={styles.projectClient}>{project.address || 'No address provided'}</Text>
+                <Text style={styles.milestoneLabel}>
+                  Milestones: {project.milestones?.length || 0}
+                </Text>
+                <Text style={styles.milestoneAmount}>
+                  Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
+                </Text>
+              </View>
+            ))}
         </View>
 
         {/* Recent Payments */}
