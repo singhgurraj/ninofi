@@ -26,6 +26,9 @@ import ReviewMilestoneScreen from '../screens/homeowner/ReviewMilestoneScreen';
 import ProfileScreen from '../screens/shared/ProfileScreen';
 import WalletScreen from '../screens/shared/WalletScreen';
 import ProjectsListScreen from '../screens/homeowner/ProjectsListScreen';
+import FindJobsScreen from '../screens/contractor/FindJobsScreen';
+import ContractorProjectDetailsScreen from '../screens/contractor/ContractorProjectDetailsScreen';
+import NotificationsScreen from '../screens/shared/NotificationsScreen';
 import { setAuthToken } from '../services/api';
 
 const RootStack = createStackNavigator();
@@ -77,6 +80,21 @@ const AppNavigator = () => {
         name="ProjectsList"
         component={ProjectsListScreen}
         options={{ title: 'All Projects' }}
+      />
+      <MainStack.Screen
+        name="FindJobs"
+        component={FindJobsScreen}
+        options={{ title: 'Find Jobs' }}
+      />
+      <MainStack.Screen
+        name="ContractorProjectDetails"
+        component={ContractorProjectDetailsScreen}
+        options={{ title: 'Project Details' }}
+      />
+      <MainStack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ title: 'Notifications' }}
       />
       <MainStack.Screen
         name="FundProject"

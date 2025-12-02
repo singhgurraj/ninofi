@@ -51,7 +51,10 @@ const HomeownerDashboard = ({ navigation }) => {
             <Text style={styles.role}>Homeowner</Text>
           </View>
           <View style={styles.headerButtons}>
-            <TouchableOpacity style={styles.notificationButton}>
+            <TouchableOpacity
+              style={styles.notificationButton}
+              onPress={() => navigation.navigate('Notifications')}
+            >
               <Text style={styles.notificationIcon}>🔔</Text>
             </TouchableOpacity>
           </View>

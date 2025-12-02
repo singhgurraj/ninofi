@@ -20,13 +20,15 @@ const ContractorDashboard = ({ navigation }) => {
   const { openProjects, isLoadingOpen } = useSelector((state) => state.projects);
   const stats = {
     earnings: 8450,
-    activeProjects: openProjects?.length || 0,
+    activeProjects: 0,
     rating: 4.8,
   };
 
   const loadProjects = useCallback(() => {
-    dispatch(loadOpenProjects());
-  }, [dispatch]);
+    if (user?.id) {
+      dispatch(loadOpenProjects(user.id));
+    }
+  }, [dispatch, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -44,7 +46,7 @@ const ContractorDashboard = ({ navigation }) => {
               <Text style={styles.heroGreeting}>Hi {user?.fullName || 'Contractor'}</Text>
               <Text style={styles.heroSubtitle}>Licensed Contractor</Text>
             </View>
-            <TouchableOpacity style={styles.notificationButton}>
+            <TouchableOpacity style={styles.notificationButton} onPress={() => navigation.navigate('Notifications')}>
               <Text style={styles.notificationIcon}>🔔</Text>
             </TouchableOpacity>
           </View>
@@ -98,7 +100,7 @@ const ContractorDashboard = ({ navigation }) => {
           <View style={styles.cardGrid}>
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
-              onPress={() => console.log('Find Jobs - Coming soon')}
+              onPress={() => navigation.navigate('FindJobs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
               <Text style={styles.actionTitle}>Find Jobs</Text>
@@ -138,60 +140,13 @@ const ContractorDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Active Projects</Text>
-            <TouchableOpacity onPress={loadProjects}>
-              <Text style={styles.viewAll}>Refresh</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('FindJobs')}>
+              <Text style={styles.viewAll}>Find Jobs</Text>
             </TouchableOpacity>
           </View>
 
           {isLoadingOpen && <Text style={styles.muted}>Loading projects…</Text>}
-          {!isLoadingOpen && (!openProjects || openProjects.length === 0) && (
-            <Text style={styles.muted}>No open projects yet.</Text>
-          )}
-
-          {openProjects?.map((project) => {
-            const progress =
-              project.milestones && project.milestones.length
-                ? Math.round(
-                    (project.milestones.filter((m) => m.status === 'completed').length /
-                      project.milestones.length) *
-                      100
-                  )
-                : 0;
-            return (
-            <TouchableOpacity 
-              key={project.id}
-              style={styles.projectCard}
-              onPress={() => console.log('Project Details - Coming soon', project.title)}
-            >
-              <View style={styles.projectHeader}>
-                <Text style={styles.projectTitle}>{project.title}</Text>
-                <Text style={styles.projectStatus}>{project.projectType || 'Project'}</Text>
-              </View>
-              
-              <Text style={styles.projectClient}>
-                {project.address || 'No address provided'}
-              </Text>
-              
-              <View style={styles.milestoneInfo}>
-                <Text style={styles.milestoneLabel}>
-                  Milestones: {project.milestones?.length || 0}
-                </Text>
-                <Text style={styles.milestoneAmount}>
-                  Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
-                </Text>
-              </View>
-              
-              <View style={styles.progressBar}>
-                <View 
-                  style={[
-                    styles.progressFill, 
-                    { width: `${progress}%` }
-                  ]} 
-                />
-              </View>
-            </TouchableOpacity>
-          );
-          })}
+          {!isLoadingOpen && <Text style={styles.muted}>No active projects yet.</Text>}
         </View>
 
         {/* Recent Payments */}

@@ -107,6 +107,25 @@ const initDb = async () => {
   await pool.query('CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC)');
 
   await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'profile_photo_url'
+      ) THEN
+        ALTER TABLE users ADD COLUMN profile_photo_url TEXT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'rating'
+      ) THEN
+        ALTER TABLE users ADD COLUMN rating NUMERIC;
+      END IF;
+    END
+    $$;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS projects (
       id UUID PRIMARY KEY,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -169,6 +188,19 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS project_applications_contractor_id_idx ON project_applications (contractor_id)'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      data JSONB,
+      read BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS notifications_user_id_idx ON notifications (user_id, created_at DESC)');
 };
 
 const dbReady = (async () => {
@@ -195,6 +227,8 @@ const mapDbUser = (row = {}) => ({
   email: row.email,
   phone: row.phone || '',
   role: row.role,
+  profilePhotoUrl: row.profile_photo_url || '',
+  rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
 });
 
@@ -236,6 +270,19 @@ const mapProjectRow = (row = {}, milestones = [], media = []) => ({
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
   milestones,
   media,
+  owner: row.owner_id
+    ? {
+        id: row.owner_id,
+        fullName: row.owner_full_name,
+        email: row.owner_email,
+        phone: row.owner_phone,
+        profilePhotoUrl: row.owner_profile_photo_url || '',
+        rating:
+          row.owner_rating !== null && row.owner_rating !== undefined
+            ? Number(row.owner_rating)
+            : null,
+      }
+    : undefined,
 });
 
 const mapMediaRow = (row = {}) => ({
@@ -292,6 +339,16 @@ const mapApplicationRow = (row = {}) => ({
         role: row.contractor_role,
       }
     : null,
+});
+
+const mapNotificationRow = (row = {}) => ({
+  id: row.id,
+  userId: row.user_id,
+  title: row.title,
+  body: row.body,
+  data: row.data || {},
+  read: !!row.read,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
 });
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
@@ -602,6 +659,121 @@ app.post('/api/auth/register', async (req, res) => {
       ? 'JWT secret is not configured (set JWT_SECRET)'
       : 'Failed to register user';
     return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/projects/:projectId/apply', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { contractorId, message } = req.body || {};
+    if (!projectId || !contractorId) {
+      return res.status(400).json({ message: 'projectId and contractorId are required' });
+    }
+
+    await assertDbReady();
+    const projectResult = await client.query('SELECT * FROM projects WHERE id = $1', [projectId]);
+    if (!projectResult.rows.length) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const contractor = await getUserById(contractorId);
+    if (!contractor) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+
+    await client.query('BEGIN');
+
+    const existingApp = await client.query(
+      'SELECT * FROM project_applications WHERE project_id = $1 AND contractor_id = $2',
+      [projectId, contractorId]
+    );
+    if (existingApp.rows.length) {
+      const status = existingApp.rows[0].status;
+      if (status === 'pending' || status === 'accepted') {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Application already exists' });
+      }
+      await client.query(
+        'DELETE FROM project_applications WHERE project_id = $1 AND contractor_id = $2',
+        [projectId, contractorId]
+      );
+    }
+
+    const appId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const application = await client.query(
+      `
+        INSERT INTO project_applications (id, project_id, contractor_id, status, message)
+        VALUES ($1, $2, $3, 'pending', $4)
+        RETURNING *
+      `,
+      [appId, projectId, contractorId, message || '']
+    );
+
+    const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const notifData = {
+      contractorId,
+      contractorName: contractor.full_name,
+      contractorEmail: contractor.email,
+      contractorPhone: contractor.phone,
+      profilePhotoUrl: contractor.profile_photo_url || '',
+      projectId,
+      projectTitle: projectResult.rows[0].title,
+    };
+    await client.query(
+      `
+        INSERT INTO notifications (id, user_id, title, body, data)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        notificationId,
+        projectResult.rows[0].user_id,
+        `${contractor.full_name || 'Contractor'} is interested in ${projectResult.rows[0].title}`,
+        message || 'New contractor application',
+        JSON.stringify(notifData),
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    return res.status(201).json(
+      mapApplicationRow({
+        ...application.rows[0],
+        contractor_full_name: contractor.full_name,
+        contractor_email: contractor.email,
+        contractor_phone: contractor.phone,
+        contractor_role: contractor.role,
+      })
+    );
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error applying to project:', error);
+    const message = pool
+      ? 'Failed to apply to project'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/notifications/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      'SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    res.json(result.rows.map(mapNotificationRow));
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    const message = pool
+      ? 'Failed to fetch notifications'
+      : 'Database is not configured (set DATABASE_URL)';
+    res.status(500).json({ message });
   }
 });
 
@@ -925,6 +1097,12 @@ app.get('/api/projects/user/:userId', async (req, res) => {
       `
         SELECT
           p.*,
+          u.id AS owner_id,
+          u.full_name AS owner_full_name,
+          u.email AS owner_email,
+          u.phone AS owner_phone,
+          u.profile_photo_url AS owner_profile_photo_url,
+          u.rating AS owner_rating,
           m.id AS milestone_id,
           m.name AS milestone_name,
           m.amount AS milestone_amount,
@@ -936,6 +1114,7 @@ app.get('/api/projects/user/:userId', async (req, res) => {
           pm.label AS media_label,
           pm.created_at AS media_created_at
         FROM projects p
+        LEFT JOIN users u ON u.id = p.user_id
         LEFT JOIN milestones m ON m.project_id = p.id
         LEFT JOIN project_media pm ON pm.project_id = p.id
         WHERE p.user_id = $1
@@ -999,6 +1178,12 @@ app.get('/api/projects/open', async (_req, res) => {
       `
       SELECT
         p.*,
+        u.id AS owner_id,
+        u.full_name AS owner_full_name,
+        u.email AS owner_email,
+        u.phone AS owner_phone,
+        u.profile_photo_url AS owner_profile_photo_url,
+        u.rating AS owner_rating,
         m.id AS milestone_id,
         m.name AS milestone_name,
         m.amount AS milestone_amount,
@@ -1013,6 +1198,7 @@ app.get('/api/projects/open', async (_req, res) => {
         pa.status AS app_status,
         pa.contractor_id AS app_contractor_id
       FROM projects p
+      LEFT JOIN users u ON u.id = p.user_id
       LEFT JOIN milestones m ON m.project_id = p.id
       LEFT JOIN project_media pm ON pm.project_id = p.id
       LEFT JOIN project_applications pa ON pa.project_id = p.id AND pa.contractor_id = $1
