@@ -128,6 +128,20 @@ const initDb = async () => {
 
   await pool.query('CREATE INDEX IF NOT EXISTS projects_user_id_idx ON projects (user_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS milestones_project_id_idx ON milestones (project_id, position)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_media (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      label TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS project_media_project_id_idx ON project_media (project_id)'
+  );
 };
 
 const dbReady = (async () => {
@@ -180,7 +194,7 @@ const mapMilestoneRow = (row = {}) => ({
   position: typeof row.position === 'number' ? row.position : 0,
 });
 
-const mapProjectRow = (row = {}, milestones = []) => ({
+const mapProjectRow = (row = {}, milestones = [], media = []) => ({
   id: row.id,
   userId: row.user_id,
   title: row.title,
@@ -194,6 +208,13 @@ const mapProjectRow = (row = {}, milestones = []) => ({
   address: row.address || '',
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
   milestones,
+  media,
+});
+
+const mapMediaRow = (row = {}) => ({
+  id: row.id,
+  url: row.url,
+  label: row.label || '',
 });
 
 const validateMilestones = (milestones = []) => {
@@ -210,6 +231,19 @@ const validateMilestones = (milestones = []) => {
         amount: Number.isFinite(amountNum) ? amountNum : null,
         description: m.description || '',
         position: Number.isInteger(m.position) ? m.position : idx,
+      };
+    })
+    .filter(Boolean);
+};
+
+const validateMedia = (media = []) => {
+  if (!Array.isArray(media)) return [];
+  return media
+    .map((item) => {
+      if (!item || !item.url) return null;
+      return {
+        url: item.url,
+        label: item.label || '',
       };
     })
     .filter(Boolean);
@@ -542,6 +576,8 @@ app.post('/api/projects', async (req, res) => {
       timeline,
       address,
       milestones,
+      media,
+      media,
     } = req.body || {};
 
     if (!userId || !title) {
@@ -557,6 +593,8 @@ app.post('/api/projects', async (req, res) => {
     const projectId =
       crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
     const normalizedMilestones = validateMilestones(milestones);
+    const normalizedMedia = validateMedia(media);
+    const normalizedMedia = validateMedia(media);
     const budgetNumber =
       estimatedBudget === undefined || estimatedBudget === null || estimatedBudget === ''
         ? null
@@ -603,11 +641,25 @@ app.post('/api/projects', async (req, res) => {
       milestoneResults.push(result.rows[0]);
     }
 
+    const mediaResults = [];
+    for (const item of normalizedMedia) {
+      const mediaId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const result = await client.query(
+        `
+          INSERT INTO project_media (id, project_id, url, label)
+          VALUES ($1, $2, $3, $4)
+          RETURNING *
+        `,
+        [mediaId, projectId, item.url, item.label || '']
+      );
+      mediaResults.push(result.rows[0]);
+    }
+
     await client.query('COMMIT');
 
-    return res.status(201).json(
-      mapProjectRow(projectResult.rows[0], milestoneResults.map(mapMilestoneRow))
-    );
+    return res
+      .status(201)
+      .json(mapProjectRow(projectResult.rows[0], milestoneResults.map(mapMilestoneRow), mediaResults.map(mapMediaRow)));
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Error creating project:', error);
@@ -680,6 +732,7 @@ app.put('/api/projects/:projectId', async (req, res) => {
     );
 
     await client.query('DELETE FROM milestones WHERE project_id = $1', [projectId]);
+    await client.query('DELETE FROM project_media WHERE project_id = $1', [projectId]);
 
     const milestoneResults = [];
     for (const m of normalizedMilestones) {
@@ -703,10 +756,28 @@ app.put('/api/projects/:projectId', async (req, res) => {
       milestoneResults.push(result.rows[0]);
     }
 
+    const mediaResults = [];
+    for (const item of normalizedMedia) {
+      const mediaId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const result = await client.query(
+        `
+          INSERT INTO project_media (id, project_id, url, label)
+          VALUES ($1, $2, $3, $4)
+          RETURNING *
+        `,
+        [mediaId, projectId, item.url, item.label || '']
+      );
+      mediaResults.push(result.rows[0]);
+    }
+
     await client.query('COMMIT');
 
     return res.json(
-      mapProjectRow(updatedProject.rows[0], milestoneResults.map(mapMilestoneRow))
+      mapProjectRow(
+        updatedProject.rows[0],
+        milestoneResults.map(mapMilestoneRow),
+        mediaResults.map(mapMediaRow)
+      )
     );
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -782,11 +853,16 @@ app.get('/api/projects/user/:userId', async (req, res) => {
           m.amount AS milestone_amount,
           m.description AS milestone_description,
           m.position AS milestone_position,
-          m.created_at AS milestone_created_at
+          m.created_at AS milestone_created_at,
+          pm.id AS media_id,
+          pm.url AS media_url,
+          pm.label AS media_label,
+          pm.created_at AS media_created_at
         FROM projects p
         LEFT JOIN milestones m ON m.project_id = p.id
+        LEFT JOIN project_media pm ON pm.project_id = p.id
         WHERE p.user_id = $1
-        ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC
+        ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
       `,
       [userId]
     );
@@ -797,6 +873,7 @@ app.get('/api/projects/user/:userId', async (req, res) => {
         grouped.set(row.id, {
           project: row,
           milestones: [],
+          media: [],
         });
       }
       if (row.milestone_id) {
@@ -811,15 +888,94 @@ app.get('/api/projects/user/:userId', async (req, res) => {
           })
         );
       }
+      if (row.media_id) {
+        grouped.get(row.id).media.push(
+          mapMediaRow({
+            id: row.media_id,
+            url: row.media_url,
+            label: row.media_label,
+            created_at: row.media_created_at,
+          })
+        );
+      }
     }
 
-    const projects = Array.from(grouped.values()).map(({ project, milestones }) =>
-      mapProjectRow(project, milestones)
+    const projects = Array.from(grouped.values()).map(({ project, milestones, media }) =>
+      mapProjectRow(project, milestones, media)
     );
 
     return res.json(projects);
   } catch (error) {
     console.error('Error fetching projects:', error);
+    const message = pool
+      ? 'Failed to fetch projects'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/projects/open', async (_req, res) => {
+  try {
+    await assertDbReady();
+    const result = await pool.query(`
+      SELECT
+        p.*,
+        m.id AS milestone_id,
+        m.name AS milestone_name,
+        m.amount AS milestone_amount,
+        m.description AS milestone_description,
+        m.position AS milestone_position,
+        m.created_at AS milestone_created_at,
+        pm.id AS media_id,
+        pm.url AS media_url,
+        pm.label AS media_label,
+        pm.created_at AS media_created_at
+      FROM projects p
+      LEFT JOIN milestones m ON m.project_id = p.id
+      LEFT JOIN project_media pm ON pm.project_id = p.id
+      ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
+    `);
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      if (!grouped.has(row.id)) {
+        grouped.set(row.id, {
+          project: row,
+          milestones: [],
+          media: [],
+        });
+      }
+      if (row.milestone_id) {
+        grouped.get(row.id).milestones.push(
+          mapMilestoneRow({
+            id: row.milestone_id,
+            name: row.milestone_name,
+            amount: row.milestone_amount,
+            description: row.milestone_description,
+            position: row.milestone_position,
+            created_at: row.milestone_created_at,
+          })
+        );
+      }
+      if (row.media_id) {
+        grouped.get(row.id).media.push(
+          mapMediaRow({
+            id: row.media_id,
+            url: row.media_url,
+            label: row.media_label,
+            created_at: row.media_created_at,
+          })
+        );
+      }
+    }
+
+    const projects = Array.from(grouped.values()).map(({ project, milestones, media }) =>
+      mapProjectRow(project, milestones, media)
+    );
+
+    return res.json(projects);
+  } catch (error) {
+    console.error('Error fetching open projects:', error);
     const message = pool
       ? 'Failed to fetch projects'
       : 'Database is not configured (set DATABASE_URL)';

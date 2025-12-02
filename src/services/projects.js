@@ -5,6 +5,9 @@ import {
   fetchProjectsSuccess,
   updateProject,
   deleteProject,
+  fetchOpenProjectsStart,
+  fetchOpenProjectsSuccess,
+  fetchOpenProjectsFailure,
 } from '../store/projectSlice';
 import { projectAPI } from './api';
 
@@ -54,6 +57,19 @@ export const removeProject = (projectId, userId) => async (dispatch) => {
     return { success: true };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to delete project';
+    return { success: false, error: message };
+  }
+};
+
+export const loadOpenProjects = () => async (dispatch) => {
+  try {
+    dispatch(fetchOpenProjectsStart());
+    const response = await projectAPI.getOpenProjects();
+    dispatch(fetchOpenProjectsSuccess(response.data || []));
+    return { success: true };
+  } catch (error) {
+    const message = error.response?.data?.message || 'Failed to load projects';
+    dispatch(fetchOpenProjectsFailure(message));
     return { success: false, error: message };
   }
 };

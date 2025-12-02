@@ -6,42 +6,33 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import VerificationBadge from '../../components/VerificationBadge';
 import palette from '../../styles/palette';
 import { glassCard, pillButton, pillButtonText, shadowCard } from '../../styles/ui';
+import { loadOpenProjects } from '../../services/projects';
 
 const ContractorDashboard = ({ navigation }) => {
+  const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
-  // Mock data
+  const { openProjects, isLoadingOpen } = useSelector((state) => state.projects);
   const stats = {
     earnings: 8450,
-    activeProjects: 3,
+    activeProjects: openProjects?.length || 0,
     rating: 4.8,
   };
 
-  const projects = [
-    {
-      id: '1',
-      title: 'Kitchen Renovation',
-      client: 'Sarah Wilson',
-      location: 'Downtown',
-      status: 'In Progress',
-      nextMilestone: 'Plumbing Installation',
-      amount: 3000,
-      progress: 45,
-    },
-    {
-      id: '2',
-      title: 'Bathroom Remodel',
-      client: 'Mark Davis',
-      location: 'Westside',
-      status: 'Pending',
-      nextMilestone: 'Tile Installation',
-      amount: 1800,
-      progress: 80,
-    },
-  ];
+  const loadProjects = useCallback(() => {
+    dispatch(loadOpenProjects());
+  }, [dispatch]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProjects();
+    }, [loadProjects])
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -147,12 +138,26 @@ const ContractorDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Active Projects</Text>
-            <TouchableOpacity onPress={() => console.log('View All - Coming soon')}>
-              <Text style={styles.viewAll}>View All</Text>
+            <TouchableOpacity onPress={loadProjects}>
+              <Text style={styles.viewAll}>Refresh</Text>
             </TouchableOpacity>
           </View>
 
-          {projects.map((project) => (
+          {isLoadingOpen && <Text style={styles.muted}>Loading projects…</Text>}
+          {!isLoadingOpen && (!openProjects || openProjects.length === 0) && (
+            <Text style={styles.muted}>No open projects yet.</Text>
+          )}
+
+          {openProjects?.map((project) => {
+            const progress =
+              project.milestones && project.milestones.length
+                ? Math.round(
+                    (project.milestones.filter((m) => m.status === 'completed').length /
+                      project.milestones.length) *
+                      100
+                  )
+                : 0;
+            return (
             <TouchableOpacity 
               key={project.id}
               style={styles.projectCard}
@@ -160,28 +165,33 @@ const ContractorDashboard = ({ navigation }) => {
             >
               <View style={styles.projectHeader}>
                 <Text style={styles.projectTitle}>{project.title}</Text>
-                <Text style={styles.projectStatus}>{project.status}</Text>
+                <Text style={styles.projectStatus}>{project.projectType || 'Project'}</Text>
               </View>
               
               <Text style={styles.projectClient}>
-                {project.client} • {project.location}
+                {project.address || 'No address provided'}
               </Text>
               
               <View style={styles.milestoneInfo}>
-                <Text style={styles.milestoneLabel}>Next: {project.nextMilestone}</Text>
-                <Text style={styles.milestoneAmount}>${project.amount}</Text>
+                <Text style={styles.milestoneLabel}>
+                  Milestones: {project.milestones?.length || 0}
+                </Text>
+                <Text style={styles.milestoneAmount}>
+                  Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
+                </Text>
               </View>
               
               <View style={styles.progressBar}>
                 <View 
                   style={[
                     styles.progressFill, 
-                    { width: `${project.progress}%` }
+                    { width: `${progress}%` }
                   ]} 
                 />
               </View>
             </TouchableOpacity>
-          ))}
+          );
+          })}
         </View>
 
         {/* Recent Payments */}
@@ -532,6 +542,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#41C87A',
+  },
+  muted: {
+    color: palette.muted,
   },
 });
 

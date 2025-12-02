@@ -39,6 +39,14 @@ const CreateProjectScreen = ({ navigation, route }) => {
         }))
       : [{ name: '', amount: '', description: '' }]),
   ]);
+  const [attachments, setAttachments] = useState(
+    existingProject?.media?.length
+      ? existingProject.media.map((m) => ({
+          url: m.url || '',
+          label: m.label || '',
+        }))
+      : [{ url: '', label: '' }]
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const projectTypes = [
@@ -66,6 +74,22 @@ const CreateProjectScreen = ({ navigation, route }) => {
     const updated = [...milestones];
     updated[index][field] = value;
     setMilestones(updated);
+  };
+
+  const addAttachment = () => {
+    setAttachments((prev) => [...prev, { url: '', label: '' }]);
+  };
+
+  const updateAttachment = (index, field, value) => {
+    setAttachments((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const removeAttachment = (index) => {
+    setAttachments((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   };
 
   const handleContinue = () => {
@@ -126,6 +150,12 @@ const CreateProjectScreen = ({ navigation, route }) => {
         description: milestone.description,
         position: milestone.position ?? index,
       })),
+      media: attachments
+        .filter((a) => a.url)
+        .map((a) => ({
+          url: a.url,
+          label: a.label || '',
+        })),
     };
 
     try {
@@ -286,6 +316,44 @@ const CreateProjectScreen = ({ navigation, route }) => {
             )}
           </View>
         )}
+
+        <View style={styles.attachmentsHeader}>
+          <Text style={styles.stepTitle}>Inspiration / Drawings</Text>
+          <Text style={styles.stepSubtitle}>
+            Add URLs to architectural drawings or inspiration images
+          </Text>
+        </View>
+
+        {attachments.map((attachment, index) => (
+          <View key={`att-${index}`} style={styles.milestoneCard}>
+            <View style={styles.milestoneHeader}>
+              <Text style={styles.milestoneTitle}>Attachment {index + 1}</Text>
+              {attachments.length > 1 && (
+                <TouchableOpacity onPress={() => removeAttachment(index)}>
+                  <Text style={styles.removeButton}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Image or drawing URL"
+              value={attachment.url}
+              onChangeText={(value) => updateAttachment(index, 'url', value)}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Label (optional)"
+              value={attachment.label}
+              onChangeText={(value) => updateAttachment(index, 'label', value)}
+            />
+          </View>
+        ))}
+
+        <TouchableOpacity style={styles.addButton} onPress={addAttachment}>
+          <Text style={styles.addButtonText}>+ Add Attachment</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -549,6 +617,10 @@ const styles = StyleSheet.create({
     color: '#FF9800',
     fontSize: 14,
     marginTop: 5,
+  },
+  attachmentsHeader: {
+    marginTop: 10,
+    marginBottom: 8,
   },
   buttonContainer: {
     flexDirection: 'row',
