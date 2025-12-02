@@ -64,15 +64,15 @@ const projectSlice = createSlice({
       state.openError = action.payload;
     },
     applyForProject: (state, action) => {
-      const id = action.payload;
-      if (id && !state.appliedProjectIds.includes(id)) {
-        state.appliedProjectIds.push(id);
-        state.openProjects = state.openProjects.filter((p) => p.id !== id);
+      const projectId = action.payload;
+      if (projectId && !state.appliedProjectIds.includes(projectId)) {
+        state.appliedProjectIds.push(projectId);
+        state.openProjects = state.openProjects.filter((p) => p.id !== projectId);
       }
     },
     withdrawApplicationLocal: (state, action) => {
-      const id = action.payload;
-      state.appliedProjectIds = state.appliedProjectIds.filter((x) => x !== id);
+      const projectId = action.payload;
+      state.appliedProjectIds = state.appliedProjectIds.filter((x) => x !== projectId);
     },
     fetchContractorProjectsStart: (state) => {
       state.isLoadingContractor = true;

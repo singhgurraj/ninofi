@@ -27,10 +27,23 @@ const ApplicationsScreen = () => {
     fetchApps();
   }, [fetchApps]);
 
-  const handleWithdraw = async (applicationId) => {
+  const handleWithdraw = async (applicationId, projectId) => {
     try {
-      await dispatch(withdrawApplication(applicationId, user?.id));
-      fetchApps();
+      Alert.alert(
+        'Withdraw Application',
+        'Are you sure you want to withdraw? This will reopen the job in Find Jobs.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Withdraw',
+            style: 'destructive',
+            onPress: async () => {
+              await dispatch(withdrawApplication(applicationId, projectId, user?.id));
+              fetchApps();
+            },
+          },
+        ]
+      );
     } catch (err) {
       Alert.alert('Error', err.response?.data?.message || 'Failed to withdraw application');
     }
@@ -59,11 +72,11 @@ const ApplicationsScreen = () => {
             <View style={styles.actions}>
               <TouchableOpacity
                 style={[styles.button, styles.withdraw]}
-                onPress={() => handleWithdraw(app.id)}
-                disabled={app.status !== 'pending'}
-              >
-                <Text style={styles.buttonText}>Withdraw</Text>
-              </TouchableOpacity>
+              onPress={() => handleWithdraw(app.id, app.projectId)}
+              disabled={app.status !== 'pending'}
+            >
+              <Text style={styles.buttonText}>Withdraw</Text>
+            </TouchableOpacity>
             </View>
           </View>
         ))}

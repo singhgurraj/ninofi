@@ -1099,8 +1099,9 @@ app.delete('/api/applications/:applicationId', async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to delete this application' });
     }
 
+    const projectId = existing.rows[0].project_id;
     await client.query('DELETE FROM project_applications WHERE id = $1', [applicationId]);
-    return res.status(204).send();
+    return res.status(200).json({ projectId });
   } catch (error) {
     console.error('Error deleting application:', error);
     const message = pool
