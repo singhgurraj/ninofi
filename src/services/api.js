@@ -4,24 +4,22 @@ import axios from 'axios';
 let authToken = null;
 
 const resolveBaseUrl = () => {
-  // Preferred: explicit env var for Railway
+  // Preferred: explicit env var for Railway/production
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  // Fallbacks for local dev via Expo tunnels/lan
-  const host =
-    Constants.expoConfig?.hostUri?.split(':')[0] ||
-    Constants.manifest?.debuggerHost?.split(':')[0];
-
-  if (host) {
-    return `http://${host}:3001/api`;
+  // Optional: expo config extra
+  if (Constants.expoConfig?.extra?.apiUrl) {
+    return Constants.expoConfig.extra.apiUrl;
   }
 
-  return 'http://localhost:3001/api';
+  // Default to deployed API to avoid hitting LAN/localhost on device
+  return 'https://ninofi-production.up.railway.app/api';
 };
 
 const API_BASE_URL = resolveBaseUrl();
+console.log('[api] base URL', API_BASE_URL);
 
 // Create axios instance
 const api = axios.create({
