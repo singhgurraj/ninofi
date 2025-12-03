@@ -706,6 +706,9 @@ app.post('/api/projects/:projectId/apply', async (req, res) => {
   try {
     const { projectId } = req.params;
     const { contractorId, message } = req.body || {};
+    if (!isUuid(projectId) || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    }
     if (!projectId || !contractorId) {
       return res.status(400).json({ message: 'projectId and contractorId are required' });
     }
@@ -1185,6 +1188,12 @@ app.delete('/api/applications/:applicationId', async (req, res) => {
     if (!applicationId) {
       return res.status(400).json({ message: 'applicationId is required' });
     }
+    if (!isUuid(applicationId)) {
+      return res.status(400).json({ message: 'Invalid applicationId' });
+    }
+    if (contractorId && !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid contractorId' });
+    }
     await assertDbReady();
 
     const existing = await client.query(
@@ -1612,6 +1621,9 @@ app.get('/api/projects/user/:userId', async (req, res) => {
 app.get('/api/projects/open', async (_req, res) => {
   try {
     const contractorId = _req.query.contractorId || null;
+    if (contractorId && !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid contractorId' });
+    }
     await assertDbReady();
     const result = await pool.query(
       `
