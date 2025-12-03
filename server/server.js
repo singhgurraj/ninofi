@@ -876,6 +876,23 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to modify this application' });
     }
 
+    if (appRow.status && appRow.status !== 'pending') {
+      logInfo('applications:decide:skip-nonpending', {
+        projectId,
+        contractorId,
+        currentStatus: appRow.status,
+      });
+      return res.status(409).json({ message: 'Application is no longer pending' });
+    }
+
+    if (appRow.status && appRow.status !== 'pending') {
+      logInfo('applications:update:skip-nonpending', {
+        applicationId,
+        currentStatus: appRow.status,
+      });
+      return res.status(409).json({ message: 'Application is no longer pending' });
+    }
+
     const newStatus = action === 'accept' ? 'accepted' : action === 'deny' ? 'denied' : null;
     if (!newStatus) {
       return res.status(400).json({ message: 'Action must be accept or deny' });
@@ -888,11 +905,16 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
       ownerId: ownerId || null,
       projectId: appRow.project_id,
       contractorId: appRow.contractor_id,
+      currentStatus: appRow.status,
     });
-    await client.query(
-      'UPDATE project_applications SET status = $1 WHERE id::text = $2',
+    const updateResult = await client.query(
+      'UPDATE project_applications SET status = $1 WHERE id::text = $2 RETURNING *',
       [newStatus, applicationId]
     );
+
+    if (!updateResult.rowCount) {
+      throw new Error('Update failed (no rows)');
+    }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
     await client.query(
@@ -978,11 +1000,16 @@ app.post('/api/applications/decide', async (req, res) => {
       ownerId: ownerId || null,
       action,
       newStatus,
+      currentStatus: appRow.status,
     });
-    await client.query(
-      'UPDATE project_applications SET status = $1 WHERE project_id = $2 AND contractor_id = $3',
+    const updateResult = await client.query(
+      'UPDATE project_applications SET status = $1 WHERE project_id = $2 AND contractor_id = $3 RETURNING *',
       [newStatus, projectId, contractorId]
     );
+
+    if (!updateResult.rowCount) {
+      throw new Error('Update failed (no rows)');
+    }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
     await client.query(
