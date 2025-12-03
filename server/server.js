@@ -223,6 +223,41 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS notifications_project_idx ON notifications ((data->>\'projectId\'))'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS expenses (
+      id SERIAL PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      amount NUMERIC NOT NULL CHECK (amount > 0),
+      description TEXT,
+      receipt_url TEXT,
+      date TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS expenses_project_id_idx ON expenses (project_id)');
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS expenses_contractor_id_idx ON expenses (contractor_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS work_hours (
+      id SERIAL PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      hours NUMERIC NOT NULL CHECK (hours > 0),
+      hourly_rate NUMERIC NOT NULL CHECK (hourly_rate >= 0),
+      description TEXT,
+      date DATE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS work_hours_project_id_idx ON work_hours (project_id)');
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS work_hours_contractor_id_idx ON work_hours (contractor_id)'
+  );
 };
 
 const dbReady = (async () => {
@@ -386,6 +421,76 @@ const mapNotificationRow = (row = {}) => ({
   read: !!row.read,
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
 });
+
+const getProjectById = async (projectId) => {
+  if (!projectId) return null;
+  await assertDbReady();
+  const result = await pool.query('SELECT * FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+  return result.rows[0] || null;
+};
+
+const EXPENSE_CATEGORIES = new Set(['materials', 'gas', 'tools', 'other']);
+
+const mapExpenseRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  contractorId: row.contractor_id,
+  category: row.category,
+  amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : null,
+  description: row.description || '',
+  receiptUrl: row.receipt_url || '',
+  date: row.date instanceof Date ? row.date.toISOString() : row.date,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  contractor: row.contractor_id
+    ? {
+        id: row.contractor_id,
+        fullName: row.contractor_full_name,
+        email: row.contractor_email,
+        phone: row.contractor_phone,
+      }
+    : undefined,
+});
+
+const mapWorkHourRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  contractorId: row.contractor_id,
+  hours: row.hours !== null && row.hours !== undefined ? Number(row.hours) : null,
+  hourlyRate: row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : null,
+  description: row.description || '',
+  date:
+    row.date instanceof Date
+      ? row.date.toISOString().split('T')[0]
+      : row.date,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  contractor: row.contractor_id
+    ? {
+        id: row.contractor_id,
+        fullName: row.contractor_full_name,
+        email: row.contractor_email,
+        phone: row.contractor_phone,
+      }
+    : undefined,
+});
+
+const isPositiveNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : null;
+};
+
+const parseDateValue = (value, { fallbackToNow = true, asDateOnly = false } = {}) => {
+  if (!value && !fallbackToNow) {
+    return null;
+  }
+  const source = value ? new Date(value) : new Date();
+  if (Number.isNaN(source.getTime())) {
+    return null;
+  }
+  if (asDateOnly) {
+    return new Date(source.toISOString().split('T')[0]);
+  }
+  return source;
+};
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -1671,6 +1776,346 @@ app.get('/api/projects/open', async (_req, res) => {
     console.error('Error fetching open projects:', error);
     const message = pool
       ? 'Failed to fetch projects'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/expenses', async (req, res) => {
+  try {
+    const { projectId, contractorId, category, amount, description, receiptUrl, date } = req.body || {};
+    if (!projectId || !contractorId || !category || amount === undefined || amount === null) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, contractorId, category, and amount are required' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const contractor = await getUserById(contractorId);
+    if (!contractor) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+    if (normalizeRole(contractor.role) !== 'contractor') {
+      return res.status(403).json({ message: 'Only contractors can log expenses' });
+    }
+
+    const normalizedCategory = String(category || '').toLowerCase();
+    if (!EXPENSE_CATEGORIES.has(normalizedCategory)) {
+      return res.status(400).json({ message: 'Invalid expense category' });
+    }
+
+    const amountNumber = isPositiveNumber(amount);
+    if (amountNumber === null) {
+      return res.status(400).json({ message: 'Amount must be a positive number' });
+    }
+
+    const expenseDate = parseDateValue(date);
+    if (!expenseDate) {
+      return res.status(400).json({ message: 'Invalid expense date' });
+    }
+
+    const result = await pool.query(
+      `
+        INSERT INTO expenses (project_id, contractor_id, category, amount, description, receipt_url, date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [projectId, contractorId, normalizedCategory, amountNumber, description || '', receiptUrl || '', expenseDate]
+    );
+
+    const payload = mapExpenseRow({
+      ...result.rows[0],
+      contractor_full_name: contractor.full_name,
+      contractor_email: contractor.email,
+      contractor_phone: contractor.phone,
+    });
+    return res.status(201).json(payload);
+  } catch (error) {
+    logError('expenses:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to log expense'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/expenses/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT e.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM expenses e
+        LEFT JOIN users u ON u.id = e.contractor_id
+        WHERE e.project_id = $1
+        ORDER BY e.date DESC, e.created_at DESC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map(mapExpenseRow));
+  } catch (error) {
+    logError('expenses:project:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch expenses'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/expenses/contractor/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT e.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM expenses e
+        LEFT JOIN users u ON u.id = e.contractor_id
+        WHERE e.contractor_id = $1
+        ORDER BY e.date DESC, e.created_at DESC
+      `,
+      [contractorId]
+    );
+    return res.json(result.rows.map(mapExpenseRow));
+  } catch (error) {
+    logError('expenses:contractor:list:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch expenses'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.delete('/api/expenses/:expenseId', async (req, res) => {
+  try {
+    const { expenseId } = req.params;
+    const { contractorId } = req.body || {};
+    if (!expenseId) {
+      return res.status(400).json({ message: 'expenseId is required' });
+    }
+    await assertDbReady();
+    const existing = await pool.query('SELECT * FROM expenses WHERE id = $1', [expenseId]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Expense not found' });
+    }
+    if (contractorId && existing.rows[0].contractor_id !== contractorId) {
+      return res.status(403).json({ message: 'Not authorized to delete this expense' });
+    }
+    await pool.query('DELETE FROM expenses WHERE id = $1', [expenseId]);
+    return res.status(204).send();
+  } catch (error) {
+    logError('expenses:delete:error', { expenseId: req.params?.expenseId }, error);
+    const message = pool
+      ? 'Failed to delete expense'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/expenses/project/:projectId/summary', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT category, COALESCE(SUM(amount), 0) AS total
+        FROM expenses
+        WHERE project_id = $1
+        GROUP BY category
+        ORDER BY category ASC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map((row) => ({ category: row.category, total: Number(row.total) })));
+  } catch (error) {
+    logError('expenses:summary:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to summarize expenses'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/work-hours', async (req, res) => {
+  try {
+    const { projectId, contractorId, hours, hourlyRate, description, date } = req.body || {};
+    if (!projectId || !contractorId || hours === undefined || hours === null) {
+      return res.status(400).json({ message: 'projectId, contractorId, and hours are required' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const contractor = await getUserById(contractorId);
+    if (!contractor) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+    if (normalizeRole(contractor.role) !== 'contractor') {
+      return res.status(403).json({ message: 'Only contractors can log work hours' });
+    }
+
+    const hoursNumber = isPositiveNumber(hours);
+    if (hoursNumber === null) {
+      return res.status(400).json({ message: 'Hours must be a positive number' });
+    }
+
+    const rateNumber = Number(hourlyRate ?? 0);
+    if (!Number.isFinite(rateNumber) || rateNumber < 0) {
+      return res.status(400).json({ message: 'Hourly rate must be zero or a positive number' });
+    }
+
+    const workDate = parseDateValue(date, { fallbackToNow: true, asDateOnly: true });
+    if (!workDate) {
+      return res.status(400).json({ message: 'Invalid work date' });
+    }
+
+    const result = await pool.query(
+      `
+        INSERT INTO work_hours (project_id, contractor_id, hours, hourly_rate, description, date)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [projectId, contractorId, hoursNumber, rateNumber, description || '', workDate]
+    );
+
+    const payload = mapWorkHourRow({
+      ...result.rows[0],
+      contractor_full_name: contractor.full_name,
+      contractor_email: contractor.email,
+      contractor_phone: contractor.phone,
+    });
+    return res.status(201).json(payload);
+  } catch (error) {
+    logError('work-hours:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to log work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/work-hours/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT wh.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM work_hours wh
+        LEFT JOIN users u ON u.id = wh.contractor_id
+        WHERE wh.project_id = $1
+        ORDER BY wh.date DESC, wh.created_at DESC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map(mapWorkHourRow));
+  } catch (error) {
+    logError('work-hours:project:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/work-hours/contractor/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT wh.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM work_hours wh
+        LEFT JOIN users u ON u.id = wh.contractor_id
+        WHERE wh.contractor_id = $1
+        ORDER BY wh.date DESC, wh.created_at DESC
+      `,
+      [contractorId]
+    );
+    return res.json(result.rows.map(mapWorkHourRow));
+  } catch (error) {
+    logError('work-hours:contractor:list:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.delete('/api/work-hours/:entryId', async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const { contractorId } = req.body || {};
+    if (!entryId) {
+      return res.status(400).json({ message: 'entryId is required' });
+    }
+    await assertDbReady();
+    const existing = await pool.query('SELECT * FROM work_hours WHERE id = $1', [entryId]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Work hour entry not found' });
+    }
+    if (contractorId && existing.rows[0].contractor_id !== contractorId) {
+      return res.status(403).json({ message: 'Not authorized to delete this entry' });
+    }
+    await pool.query('DELETE FROM work_hours WHERE id = $1', [entryId]);
+    return res.status(204).send();
+  } catch (error) {
+    logError('work-hours:delete:error', { entryId: req.params?.entryId }, error);
+    const message = pool
+      ? 'Failed to delete work hour entry'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT COALESCE(SUM(hours), 0) AS total_hours, COALESCE(SUM(hours * hourly_rate), 0) AS total_cost
+        FROM work_hours
+        WHERE project_id = $1
+      `,
+      [projectId]
+    );
+    const row = result.rows[0] || { total_hours: 0, total_cost: 0 };
+    return res.json({
+      totalHours: Number(row.total_hours) || 0,
+      totalCost: Number(row.total_cost) || 0,
+    });
+  } catch (error) {
+    logError('work-hours:summary:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to summarize work hours'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
