@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config();
 const asyncHandler = require('./utils/asyncHandler');
 const { ensureUuid } = require('./utils/validation');
 
@@ -39,6 +40,10 @@ const ENV_VARIABLES = [
   { key: 'RAILWAY_STATIC_URL', label: 'Railway static URL' },
 ];
 
+const SERVER_START_TIME = Date.now();
+let requestCount = 0;
+let errorCount = 0;
+let totalResponseTimeMs = 0;
 // Basic UUID validator to guard DB queries from bad input
 const isUuid = (val) => typeof val === 'string' && /^[0-9a-fA-F-]{36}$/.test(val);
 
@@ -65,6 +70,24 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOAD_DIR));
 
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  requestCount += 1;
+  res.on('finish', () => {
+    const end = process.hrtime.bigint();
+    const durationMs = Number(end - start) / 1e6;
+    totalResponseTimeMs += durationMs;
+    if (res.statusCode >= 500) {
+      errorCount += 1;
+    }
+    const timestamp = new Date().toISOString();
+    console.log(
+      `[${timestamp}] ${req.method} ${req.originalUrl} - ${res.statusCode} (${durationMs.toFixed(2)} ms)`
+    );
+  });
+  next();
+});
+
 // Auto-wrap all route handlers in async error catcher
 const wrapAsync = (fn) =>
   typeof fn === 'function' ? (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next) : fn;
@@ -74,6 +97,8 @@ const wrapAsync = (fn) =>
 });
 
 const normalizeRole = (role) => (role || 'unknown').toLowerCase();
+const normalizeFeatureName = (name = '') => name.trim().toLowerCase();
+const getUptimeSeconds = () => Math.round((Date.now() - SERVER_START_TIME) / 1000);
 
 const buildSslConfig = () => {
   const sslFlag = (process.env.PGSSLMODE || process.env.DATABASE_SSL || '').toLowerCase();
@@ -99,6 +124,54 @@ try {
 } catch (err) {
   console.error('[server] Fatal Postgres startup error:', err);
 }
+
+const DEFAULT_FEATURE_FLAGS = [
+  {
+    featureName: 'expense_tracking',
+    enabled: true,
+    description: 'Allows contractors to log expenses for projects.',
+  },
+  {
+    featureName: 'payroll_tracking',
+    enabled: true,
+    description: 'Enables tracking of contractor work hours and payroll.',
+  },
+  {
+    featureName: 'digital_contracts',
+    enabled: true,
+    description: 'Allows homeowners and contractors to manage digital contracts.',
+  },
+  {
+    featureName: 'gps_checkin',
+    enabled: false,
+    description: 'Requires GPS check-ins at job sites.',
+  },
+  {
+    featureName: 'contractor_verification',
+    enabled: false,
+    description: 'Enforces contractor verification workflows.',
+  },
+  {
+    featureName: 'invoice_generation',
+    enabled: false,
+    description: 'Generates invoices automatically for projects.',
+  },
+];
+
+const ensureDefaultFeatureFlags = async () => {
+  if (!pool) return;
+  for (const flag of DEFAULT_FEATURE_FLAGS) {
+    const featureName = normalizeFeatureName(flag.featureName);
+    await pool.query(
+      `
+        INSERT INTO feature_flags (feature_name, enabled, description)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (feature_name) DO NOTHING
+      `,
+      [featureName, flag.enabled, flag.description]
+    );
+  }
+};
 
 const initDb = async () => {
   if (!pool) {
@@ -245,6 +318,82 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS notifications_project_idx ON notifications ((data->>\'projectId\'))'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS expenses (
+      id SERIAL PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      amount NUMERIC NOT NULL CHECK (amount > 0),
+      description TEXT,
+      receipt_url TEXT,
+      date TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS expenses_project_id_idx ON expenses (project_id)');
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS expenses_contractor_id_idx ON expenses (contractor_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS work_hours (
+      id SERIAL PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      hours NUMERIC NOT NULL CHECK (hours > 0),
+      hourly_rate NUMERIC NOT NULL CHECK (hourly_rate >= 0),
+      description TEXT,
+      date DATE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS work_hours_project_id_idx ON work_hours (project_id)');
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS work_hours_contractor_id_idx ON work_hours (contractor_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contracts (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      terms TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS contracts_project_id_idx ON contracts (project_id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS contracts_created_by_idx ON contracts (created_by)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contract_signatures (
+      id SERIAL PRIMARY KEY,
+      contract_id UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      signature_data TEXT NOT NULL,
+      signed_at TIMESTAMPTZ NOT NULL,
+      ip_address TEXT
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS contract_signatures_unique ON contract_signatures (contract_id, user_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feature_flags (
+      id SERIAL PRIMARY KEY,
+      feature_name TEXT UNIQUE NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      description TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by UUID
+    )
+  `);
+
+  await ensureDefaultFeatureFlags();
 };
 
 const dbReady = (async () => {
@@ -408,6 +557,182 @@ const mapNotificationRow = (row = {}) => ({
   read: !!row.read,
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
 });
+
+const mapFeatureFlagRow = (row = {}) => ({
+  featureName: row.feature_name,
+  enabled: !!row.enabled,
+  description: row.description || '',
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+  updatedBy: row.updated_by || null,
+});
+
+const getProjectById = async (projectId) => {
+  if (!projectId) return null;
+  await assertDbReady();
+  const result = await pool.query('SELECT * FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+  return result.rows[0] || null;
+};
+
+const EXPENSE_CATEGORIES = new Set(['materials', 'gas', 'tools', 'other']);
+
+const mapExpenseRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  contractorId: row.contractor_id,
+  category: row.category,
+  amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : null,
+  description: row.description || '',
+  receiptUrl: row.receipt_url || '',
+  date: row.date instanceof Date ? row.date.toISOString() : row.date,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  contractor: row.contractor_id
+    ? {
+        id: row.contractor_id,
+        fullName: row.contractor_full_name,
+        email: row.contractor_email,
+        phone: row.contractor_phone,
+      }
+    : undefined,
+});
+
+const mapWorkHourRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  contractorId: row.contractor_id,
+  hours: row.hours !== null && row.hours !== undefined ? Number(row.hours) : null,
+  hourlyRate: row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : null,
+  description: row.description || '',
+  date:
+    row.date instanceof Date
+      ? row.date.toISOString().split('T')[0]
+      : row.date,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  contractor: row.contractor_id
+    ? {
+        id: row.contractor_id,
+        fullName: row.contractor_full_name,
+        email: row.contractor_email,
+        phone: row.contractor_phone,
+      }
+    : undefined,
+});
+
+const isPositiveNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : null;
+};
+
+const parseDateValue = (value, { fallbackToNow = true, asDateOnly = false } = {}) => {
+  if (!value && !fallbackToNow) {
+    return null;
+  }
+  const source = value ? new Date(value) : new Date();
+  if (Number.isNaN(source.getTime())) {
+    return null;
+  }
+  if (asDateOnly) {
+    return new Date(source.toISOString().split('T')[0]);
+  }
+  return source;
+};
+
+const CONTRACT_STATUSES = new Set(['pending', 'signed', 'rejected']);
+
+const mapContractRow = (row = {}, signatures = []) => ({
+  id: row.id,
+  projectId: row.project_id,
+  createdBy: row.created_by,
+  ownerId: row.owner_id,
+  title: row.title || '',
+  terms: row.terms || '',
+  status: row.status || 'pending',
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  signatureCount: Number(row.signature_count ?? row.signatures_count ?? signatures.length ?? 0),
+  signatures,
+});
+
+const mapSignatureRow = (row = {}) => ({
+  id: row.id,
+  contractId: row.contract_id,
+  userId: row.user_id,
+  signatureData: row.signature_data || '',
+  signedAt: row.signed_at instanceof Date ? row.signed_at.toISOString() : row.signed_at,
+  ipAddress: row.ip_address || '',
+  user: row.user_id
+    ? {
+        id: row.user_id,
+        fullName: row.user_full_name,
+        email: row.user_email,
+        role: row.user_role,
+      }
+    : undefined,
+});
+
+const fetchContractWithProject = async (contractId) => {
+  if (!contractId) return null;
+  await assertDbReady();
+  const result = await pool.query(
+    `
+      SELECT c.*, p.user_id AS owner_id
+      FROM contracts c
+      JOIN projects p ON p.id = c.project_id
+      WHERE c.id = $1
+    `,
+    [contractId]
+  );
+  return result.rows[0] || null;
+};
+
+const isValidBase64 = (value = '') => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const payload = trimmed.includes(',') ? trimmed.split(',').pop() : trimmed;
+  try {
+    const normalized = payload.replace(/\s+/g, '');
+    if (!normalized) return false;
+    const reconstructed = Buffer.from(normalized, 'base64').toString('base64');
+    return reconstructed.replace(/=+$/, '') === normalized.replace(/=+$/, '');
+  } catch (error) {
+    return false;
+  }
+};
+
+const refreshContractStatus = async (contractId) => {
+  const contractRow = await fetchContractWithProject(contractId);
+  if (!contractRow || contractRow.status === 'rejected') {
+    return;
+  }
+
+  const signatures = await pool.query(
+    `
+      SELECT cs.user_id, u.role
+      FROM contract_signatures cs
+      JOIN users u ON u.id = cs.user_id
+      WHERE cs.contract_id = $1
+    `,
+    [contractId]
+  );
+
+  let ownerSigned = false;
+  let contractorSigned = false;
+  for (const row of signatures.rows) {
+    if (row.user_id === contractRow.owner_id) {
+      ownerSigned = true;
+    }
+    if (normalizeRole(row.role) === 'contractor') {
+      contractorSigned = true;
+    }
+  }
+
+  const derivedStatus = ownerSigned && contractorSigned ? 'signed' : 'pending';
+  if (contractRow.status === 'signed' && derivedStatus !== 'signed') {
+    return;
+  }
+  if (derivedStatus !== contractRow.status) {
+    await pool.query('UPDATE contracts SET status = $1 WHERE id = $2', [derivedStatus, contractId]);
+  }
+};
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -1722,6 +2047,772 @@ app.get('/api/projects/open', async (_req, res) => {
       ? 'Failed to fetch projects'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/expenses', async (req, res) => {
+  try {
+    const { projectId, contractorId, category, amount, description, receiptUrl, date } = req.body || {};
+    if (!projectId || !contractorId || !category || amount === undefined || amount === null) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, contractorId, category, and amount are required' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const contractor = await getUserById(contractorId);
+    if (!contractor) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+    if (normalizeRole(contractor.role) !== 'contractor') {
+      return res.status(403).json({ message: 'Only contractors can log expenses' });
+    }
+
+    const normalizedCategory = String(category || '').toLowerCase();
+    if (!EXPENSE_CATEGORIES.has(normalizedCategory)) {
+      return res.status(400).json({ message: 'Invalid expense category' });
+    }
+
+    const amountNumber = isPositiveNumber(amount);
+    if (amountNumber === null) {
+      return res.status(400).json({ message: 'Amount must be a positive number' });
+    }
+
+    const expenseDate = parseDateValue(date);
+    if (!expenseDate) {
+      return res.status(400).json({ message: 'Invalid expense date' });
+    }
+
+    const result = await pool.query(
+      `
+        INSERT INTO expenses (project_id, contractor_id, category, amount, description, receipt_url, date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [projectId, contractorId, normalizedCategory, amountNumber, description || '', receiptUrl || '', expenseDate]
+    );
+
+    const payload = mapExpenseRow({
+      ...result.rows[0],
+      contractor_full_name: contractor.full_name,
+      contractor_email: contractor.email,
+      contractor_phone: contractor.phone,
+    });
+    return res.status(201).json(payload);
+  } catch (error) {
+    logError('expenses:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to log expense'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/expenses/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT e.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM expenses e
+        LEFT JOIN users u ON u.id = e.contractor_id
+        WHERE e.project_id = $1
+        ORDER BY e.date DESC, e.created_at DESC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map(mapExpenseRow));
+  } catch (error) {
+    logError('expenses:project:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch expenses'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/expenses/contractor/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT e.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM expenses e
+        LEFT JOIN users u ON u.id = e.contractor_id
+        WHERE e.contractor_id = $1
+        ORDER BY e.date DESC, e.created_at DESC
+      `,
+      [contractorId]
+    );
+    return res.json(result.rows.map(mapExpenseRow));
+  } catch (error) {
+    logError('expenses:contractor:list:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch expenses'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.delete('/api/expenses/:expenseId', async (req, res) => {
+  try {
+    const { expenseId } = req.params;
+    const { contractorId } = req.body || {};
+    if (!expenseId) {
+      return res.status(400).json({ message: 'expenseId is required' });
+    }
+    await assertDbReady();
+    const existing = await pool.query('SELECT * FROM expenses WHERE id = $1', [expenseId]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Expense not found' });
+    }
+    if (contractorId && existing.rows[0].contractor_id !== contractorId) {
+      return res.status(403).json({ message: 'Not authorized to delete this expense' });
+    }
+    await pool.query('DELETE FROM expenses WHERE id = $1', [expenseId]);
+    return res.status(204).send();
+  } catch (error) {
+    logError('expenses:delete:error', { expenseId: req.params?.expenseId }, error);
+    const message = pool
+      ? 'Failed to delete expense'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/expenses/project/:projectId/summary', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT category, COALESCE(SUM(amount), 0) AS total
+        FROM expenses
+        WHERE project_id = $1
+        GROUP BY category
+        ORDER BY category ASC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map((row) => ({ category: row.category, total: Number(row.total) })));
+  } catch (error) {
+    logError('expenses:summary:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to summarize expenses'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/work-hours', async (req, res) => {
+  try {
+    const { projectId, contractorId, hours, hourlyRate, description, date } = req.body || {};
+    if (!projectId || !contractorId || hours === undefined || hours === null) {
+      return res.status(400).json({ message: 'projectId, contractorId, and hours are required' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const contractor = await getUserById(contractorId);
+    if (!contractor) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+    if (normalizeRole(contractor.role) !== 'contractor') {
+      return res.status(403).json({ message: 'Only contractors can log work hours' });
+    }
+
+    const hoursNumber = isPositiveNumber(hours);
+    if (hoursNumber === null) {
+      return res.status(400).json({ message: 'Hours must be a positive number' });
+    }
+
+    const rateNumber = Number(hourlyRate ?? 0);
+    if (!Number.isFinite(rateNumber) || rateNumber < 0) {
+      return res.status(400).json({ message: 'Hourly rate must be zero or a positive number' });
+    }
+
+    const workDate = parseDateValue(date, { fallbackToNow: true, asDateOnly: true });
+    if (!workDate) {
+      return res.status(400).json({ message: 'Invalid work date' });
+    }
+
+    const result = await pool.query(
+      `
+        INSERT INTO work_hours (project_id, contractor_id, hours, hourly_rate, description, date)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [projectId, contractorId, hoursNumber, rateNumber, description || '', workDate]
+    );
+
+    const payload = mapWorkHourRow({
+      ...result.rows[0],
+      contractor_full_name: contractor.full_name,
+      contractor_email: contractor.email,
+      contractor_phone: contractor.phone,
+    });
+    return res.status(201).json(payload);
+  } catch (error) {
+    logError('work-hours:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to log work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/work-hours/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT wh.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM work_hours wh
+        LEFT JOIN users u ON u.id = wh.contractor_id
+        WHERE wh.project_id = $1
+        ORDER BY wh.date DESC, wh.created_at DESC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map(mapWorkHourRow));
+  } catch (error) {
+    logError('work-hours:project:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/work-hours/contractor/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT wh.*, u.full_name AS contractor_full_name, u.email AS contractor_email, u.phone AS contractor_phone
+        FROM work_hours wh
+        LEFT JOIN users u ON u.id = wh.contractor_id
+        WHERE wh.contractor_id = $1
+        ORDER BY wh.date DESC, wh.created_at DESC
+      `,
+      [contractorId]
+    );
+    return res.json(result.rows.map(mapWorkHourRow));
+  } catch (error) {
+    logError('work-hours:contractor:list:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.delete('/api/work-hours/:entryId', async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const { contractorId } = req.body || {};
+    if (!entryId) {
+      return res.status(400).json({ message: 'entryId is required' });
+    }
+    await assertDbReady();
+    const existing = await pool.query('SELECT * FROM work_hours WHERE id = $1', [entryId]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Work hour entry not found' });
+    }
+    if (contractorId && existing.rows[0].contractor_id !== contractorId) {
+      return res.status(403).json({ message: 'Not authorized to delete this entry' });
+    }
+    await pool.query('DELETE FROM work_hours WHERE id = $1', [entryId]);
+    return res.status(204).send();
+  } catch (error) {
+    logError('work-hours:delete:error', { entryId: req.params?.entryId }, error);
+    const message = pool
+      ? 'Failed to delete work hour entry'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT COALESCE(SUM(hours), 0) AS total_hours, COALESCE(SUM(hours * hourly_rate), 0) AS total_cost
+        FROM work_hours
+        WHERE project_id = $1
+      `,
+      [projectId]
+    );
+    const row = result.rows[0] || { total_hours: 0, total_cost: 0 };
+    return res.json({
+      totalHours: Number(row.total_hours) || 0,
+      totalCost: Number(row.total_cost) || 0,
+    });
+  } catch (error) {
+    logError('work-hours:summary:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to summarize work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/contracts', async (req, res) => {
+  try {
+    const { projectId, createdBy, title, terms } = req.body || {};
+    if (!projectId || !createdBy || !title || !terms) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, createdBy, title, and terms are required' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (project.user_id !== createdBy) {
+      return res.status(403).json({ message: 'Only the project owner can create contracts' });
+    }
+
+    const creator = await getUserById(createdBy);
+    if (!creator) {
+      return res.status(404).json({ message: 'Creator not found' });
+    }
+
+    const contractId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const result = await pool.query(
+      `
+        INSERT INTO contracts (id, project_id, created_by, title, terms, status)
+        VALUES ($1, $2, $3, $4, $5, 'pending')
+        RETURNING *
+      `,
+      [contractId, projectId, createdBy, title.trim(), terms]
+    );
+
+    return res
+      .status(201)
+      .json(mapContractRow({ ...result.rows[0], owner_id: project.user_id, signature_count: 0 }));
+  } catch (error) {
+    logError('contracts:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to create contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT c.*, p.user_id AS owner_id, COUNT(cs.id) AS signature_count
+        FROM contracts c
+        JOIN projects p ON p.id = c.project_id
+        LEFT JOIN contract_signatures cs ON cs.contract_id = c.id
+        WHERE c.project_id = $1
+        GROUP BY c.id, p.user_id
+        ORDER BY c.created_at DESC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map((row) => mapContractRow(row)));
+  } catch (error) {
+    logError('contracts:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/:contractId', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    if (!contractId) {
+      return res.status(400).json({ message: 'contractId is required' });
+    }
+
+    await assertDbReady();
+    const contractResult = await pool.query(
+      `
+        SELECT c.*, p.user_id AS owner_id
+        FROM contracts c
+        JOIN projects p ON p.id = c.project_id
+        WHERE c.id = $1
+        LIMIT 1
+      `,
+      [contractId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const signatures = await pool.query(
+      `
+        SELECT
+          cs.*,
+          u.full_name AS user_full_name,
+          u.email AS user_email,
+          u.role AS user_role
+        FROM contract_signatures cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.contract_id = $1
+        ORDER BY cs.signed_at ASC
+      `,
+      [contractId]
+    );
+
+    return res.json(
+      mapContractRow(contractResult.rows[0], signatures.rows.map((row) => mapSignatureRow(row)))
+    );
+  } catch (error) {
+    logError('contracts:detail:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to fetch contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.put('/api/contracts/:contractId/status', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    const { status, userId } = req.body || {};
+    if (!contractId || !status || !userId) {
+      return res.status(400).json({ message: 'contractId, status, and userId are required' });
+    }
+
+    const normalizedStatus = String(status).toLowerCase();
+    if (!CONTRACT_STATUSES.has(normalizedStatus)) {
+      return res.status(400).json({ message: 'Invalid contract status' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    if (contractRow.owner_id !== userId && contractRow.created_by !== userId) {
+      return res.status(403).json({ message: 'Not authorized to update this contract' });
+    }
+
+    await pool.query('UPDATE contracts SET status = $1 WHERE id = $2', [normalizedStatus, contractId]);
+    return res.json({ status: normalizedStatus });
+  } catch (error) {
+    logError('contracts:update-status:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to update contract status'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/contracts/:contractId/sign', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    const { userId, signatureData, ipAddress } = req.body || {};
+    if (!contractId || !userId || !signatureData) {
+      return res.status(400).json({ message: 'contractId, userId, and signatureData are required' });
+    }
+
+    if (!isValidBase64(signatureData)) {
+      return res.status(400).json({ message: 'signatureData must be a valid base64 string' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const signer = await getUserById(userId);
+    if (!signer) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const role = normalizeRole(signer.role);
+    const isOwner = contractRow.owner_id === userId;
+    const isContractor = role === 'contractor';
+    if (!isOwner && !isContractor) {
+      return res.status(403).json({ message: 'Only homeowners or contractors can sign contracts' });
+    }
+
+    const existing = await pool.query(
+      'SELECT 1 FROM contract_signatures WHERE contract_id = $1 AND user_id = $2 LIMIT 1',
+      [contractId, userId]
+    );
+    if (existing.rows.length) {
+      return res.status(409).json({ message: 'User has already signed this contract' });
+    }
+
+    const signedAt = new Date();
+    const insertResult = await pool.query(
+      `
+        INSERT INTO contract_signatures (contract_id, user_id, signature_data, signed_at, ip_address)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `,
+      [contractId, userId, signatureData, signedAt, ipAddress || req.ip || null]
+    );
+
+    await refreshContractStatus(contractId);
+
+    const payload = mapSignatureRow({
+      ...insertResult.rows[0],
+      user_full_name: signer.full_name,
+      user_email: signer.email,
+      user_role: signer.role,
+    });
+    return res.status(201).json(payload);
+  } catch (error) {
+    logError('contracts:sign:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to sign contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/:contractId/signatures', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    if (!contractId) {
+      return res.status(400).json({ message: 'contractId is required' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          cs.*,
+          u.full_name AS user_full_name,
+          u.email AS user_email,
+          u.role AS user_role
+        FROM contract_signatures cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.contract_id = $1
+        ORDER BY cs.signed_at ASC
+      `,
+      [contractId]
+    );
+
+    return res.json(result.rows.map((row) => mapSignatureRow(row)));
+  } catch (error) {
+    logError('contracts:signatures:list:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to fetch signatures'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/feature-flags', async (_req, res) => {
+  try {
+    await assertDbReady();
+    const result = await pool.query('SELECT feature_name, enabled FROM feature_flags ORDER BY feature_name ASC');
+    return res.json(result.rows.map((row) => ({ featureName: row.feature_name, enabled: !!row.enabled })));
+  } catch (error) {
+    logError('feature-flags:list:error', {}, error);
+    const message = pool
+      ? 'Failed to fetch feature flags'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/feature-flags/:featureName', async (req, res) => {
+  try {
+    const featureName = normalizeFeatureName(req.params?.featureName);
+    if (!featureName) {
+      return res.status(400).json({ message: 'featureName is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query('SELECT feature_name, enabled FROM feature_flags WHERE feature_name = $1', [featureName]);
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Feature flag not found' });
+    }
+    const row = result.rows[0];
+    return res.json({ featureName: row.feature_name, enabled: !!row.enabled });
+  } catch (error) {
+    logError('feature-flags:get:error', { featureName: req.params?.featureName }, error);
+    const message = pool
+      ? 'Failed to fetch feature flag'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/feature-flags', async (req, res) => {
+  try {
+    const { featureName, enabled = false, description = '', updatedBy } = req.body || {};
+    const normalizedName = normalizeFeatureName(featureName);
+    if (!normalizedName) {
+      return res.status(400).json({ message: 'featureName is required' });
+    }
+
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        INSERT INTO feature_flags (feature_name, enabled, description, updated_by, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (feature_name)
+        DO UPDATE SET
+          enabled = EXCLUDED.enabled,
+          description = EXCLUDED.description,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = NOW()
+        RETURNING *
+      `,
+      [normalizedName, !!enabled, description, updatedBy || null]
+    );
+
+    return res.status(201).json(mapFeatureFlagRow(result.rows[0]));
+  } catch (error) {
+    logError('feature-flags:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to create feature flag'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.put('/api/feature-flags/:featureName', async (req, res) => {
+  try {
+    const featureName = normalizeFeatureName(req.params?.featureName);
+    if (!featureName) {
+      return res.status(400).json({ message: 'featureName is required' });
+    }
+
+    const { enabled, description, updatedBy } = req.body || {};
+    if (enabled === undefined) {
+      return res.status(400).json({ message: 'enabled value is required' });
+    }
+
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        UPDATE feature_flags
+        SET enabled = $1,
+            description = COALESCE($2, description),
+            updated_by = $3,
+            updated_at = NOW()
+        WHERE feature_name = $4
+        RETURNING *
+      `,
+      [!!enabled, description ?? null, updatedBy || null, featureName]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Feature flag not found' });
+    }
+
+    return res.json(mapFeatureFlagRow(result.rows[0]));
+  } catch (error) {
+    logError('feature-flags:update:error', { featureName: req.params?.featureName }, error);
+    const message = pool
+      ? 'Failed to update feature flag'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/monitoring/health', async (_req, res) => {
+  try {
+    const uptimeSeconds = getUptimeSeconds();
+    const memoryUsage = process.memoryUsage();
+    let dbStatus = pool ? 'configured' : 'missing pool';
+    let dbLatencyMs = null;
+    if (pool) {
+      const start = Date.now();
+      try {
+        await pool.query('SELECT 1');
+        dbStatus = 'ok';
+        dbLatencyMs = Date.now() - start;
+      } catch (error) {
+        dbStatus = 'error';
+        dbLatencyMs = null;
+        logError('monitoring:health:db', {}, error);
+      }
+    }
+
+    return res.json({
+      status: dbStatus === 'ok' ? 'ok' : 'degraded',
+      uptimeSeconds,
+      nodeVersion: process.version,
+      memoryMB: Number((memoryUsage.rss / 1024 / 1024).toFixed(2)),
+      requestCount,
+      errorCount,
+      averageResponseTimeMs:
+        requestCount > 0 ? Number((totalResponseTimeMs / requestCount).toFixed(2)) : 0,
+      db: {
+        status: dbStatus,
+        latencyMs: dbLatencyMs,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logError('monitoring:health:error', {}, error);
+    return res.status(500).json({ status: 'error', message: 'Failed to gather health info' });
+  }
+});
+
+app.get('/api/monitoring/stats', (_req, res) => {
+  try {
+    const memoryUsage = process.memoryUsage();
+    const averageResponseTimeMs =
+      requestCount > 0 ? totalResponseTimeMs / requestCount : 0;
+    return res.json({
+      requestCount,
+      errorCount,
+      uptimeSeconds: getUptimeSeconds(),
+      memoryMB: Number((memoryUsage.rss / 1024 / 1024).toFixed(2)),
+      averageResponseTimeMs: Number(averageResponseTimeMs.toFixed(2)),
+    });
+  } catch (error) {
+    logError('monitoring:stats:error', {}, error);
+    return res.status(500).json({ message: 'Failed to fetch stats' });
   }
 });
 
