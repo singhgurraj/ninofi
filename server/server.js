@@ -259,6 +259,34 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS work_hours_contractor_id_idx ON work_hours (contractor_id)'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contracts (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      terms TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS contracts_project_id_idx ON contracts (project_id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS contracts_created_by_idx ON contracts (created_by)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contract_signatures (
+      id SERIAL PRIMARY KEY,
+      contract_id UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      signature_data TEXT NOT NULL,
+      signed_at TIMESTAMPTZ NOT NULL,
+      ip_address TEXT
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS contract_signatures_unique ON contract_signatures (contract_id, user_id)'
+  );
 };
 
 const dbReady = (async () => {
@@ -491,6 +519,104 @@ const parseDateValue = (value, { fallbackToNow = true, asDateOnly = false } = {}
     return new Date(source.toISOString().split('T')[0]);
   }
   return source;
+};
+
+const CONTRACT_STATUSES = new Set(['pending', 'signed', 'rejected']);
+
+const mapContractRow = (row = {}, signatures = []) => ({
+  id: row.id,
+  projectId: row.project_id,
+  createdBy: row.created_by,
+  ownerId: row.owner_id,
+  title: row.title || '',
+  terms: row.terms || '',
+  status: row.status || 'pending',
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  signatureCount: Number(row.signature_count ?? row.signatures_count ?? signatures.length ?? 0),
+  signatures,
+});
+
+const mapSignatureRow = (row = {}) => ({
+  id: row.id,
+  contractId: row.contract_id,
+  userId: row.user_id,
+  signatureData: row.signature_data || '',
+  signedAt: row.signed_at instanceof Date ? row.signed_at.toISOString() : row.signed_at,
+  ipAddress: row.ip_address || '',
+  user: row.user_id
+    ? {
+        id: row.user_id,
+        fullName: row.user_full_name,
+        email: row.user_email,
+        role: row.user_role,
+      }
+    : undefined,
+});
+
+const fetchContractWithProject = async (contractId) => {
+  if (!contractId) return null;
+  await assertDbReady();
+  const result = await pool.query(
+    `
+      SELECT c.*, p.user_id AS owner_id
+      FROM contracts c
+      JOIN projects p ON p.id = c.project_id
+      WHERE c.id = $1
+    `,
+    [contractId]
+  );
+  return result.rows[0] || null;
+};
+
+const isValidBase64 = (value = '') => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const payload = trimmed.includes(',') ? trimmed.split(',').pop() : trimmed;
+  try {
+    const normalized = payload.replace(/\s+/g, '');
+    if (!normalized) return false;
+    const reconstructed = Buffer.from(normalized, 'base64').toString('base64');
+    return reconstructed.replace(/=+$/, '') === normalized.replace(/=+$/, '');
+  } catch (error) {
+    return false;
+  }
+};
+
+const refreshContractStatus = async (contractId) => {
+  const contractRow = await fetchContractWithProject(contractId);
+  if (!contractRow || contractRow.status === 'rejected') {
+    return;
+  }
+
+  const signatures = await pool.query(
+    `
+      SELECT cs.user_id, u.role
+      FROM contract_signatures cs
+      JOIN users u ON u.id = cs.user_id
+      WHERE cs.contract_id = $1
+    `,
+    [contractId]
+  );
+
+  let ownerSigned = false;
+  let contractorSigned = false;
+  for (const row of signatures.rows) {
+    if (row.user_id === contractRow.owner_id) {
+      ownerSigned = true;
+    }
+    if (normalizeRole(row.role) === 'contractor') {
+      contractorSigned = true;
+    }
+  }
+
+  const derivedStatus = ownerSigned && contractorSigned ? 'signed' : 'pending';
+  if (contractRow.status === 'signed' && derivedStatus !== 'signed') {
+    return;
+  }
+  if (derivedStatus !== contractRow.status) {
+    await pool.query('UPDATE contracts SET status = $1 WHERE id = $2', [derivedStatus, contractId]);
+  }
 };
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
@@ -2117,6 +2243,264 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
     logError('work-hours:summary:error', { projectId: req.params?.projectId }, error);
     const message = pool
       ? 'Failed to summarize work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/contracts', async (req, res) => {
+  try {
+    const { projectId, createdBy, title, terms } = req.body || {};
+    if (!projectId || !createdBy || !title || !terms) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, createdBy, title, and terms are required' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (project.user_id !== createdBy) {
+      return res.status(403).json({ message: 'Only the project owner can create contracts' });
+    }
+
+    const creator = await getUserById(createdBy);
+    if (!creator) {
+      return res.status(404).json({ message: 'Creator not found' });
+    }
+
+    const contractId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const result = await pool.query(
+      `
+        INSERT INTO contracts (id, project_id, created_by, title, terms, status)
+        VALUES ($1, $2, $3, $4, $5, 'pending')
+        RETURNING *
+      `,
+      [contractId, projectId, createdBy, title.trim(), terms]
+    );
+
+    return res
+      .status(201)
+      .json(mapContractRow({ ...result.rows[0], owner_id: project.user_id, signature_count: 0 }));
+  } catch (error) {
+    logError('contracts:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to create contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/project/:projectId', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT c.*, p.user_id AS owner_id, COUNT(cs.id) AS signature_count
+        FROM contracts c
+        JOIN projects p ON p.id = c.project_id
+        LEFT JOIN contract_signatures cs ON cs.contract_id = c.id
+        WHERE c.project_id = $1
+        GROUP BY c.id, p.user_id
+        ORDER BY c.created_at DESC
+      `,
+      [projectId]
+    );
+    return res.json(result.rows.map((row) => mapContractRow(row)));
+  } catch (error) {
+    logError('contracts:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/:contractId', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    if (!contractId) {
+      return res.status(400).json({ message: 'contractId is required' });
+    }
+
+    await assertDbReady();
+    const contractResult = await pool.query(
+      `
+        SELECT c.*, p.user_id AS owner_id
+        FROM contracts c
+        JOIN projects p ON p.id = c.project_id
+        WHERE c.id = $1
+        LIMIT 1
+      `,
+      [contractId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const signatures = await pool.query(
+      `
+        SELECT
+          cs.*,
+          u.full_name AS user_full_name,
+          u.email AS user_email,
+          u.role AS user_role
+        FROM contract_signatures cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.contract_id = $1
+        ORDER BY cs.signed_at ASC
+      `,
+      [contractId]
+    );
+
+    return res.json(
+      mapContractRow(contractResult.rows[0], signatures.rows.map((row) => mapSignatureRow(row)))
+    );
+  } catch (error) {
+    logError('contracts:detail:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to fetch contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.put('/api/contracts/:contractId/status', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    const { status, userId } = req.body || {};
+    if (!contractId || !status || !userId) {
+      return res.status(400).json({ message: 'contractId, status, and userId are required' });
+    }
+
+    const normalizedStatus = String(status).toLowerCase();
+    if (!CONTRACT_STATUSES.has(normalizedStatus)) {
+      return res.status(400).json({ message: 'Invalid contract status' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    if (contractRow.owner_id !== userId && contractRow.created_by !== userId) {
+      return res.status(403).json({ message: 'Not authorized to update this contract' });
+    }
+
+    await pool.query('UPDATE contracts SET status = $1 WHERE id = $2', [normalizedStatus, contractId]);
+    return res.json({ status: normalizedStatus });
+  } catch (error) {
+    logError('contracts:update-status:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to update contract status'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/contracts/:contractId/sign', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    const { userId, signatureData, ipAddress } = req.body || {};
+    if (!contractId || !userId || !signatureData) {
+      return res.status(400).json({ message: 'contractId, userId, and signatureData are required' });
+    }
+
+    if (!isValidBase64(signatureData)) {
+      return res.status(400).json({ message: 'signatureData must be a valid base64 string' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const signer = await getUserById(userId);
+    if (!signer) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const role = normalizeRole(signer.role);
+    const isOwner = contractRow.owner_id === userId;
+    const isContractor = role === 'contractor';
+    if (!isOwner && !isContractor) {
+      return res.status(403).json({ message: 'Only homeowners or contractors can sign contracts' });
+    }
+
+    const existing = await pool.query(
+      'SELECT 1 FROM contract_signatures WHERE contract_id = $1 AND user_id = $2 LIMIT 1',
+      [contractId, userId]
+    );
+    if (existing.rows.length) {
+      return res.status(409).json({ message: 'User has already signed this contract' });
+    }
+
+    const signedAt = new Date();
+    const insertResult = await pool.query(
+      `
+        INSERT INTO contract_signatures (contract_id, user_id, signature_data, signed_at, ip_address)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `,
+      [contractId, userId, signatureData, signedAt, ipAddress || req.ip || null]
+    );
+
+    await refreshContractStatus(contractId);
+
+    const payload = mapSignatureRow({
+      ...insertResult.rows[0],
+      user_full_name: signer.full_name,
+      user_email: signer.email,
+      user_role: signer.role,
+    });
+    return res.status(201).json(payload);
+  } catch (error) {
+    logError('contracts:sign:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to sign contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/:contractId/signatures', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    if (!contractId) {
+      return res.status(400).json({ message: 'contractId is required' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          cs.*,
+          u.full_name AS user_full_name,
+          u.email AS user_email,
+          u.role AS user_role
+        FROM contract_signatures cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.contract_id = $1
+        ORDER BY cs.signed_at ASC
+      `,
+      [contractId]
+    );
+
+    return res.json(result.rows.map((row) => mapSignatureRow(row)));
+  } catch (error) {
+    logError('contracts:signatures:list:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to fetch signatures'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
