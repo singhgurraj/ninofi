@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
-import { clearNotifications } from '../../store/notificationSlice';
-import { loadNotifications } from '../../services/notifications';
+import { markAllRead } from '../../store/notificationSlice';
+import { loadNotifications, markNotificationsRead } from '../../services/notifications';
 import palette from '../../styles/palette';
 
 const NotificationsScreen = ({ navigation }) => {
@@ -11,9 +11,14 @@ const NotificationsScreen = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const { items } = useSelector((state) => state.notifications);
 
-  const fetchNotifs = useCallback(() => {
+  const fetchNotifs = useCallback(async () => {
     if (user?.id) {
-      dispatch(clearNotifications());
+      try {
+        await markNotificationsRead(user.id);
+        dispatch(markAllRead());
+      } catch {
+        // no-op
+      }
       dispatch(loadNotifications(user.id));
     }
   }, [dispatch, user?.id]);
@@ -44,7 +49,28 @@ const NotificationsScreen = ({ navigation }) => {
             <TouchableOpacity
               key={key}
               style={styles.card}
-              onPress={() => navigation.navigate('NotificationDetail', { notification: n })}
+              onPress={() => {
+                let data = n.data || {};
+                if (typeof data === 'string') {
+                  try {
+                    data = JSON.parse(data);
+                  } catch {
+                    data = {};
+                  }
+                }
+                if (data?.type === 'message' && data.projectId && data.senderId) {
+                  navigation.navigate('Chat', {
+                    project: { id: data.projectId, title: data.projectTitle || 'Project' },
+                    receiver: {
+                      id: data.senderId,
+                      fullName: data.senderName || 'Sender',
+                      email: data.senderEmail || '',
+                    },
+                  });
+                  return;
+                }
+                navigation.navigate('NotificationDetail', { notification: n });
+              }}
             >
               <Text style={styles.cardTitle}>{n.title}</Text>
               <Text style={styles.cardBody}>{n.body}</Text>

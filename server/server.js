@@ -383,6 +383,40 @@ const initDb = async () => {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_personnel (
+      id SERIAL PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      personnel_role TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS project_personnel_unique ON project_personnel (project_id, user_id)'
+  );
+  await pool.query('CREATE INDEX IF NOT EXISTS project_personnel_project_idx ON project_personnel (project_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_messages (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      receiver_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      body TEXT NOT NULL,
+      is_deleted BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS project_messages_project_id_idx ON project_messages (project_id, created_at)'
+  );
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS project_messages_sender_idx ON project_messages (sender_id)'
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS feature_flags (
       id SERIAL PRIMARY KEY,
       feature_name TEXT UNIQUE NOT NULL,
@@ -476,6 +510,20 @@ const mapProjectRow = (row = {}, milestones = [], media = []) => ({
             : null,
       }
     : undefined,
+  assignedContractor: row.accepted_contractor_id
+    ? {
+        id: row.accepted_contractor_id,
+        fullName: row.accepted_contractor_full_name,
+        email: row.accepted_contractor_email,
+        phone: row.accepted_contractor_phone,
+        profilePhotoUrl: row.accepted_contractor_profile_photo_url || '',
+        rating:
+          row.accepted_contractor_rating !== null && row.accepted_contractor_rating !== undefined
+            ? Number(row.accepted_contractor_rating)
+            : null,
+      }
+    : undefined,
+  acceptedApplicationId: row.accepted_app_id,
 });
 
 const mapMediaRow = (row = {}) => ({
@@ -573,6 +621,119 @@ const getProjectById = async (projectId) => {
   return result.rows[0] || null;
 };
 
+const getProjectParticipants = async (projectId) => {
+  if (!projectId) return null;
+  await assertDbReady();
+  const result = await pool.query(
+    `
+      SELECT
+        p.user_id AS owner_id,
+        owner.full_name AS owner_full_name,
+        acc.contractor_id AS contractor_id,
+        acc.contractor_full_name
+      FROM projects p
+      LEFT JOIN users owner ON owner.id = p.user_id
+      LEFT JOIN LATERAL (
+        SELECT
+          pa.contractor_id,
+          uc.full_name AS contractor_full_name
+        FROM project_applications pa
+        JOIN users uc ON uc.id = pa.contractor_id
+        WHERE pa.project_id = p.id AND pa.status = 'accepted'
+        ORDER BY pa.created_at DESC
+        LIMIT 1
+      ) acc ON TRUE
+      WHERE p.id = $1
+      LIMIT 1
+    `,
+    [projectId]
+  );
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  return {
+    ownerId: row.owner_id,
+    ownerName: row.owner_full_name,
+    contractorId: row.contractor_id,
+    contractorName: row.contractor_full_name,
+  };
+};
+
+const isProjectParticipant = (participants, userId) => {
+  if (!participants || !userId) return false;
+  return participants.ownerId === userId || (!!participants.contractorId && participants.contractorId === userId);
+};
+
+const fetchMessageWithUsers = async (messageId) => {
+  if (!messageId) return null;
+  const result = await pool.query(
+    `
+      SELECT
+        pm.*,
+        sender.full_name AS sender_full_name,
+        sender.email AS sender_email,
+        sender.role AS sender_role,
+        receiver.full_name AS receiver_full_name,
+        receiver.email AS receiver_email,
+        receiver.role AS receiver_role
+      FROM project_messages pm
+      LEFT JOIN users sender ON sender.id = pm.sender_id
+      LEFT JOIN users receiver ON receiver.id = pm.receiver_id
+      WHERE pm.id = $1
+      LIMIT 1
+    `,
+    [messageId]
+  );
+  return result.rows[0] || null;
+};
+
+const fetchProjectPersonnel = async (projectId) => {
+  if (!projectId) return [];
+  await assertDbReady();
+  const result = await pool.query(
+    `
+      SELECT
+        pp.*,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.profile_photo_url,
+        u.role
+      FROM project_personnel pp
+      JOIN users u ON u.id = pp.user_id
+      WHERE pp.project_id = $1
+      ORDER BY pp.created_at ASC
+    `,
+    [projectId]
+  );
+  return result.rows;
+};
+
+const buildProjectMemberSet = async (projectId) => {
+  const participants = await getProjectParticipants(projectId);
+  const personnelRows = await fetchProjectPersonnel(projectId);
+  const memberIds = new Set();
+  if (participants?.ownerId) memberIds.add(participants.ownerId);
+  if (participants?.contractorId) memberIds.add(participants.contractorId);
+  for (const row of personnelRows) {
+    if (row.user_id) memberIds.add(row.user_id);
+  }
+  return { participants, memberIds };
+};
+
+const resolveMessageReceiver = (participants, memberIds, senderId, requestedReceiverId) => {
+  if (!participants || !memberIds || !senderId) return null;
+  if (requestedReceiverId && memberIds.has(requestedReceiverId)) {
+    return requestedReceiverId;
+  }
+  if (participants.ownerId && participants.ownerId !== senderId) {
+    return participants.ownerId;
+  }
+  if (participants.contractorId && participants.contractorId !== senderId) {
+    return participants.contractorId;
+  }
+  return null;
+};
+
 const EXPENSE_CATEGORIES = new Set(['materials', 'gas', 'tools', 'other']);
 
 const mapExpenseRow = (row = {}) => ({
@@ -613,6 +774,52 @@ const mapWorkHourRow = (row = {}) => ({
         fullName: row.contractor_full_name,
         email: row.contractor_email,
         phone: row.contractor_phone,
+      }
+    : undefined,
+});
+
+const mapMessageRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  senderId: row.sender_id,
+  receiverId: row.receiver_id,
+  body: row.body || '',
+  isDeleted: !!row.is_deleted,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+  deletedAt: row.deleted_at instanceof Date ? row.deleted_at.toISOString() : row.deleted_at,
+  sender: row.sender_id
+    ? {
+        id: row.sender_id,
+        fullName: row.sender_full_name,
+        email: row.sender_email,
+        role: row.sender_role,
+      }
+    : undefined,
+  receiver: row.receiver_id
+    ? {
+        id: row.receiver_id,
+        fullName: row.receiver_full_name,
+        email: row.receiver_email,
+        role: row.receiver_role,
+      }
+    : undefined,
+});
+
+const mapProjectPersonnelRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  userId: row.user_id,
+  role: row.personnel_role || row.role || '',
+  addedAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  user: row.user_id
+    ? {
+        id: row.user_id,
+        fullName: row.full_name,
+        email: row.email,
+        phone: row.phone,
+        profilePhotoUrl: row.profile_photo_url || '',
+        role: row.role,
       }
     : undefined,
 });
@@ -1193,6 +1400,41 @@ app.get('/api/notifications/:userId', async (req, res) => {
   }
 });
 
+app.post('/api/notifications/mark-read', async (req, res) => {
+  try {
+    const { userId, notificationIds } = req.body || {};
+    await assertDbReady();
+
+    if (Array.isArray(notificationIds) && notificationIds.length) {
+      const validIds = notificationIds.filter((id) => isUuid(id));
+      if (!validIds.length) {
+        return res.status(400).json({ message: 'notificationIds must be valid UUIDs' });
+      }
+      const result = await pool.query(
+        'UPDATE notifications SET read = true WHERE id = ANY($1::uuid[])',
+        [validIds]
+      );
+      return res.json({ updated: result.rowCount });
+    }
+
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'Valid userId is required' });
+    }
+
+    const result = await pool.query(
+      'UPDATE notifications SET read = true WHERE user_id = $1 AND read = false',
+      [userId]
+    );
+    return res.json({ updated: result.rowCount });
+  } catch (error) {
+    console.error('Error marking notifications read:', error);
+    const message = pool
+      ? 'Failed to mark notifications read'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 app.post('/api/applications/:applicationId/:action', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -1215,10 +1457,18 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
     await assertDbReady();
     const appResult = await client.query(
       `
-        SELECT pa.*, p.user_id AS owner_id, p.title AS project_title, u.full_name AS contractor_name, u.email AS contractor_email, u.phone AS contractor_phone
+        SELECT
+          pa.*,
+          p.user_id AS owner_id,
+          p.title AS project_title,
+          u.full_name AS contractor_name,
+          u.email AS contractor_email,
+          u.phone AS contractor_phone,
+          owner.full_name AS owner_full_name
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = pa.contractor_id
+        LEFT JOIN users owner ON owner.id = p.user_id
         WHERE pa.id::text = $1
       `,
       [applicationId]
@@ -1264,6 +1514,15 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
     }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const ownerName = appRow.owner_full_name || 'Homeowner';
+    const notifTitle =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application`
+        : `${ownerName} responded to your application`;
+    const notifBody =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application for ${appRow.project_title}`
+        : `${appRow.project_title} has been ${newStatus}`;
     await client.query(
       `
         INSERT INTO notifications (id, user_id, title, body, data)
@@ -1272,13 +1531,14 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
       [
         notificationId,
         appRow.contractor_id,
-        `Your application was ${newStatus}`,
-        `${appRow.project_title} has been ${newStatus}`,
+        notifTitle,
+        notifBody,
         JSON.stringify({
           projectId: appRow.project_id,
           projectTitle: appRow.project_title,
           applicationId,
           status: newStatus,
+          ownerName,
         }),
       ]
     );
@@ -1326,10 +1586,18 @@ app.post('/api/applications/decide', async (req, res) => {
     await assertDbReady();
     const appResult = await client.query(
       `
-        SELECT pa.*, p.user_id AS owner_id, p.title AS project_title, u.full_name AS contractor_name, u.email AS contractor_email, u.phone AS contractor_phone
+        SELECT
+          pa.*,
+          p.user_id AS owner_id,
+          p.title AS project_title,
+          u.full_name AS contractor_name,
+          u.email AS contractor_email,
+          u.phone AS contractor_phone,
+          owner.full_name AS owner_full_name
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = pa.contractor_id
+        LEFT JOIN users owner ON owner.id = p.user_id
         WHERE pa.project_id = $1 AND pa.contractor_id = $2
       `,
       [projectId, contractorId]
@@ -1362,6 +1630,15 @@ app.post('/api/applications/decide', async (req, res) => {
     }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const ownerName = appRow.owner_full_name || 'Homeowner';
+    const notifTitle =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application`
+        : `${ownerName} responded to your application`;
+    const notifBody =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application for ${appRow.project_title}`
+        : `${appRow.project_title} has been ${newStatus}`;
     await client.query(
       `
         INSERT INTO notifications (id, user_id, title, body, data)
@@ -1370,13 +1647,14 @@ app.post('/api/applications/decide', async (req, res) => {
       [
         notificationId,
         appRow.contractor_id,
-        `Your application was ${newStatus}`,
-        `${appRow.project_title} has been ${newStatus}`,
+        notifTitle,
+        notifBody,
         JSON.stringify({
           projectId: appRow.project_id,
           projectTitle: appRow.project_title,
           applicationId: appRow.id,
           status: newStatus,
+          ownerName,
         }),
       ]
     );
@@ -1456,6 +1734,13 @@ app.get('/api/projects/contractor/:contractorId', async (req, res) => {
           u.phone AS owner_phone,
           u.profile_photo_url AS owner_profile_photo_url,
           u.rating AS owner_rating,
+          pa.id AS accepted_app_id,
+          pa.contractor_id AS accepted_contractor_id,
+          uc.full_name AS accepted_contractor_full_name,
+          uc.email AS accepted_contractor_email,
+          uc.phone AS accepted_contractor_phone,
+          uc.profile_photo_url AS accepted_contractor_profile_photo_url,
+          uc.rating AS accepted_contractor_rating,
           m.id AS milestone_id,
           m.name AS milestone_name,
           m.amount AS milestone_amount,
@@ -1469,6 +1754,7 @@ app.get('/api/projects/contractor/:contractorId', async (req, res) => {
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = p.user_id
+        JOIN users uc ON uc.id = pa.contractor_id
         LEFT JOIN milestones m ON m.project_id = p.id
         LEFT JOIN project_media pm ON pm.project_id = p.id
         WHERE pa.contractor_id = $1 AND pa.status = 'accepted'
@@ -1521,6 +1807,85 @@ app.get('/api/projects/contractor/:contractorId', async (req, res) => {
       ? 'Failed to fetch projects'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/projects/:projectId/leave', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { contractorId } = req.body || {};
+    if (!isUuid(projectId) || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    }
+    await assertDbReady();
+
+    const appResult = await client.query(
+      `
+        SELECT
+          pa.*,
+          p.title AS project_title,
+          p.user_id AS owner_id,
+          owner.full_name AS owner_full_name,
+          contractor.full_name AS contractor_full_name
+        FROM project_applications pa
+        JOIN projects p ON p.id = pa.project_id
+        JOIN users owner ON owner.id = p.user_id
+        JOIN users contractor ON contractor.id = pa.contractor_id
+        WHERE pa.project_id = $1 AND pa.contractor_id = $2 AND pa.status = 'accepted'
+        LIMIT 1
+      `,
+      [projectId, contractorId]
+    );
+
+    if (!appResult.rows.length) {
+      return res.status(404).json({ message: 'No accepted application found for this project' });
+    }
+
+    const appRow = appResult.rows[0];
+
+    await client.query('BEGIN');
+    await client.query('UPDATE project_applications SET status = $1 WHERE id = $2', [
+      'withdrawn',
+      appRow.id,
+    ]);
+    // Remove contractor-invited personnel (retain owner only)
+    await client.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id <> $2', [
+      projectId,
+      appRow.owner_id,
+    ]);
+
+    const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO notifications (id, user_id, title, body, data)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        notificationId,
+        appRow.owner_id,
+        `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}`,
+        `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}.`,
+        JSON.stringify({
+          contractorId,
+          projectId,
+          applicationId: appRow.id,
+          status: 'withdrawn',
+        }),
+      ]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ status: 'withdrawn', projectId, applicationId: appRow.id });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error leaving project:', error);
+    const message = pool
+      ? 'Failed to leave project'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
   }
 });
 
@@ -1904,11 +2269,33 @@ app.get('/api/projects/user/:userId', async (req, res) => {
           pm.id AS media_id,
           pm.url AS media_url,
           pm.label AS media_label,
-          pm.created_at AS media_created_at
+          pm.created_at AS media_created_at,
+          acc.accepted_app_id,
+          acc.accepted_contractor_id,
+          acc.accepted_contractor_full_name,
+          acc.accepted_contractor_email,
+          acc.accepted_contractor_phone,
+          acc.accepted_contractor_profile_photo_url,
+          acc.accepted_contractor_rating
         FROM projects p
         LEFT JOIN users u ON u.id = p.user_id
         LEFT JOIN milestones m ON m.project_id = p.id
         LEFT JOIN project_media pm ON pm.project_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT
+            pa.id AS accepted_app_id,
+            pa.contractor_id AS accepted_contractor_id,
+            uc.full_name AS accepted_contractor_full_name,
+            uc.email AS accepted_contractor_email,
+            uc.phone AS accepted_contractor_phone,
+            uc.profile_photo_url AS accepted_contractor_profile_photo_url,
+            uc.rating AS accepted_contractor_rating
+          FROM project_applications pa
+          JOIN users uc ON uc.id = pa.contractor_id
+          WHERE pa.project_id = p.id AND pa.status = 'accepted'
+          ORDER BY pa.created_at DESC
+          LIMIT 1
+        ) acc ON TRUE
         WHERE p.user_id = $1
         ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
       `,
@@ -1962,6 +2349,116 @@ app.get('/api/projects/user/:userId', async (req, res) => {
   }
 });
 
+app.get('/api/projects/:projectId/details', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT
+          p.*,
+          u.id AS owner_id,
+          u.full_name AS owner_full_name,
+          u.email AS owner_email,
+          u.phone AS owner_phone,
+          u.profile_photo_url AS owner_profile_photo_url,
+          u.rating AS owner_rating,
+          m.id AS milestone_id,
+          m.name AS milestone_name,
+          m.amount AS milestone_amount,
+          m.description AS milestone_description,
+          m.position AS milestone_position,
+          m.created_at AS milestone_created_at,
+          pm.id AS media_id,
+          pm.url AS media_url,
+          pm.label AS media_label,
+          pm.created_at AS media_created_at,
+          acc.accepted_app_id,
+          acc.accepted_contractor_id,
+          acc.accepted_contractor_full_name,
+          acc.accepted_contractor_email,
+          acc.accepted_contractor_phone,
+          acc.accepted_contractor_profile_photo_url,
+          acc.accepted_contractor_rating
+        FROM projects p
+        LEFT JOIN users u ON u.id = p.user_id
+        LEFT JOIN milestones m ON m.project_id = p.id
+        LEFT JOIN project_media pm ON pm.project_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT
+            pa.id AS accepted_app_id,
+            pa.contractor_id AS accepted_contractor_id,
+            uc.full_name AS accepted_contractor_full_name,
+            uc.email AS accepted_contractor_email,
+            uc.phone AS accepted_contractor_phone,
+            uc.profile_photo_url AS accepted_contractor_profile_photo_url,
+            uc.rating AS accepted_contractor_rating
+          FROM project_applications pa
+          JOIN users uc ON uc.id = pa.contractor_id
+          WHERE pa.project_id = p.id AND pa.status = 'accepted'
+          ORDER BY pa.created_at DESC
+          LIMIT 1
+        ) acc ON TRUE
+        WHERE p.id = $1
+        ORDER BY m.position ASC, m.created_at ASC, pm.created_at ASC
+      `,
+      [projectId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      if (!grouped.has(row.id)) {
+        grouped.set(row.id, {
+          project: row,
+          milestones: [],
+          media: [],
+        });
+      }
+      if (row.milestone_id) {
+        grouped.get(row.id).milestones.push(
+          mapMilestoneRow({
+            id: row.milestone_id,
+            name: row.milestone_name,
+            amount: row.milestone_amount,
+            description: row.milestone_description,
+            position: row.milestone_position,
+            created_at: row.milestone_created_at,
+          })
+        );
+      }
+      if (row.media_id) {
+        grouped.get(row.id).media.push(
+          mapMediaRow({
+            id: row.media_id,
+            url: row.media_url,
+            label: row.media_label,
+            created_at: row.media_created_at,
+          })
+        );
+      }
+    }
+
+    const payload = Array.from(grouped.values()).map(({ project, milestones, media }) =>
+      mapProjectRow(project, milestones, media)
+    )[0];
+
+    return res.json(payload);
+  } catch (error) {
+    console.error('Error fetching project details:', error);
+    const message = pool
+      ? 'Failed to fetch project'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 app.get('/api/projects/open', async (_req, res) => {
   try {
     const contractorId = _req.query.contractorId || null;
@@ -1997,7 +2494,12 @@ app.get('/api/projects/open', async (_req, res) => {
       LEFT JOIN milestones m ON m.project_id = p.id
       LEFT JOIN project_media pm ON pm.project_id = p.id
       LEFT JOIN project_applications pa ON pa.project_id = p.id AND pa.contractor_id = $1
-      WHERE ($1::uuid IS NULL OR pa.id IS NULL OR pa.status NOT IN ('pending','accepted'))
+      WHERE
+        ($1::uuid IS NULL OR pa.id IS NULL OR pa.status NOT IN ('pending','accepted'))
+        AND NOT EXISTS (
+          SELECT 1 FROM project_applications pa2
+          WHERE pa2.project_id = p.id AND pa2.status = 'accepted'
+        )
       ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
     `,
       [contractorId]
@@ -2385,6 +2887,397 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
     logError('work-hours:summary:error', { projectId: req.params?.projectId }, error);
     const message = pool
       ? 'Failed to summarize work hours'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/projects/:projectId/messages', async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const { userId } = req.query || {};
+      if (!projectId || !isUuid(projectId)) {
+        return res.status(400).json({ message: 'Invalid projectId' });
+      }
+      if (!userId || !isUuid(userId)) {
+        return res.status(400).json({ message: 'userId is required' });
+      }
+
+      await assertDbReady();
+      const { participants, memberIds } = await buildProjectMemberSet(projectId);
+      if (!participants) {
+        return res.status(404).json({ message: 'Project not found' });
+      }
+      if (!memberIds.has(userId)) {
+        return res.status(403).json({ message: 'Not authorized to view messages for this project' });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT
+            pm.*,
+            sender.full_name AS sender_full_name,
+            sender.email AS sender_email,
+            sender.role AS sender_role,
+            receiver.full_name AS receiver_full_name,
+            receiver.email AS receiver_email,
+            receiver.role AS receiver_role
+          FROM project_messages pm
+          LEFT JOIN users sender ON sender.id = pm.sender_id
+          LEFT JOIN users receiver ON receiver.id = pm.receiver_id
+          WHERE pm.project_id = $1
+          ORDER BY pm.created_at ASC
+        `,
+        [projectId]
+      );
+
+      return res.json(result.rows.map((row) => mapMessageRow(row)));
+    } catch (error) {
+      logError(
+        'project-messages:list:error',
+        { projectId: req.params?.projectId, userId: req.query?.userId },
+        error
+      );
+      const message = pool
+        ? 'Failed to fetch messages'
+        : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.post('/api/projects/:projectId/messages', async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const { senderId, receiverId, body } = req.body || {};
+      if (!projectId || !isUuid(projectId)) {
+        return res.status(400).json({ message: 'Invalid projectId' });
+      }
+      if (!senderId || !isUuid(senderId)) {
+        return res.status(400).json({ message: 'senderId is required' });
+      }
+      const trimmedBody = String(body || '').trim();
+      if (!trimmedBody) {
+        return res.status(400).json({ message: 'Message body is required' });
+      }
+
+      await assertDbReady();
+      const { participants, memberIds } = await buildProjectMemberSet(projectId);
+      if (!participants) {
+        return res.status(404).json({ message: 'Project not found' });
+      }
+      if (!memberIds.has(senderId)) {
+        return res.status(403).json({ message: 'Not authorized to send messages for this project' });
+      }
+
+      const resolvedReceiver = resolveMessageReceiver(participants, memberIds, senderId, receiverId);
+      if (!resolvedReceiver) {
+        return res.status(400).json({ message: 'No conversation partner available for this project' });
+      }
+
+      const [sender, receiverUser, project] = await Promise.all([
+        getUserById(senderId),
+        getUserById(resolvedReceiver),
+        getProjectById(projectId),
+      ]);
+      const messageId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const insertResult = await pool.query(
+        `
+          INSERT INTO project_messages (id, project_id, sender_id, receiver_id, body)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id
+        `,
+        [messageId, projectId, senderId, resolvedReceiver, trimmedBody]
+      );
+
+      const hydrated = await fetchMessageWithUsers(insertResult.rows[0].id);
+      // Notify receiver about the new message
+      if (receiverUser) {
+        const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        const notifData = {
+          type: 'message',
+          projectId,
+          projectTitle: project?.title || '',
+          senderId,
+          senderName: sender?.full_name || '',
+          senderEmail: sender?.email || '',
+          messageId: messageId,
+        };
+        await pool.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notificationId,
+            receiverUser.id,
+            sender?.full_name ? `${sender.full_name} sent you a message` : 'New project message',
+            body,
+            JSON.stringify(notifData),
+          ]
+        );
+      }
+
+      return res.status(201).json(mapMessageRow(hydrated));
+    } catch (error) {
+      logError(
+        'project-messages:create:error',
+        { projectId: req.params?.projectId, senderId: req.body?.senderId },
+        error
+      );
+      const message = pool
+        ? 'Failed to send message'
+        : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.put('/api/projects/:projectId/messages/:messageId', async (req, res) => {
+    try {
+      const { projectId, messageId } = req.params;
+      const { userId, body } = req.body || {};
+      if (!projectId || !isUuid(projectId)) {
+        return res.status(400).json({ message: 'Invalid projectId' });
+      }
+      if (!messageId || !isUuid(messageId)) {
+        return res.status(400).json({ message: 'Invalid messageId' });
+      }
+      if (!userId || !isUuid(userId)) {
+        return res.status(400).json({ message: 'userId is required' });
+      }
+      const trimmedBody = String(body || '').trim();
+      if (!trimmedBody) {
+        return res.status(400).json({ message: 'Message body is required' });
+      }
+
+      await assertDbReady();
+      const messageResult = await pool.query(
+        'SELECT * FROM project_messages WHERE id = $1 AND project_id = $2 LIMIT 1',
+        [messageId, projectId]
+      );
+      if (!messageResult.rows.length) {
+        return res.status(404).json({ message: 'Message not found' });
+      }
+      const messageRow = messageResult.rows[0];
+      if (messageRow.sender_id !== userId) {
+        return res.status(403).json({ message: 'Only the sender can edit this message' });
+      }
+      if (messageRow.is_deleted) {
+        return res.status(400).json({ message: 'Cannot edit a deleted message' });
+      }
+
+      await pool.query(
+        'UPDATE project_messages SET body = $1, updated_at = NOW() WHERE id = $2',
+        [trimmedBody, messageId]
+      );
+      const hydrated = await fetchMessageWithUsers(messageId);
+      return res.json(mapMessageRow(hydrated));
+    } catch (error) {
+      logError(
+        'project-messages:update:error',
+        { projectId: req.params?.projectId, messageId: req.params?.messageId },
+        error
+      );
+      const message = pool
+        ? 'Failed to update message'
+        : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.delete('/api/projects/:projectId/messages/:messageId', async (req, res) => {
+    try {
+      const { projectId, messageId } = req.params;
+      const { userId } = req.body || {};
+      if (!projectId || !isUuid(projectId)) {
+        return res.status(400).json({ message: 'Invalid projectId' });
+      }
+      if (!messageId || !isUuid(messageId)) {
+        return res.status(400).json({ message: 'Invalid messageId' });
+      }
+      if (!userId || !isUuid(userId)) {
+        return res.status(400).json({ message: 'userId is required' });
+      }
+
+      await assertDbReady();
+      const messageResult = await pool.query(
+        'SELECT * FROM project_messages WHERE id = $1 AND project_id = $2 LIMIT 1',
+        [messageId, projectId]
+      );
+      if (!messageResult.rows.length) {
+        return res.status(404).json({ message: 'Message not found' });
+      }
+      const messageRow = messageResult.rows[0];
+      if (messageRow.sender_id !== userId) {
+        return res.status(403).json({ message: 'Only the sender can delete this message' });
+      }
+
+      await pool.query(
+        'UPDATE project_messages SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE id = $1',
+        [messageId]
+      );
+      return res.status(204).send();
+    } catch (error) {
+      logError(
+        'project-messages:delete:error',
+        { projectId: req.params?.projectId, messageId: req.params?.messageId },
+        error
+      );
+      const message = pool
+        ? 'Failed to delete message'
+        : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
+  });
+
+app.get('/api/projects/:projectId/personnel', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { userId } = req.query || {};
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || !isProjectParticipant(participants, userId)) {
+      return res.status(403).json({ message: 'Not authorized to view personnel' });
+    }
+
+    const rows = await fetchProjectPersonnel(projectId);
+    return res.json(rows.map((row) => mapProjectPersonnelRow(row)));
+  } catch (error) {
+    logError('project-personnel:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch personnel'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/projects/:projectId/personnel', async (req, res) => {
+  if (!pool) {
+    return res.status(500).json({ message: 'Database is not configured (set DATABASE_URL)' });
+  }
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { userId, people } = req.body || {};
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    if (!Array.isArray(people) || people.length === 0) {
+      return res.status(400).json({ message: 'people list is required' });
+    }
+
+    const uniqueIds = Array.from(
+      new Set(
+        people
+          .map((p) => p?.userId || p?.id)
+          .filter((id) => typeof id === 'string' && isUuid(id))
+      )
+    );
+    if (uniqueIds.length === 0) {
+      return res.status(400).json({ message: 'No valid personnel ids provided' });
+    }
+    if (uniqueIds.length > 10) {
+      return res.status(400).json({ message: 'You can add up to 10 people at a time' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || !isProjectParticipant(participants, userId)) {
+      return res.status(403).json({ message: 'Not authorized to add personnel' });
+    }
+
+    await client.query('BEGIN');
+    for (const personId of uniqueIds) {
+      const userRow = await client.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [personId]);
+      if (!userRow.rows.length) continue;
+      await client.query(
+        `
+          INSERT INTO project_personnel (project_id, user_id, personnel_role)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (project_id, user_id) DO NOTHING
+        `,
+        [projectId, personId, userRow.rows[0].role || null]
+      );
+    }
+    await client.query('COMMIT');
+
+    const rows = await fetchProjectPersonnel(projectId);
+    return res.status(201).json(rows.map((row) => mapProjectPersonnelRow(row)));
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    logError('project-personnel:create:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to add personnel'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete('/api/projects/:projectId/personnel/:personId', async (req, res) => {
+  try {
+    const { projectId, personId } = req.params;
+    const { userId } = req.body || {};
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    if (!personId || !isUuid(personId)) {
+      return res.status(400).json({ message: 'Invalid personId' });
+    }
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+
+    await assertDbReady();
+    const participants = await getProjectParticipants(projectId);
+    if (!participants) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (participants.ownerId === personId) {
+      return res.status(403).json({ message: 'Cannot remove the project owner' });
+    }
+    if (participants.contractorId !== userId) {
+      return res.status(403).json({ message: 'Only the assigned contractor can remove personnel' });
+    }
+
+    const existing = await pool.query(
+      'SELECT * FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+      [projectId, personId]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Personnel not found on this project' });
+    }
+
+    await pool.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id = $2', [
+      projectId,
+      personId,
+    ]);
+    return res.status(204).send();
+  } catch (error) {
+    logError(
+      'project-personnel:delete:error',
+      { projectId: req.params?.projectId, personId: req.params?.personId },
+      error
+    );
+    const message = pool
+      ? 'Failed to remove personnel'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }

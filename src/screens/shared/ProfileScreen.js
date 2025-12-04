@@ -1,5 +1,5 @@
-import { useNavigation, CommonActions } from '@react-navigation/native';
-import { useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   SafeAreaView,
@@ -13,10 +13,12 @@ import {
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '../../services/auth';
+import { useRouter } from 'expo-router';
 
 const ProfileScreen = ({ navigation: propNavigation }) => {
   const navigation = propNavigation || useNavigation();
-  const { user, role } = useSelector((state) => state.auth);
+  const router = useRouter();
+  const { user, role, isAuthenticated } = useSelector((state) => state.auth);
   const dispatch = useDispatch();
   const hasNavigation = Boolean(navigation);
 
@@ -54,16 +56,7 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
           style: 'destructive',
           onPress: async () => {
             await dispatch(logout());
-            const rootNav =
-              navigation.getParent?.()?.getParent?.() ||
-              navigation.getParent?.() ||
-              navigation;
-            rootNav.dispatch(
-              CommonActions.reset({
-                index: 0,
-                routes: [{ name: 'Welcome' }],
-              })
-            );
+            // Navigation container will re-render to the auth stack (Welcome) via Redux state.
           }
         }
       ]
@@ -78,6 +71,12 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
       default: return 'User';
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.replace('/');
+    }
+  }, [isAuthenticated, router]);
 
   return (
     <SafeAreaView style={styles.container}>

@@ -1,5 +1,5 @@
 import { setNotifications } from '../store/notificationSlice';
-import api from './api';
+import api, { projectAPI } from './api';
 
 export const loadNotifications = (userId) => async (dispatch) => {
   if (!userId) return;
@@ -13,9 +13,17 @@ export const loadNotifications = (userId) => async (dispatch) => {
 };
 
 export const decideApplication = (applicationId, action, ownerId) => {
-  return api.decideApplication(applicationId, action, ownerId);
+  return projectAPI.decideApplication(applicationId, action, ownerId);
 };
 
 export const decideApplicationByProject = (payload) => {
-  return api.decideApplicationByProject(payload);
+  return projectAPI.decideApplicationByProject(payload);
+};
+
+export const markNotificationsRead = (userId, notificationIds) => {
+  const payload =
+    Array.isArray(notificationIds) && notificationIds.length
+      ? { notificationIds }
+      : { userId };
+  return api.post('/notifications/mark-read', payload);
 };

@@ -121,7 +121,7 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
     
     <TouchableOpacity 
       style={styles.actionButtonOutline}
-      onPress={() => console.log('Contact - Coming soon')}
+      onPress={() => navigation.navigate('Chat', { project })}
     >
       <Text style={styles.actionIconOutline}>💬</Text>
       <Text style={styles.actionTextOutline}>Contact</Text>

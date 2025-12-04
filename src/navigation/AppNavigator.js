@@ -35,6 +35,11 @@ import ContractorProjectDetailsScreen from '../screens/contractor/ContractorProj
 import NotificationsScreen from '../screens/shared/NotificationsScreen';
 import NotificationDetailScreen from '../screens/shared/NotificationDetailScreen';
 import ApplicationsScreen from '../screens/contractor/ApplicationsScreen';
+import ChatScreen from '../screens/shared/ChatScreen';
+import ProjectOverviewScreen from '../screens/shared/ProjectOverviewScreen';
+import ProjectPersonnelScreen from '../screens/shared/ProjectPersonnelScreen';
+import RegisterWorkerScreen from '../screens/contractor/RegisterWorkerScreen';
+import ProjectPersonnelAddScreen from '../screens/shared/ProjectPersonnelAddScreen';
 import { setAuthToken } from '../services/api';
 
 const RootStack = createStackNavigator();
@@ -106,6 +111,31 @@ const MainAppStack = () => (
         name="NotificationDetail"
         component={NotificationDetailScreen}
         options={{ title: 'Request' }}
+      />
+      <MainStack.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{ title: 'Chat' }}
+      />
+      <MainStack.Screen
+        name="ProjectOverview"
+        component={ProjectOverviewScreen}
+        options={{ title: 'Project Overview' }}
+      />
+      <MainStack.Screen
+        name="ProjectPersonnel"
+        component={ProjectPersonnelScreen}
+        options={{ title: 'Personnel' }}
+      />
+      <MainStack.Screen
+        name="ProjectPersonnelAdd"
+        component={ProjectPersonnelAddScreen}
+        options={{ title: 'Add Personnel' }}
+      />
+      <MainStack.Screen
+        name="RegisterWorker"
+        component={RegisterWorkerScreen}
+        options={{ title: 'Register Worker' }}
       />
       <MainStack.Screen
         name="Applications"

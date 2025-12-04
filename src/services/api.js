@@ -119,6 +119,25 @@ export const projectAPI = {
     api.get(`/applications/contractor/${contractorId}`),
   deleteApplication: async (applicationId, contractorId) =>
     api.delete(`/applications/${applicationId}`, { data: contractorId ? { contractorId } : {} }),
+  getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
+  leaveProject: async (projectId, contractorId) =>
+    api.post(`/projects/${projectId}/leave`, { contractorId }),
+  getProjectPersonnel: async (projectId, userId) =>
+    api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
+  addProjectPersonnel: async (projectId, payload) =>
+    api.post(`/projects/${projectId}/personnel`, payload),
+  deleteProjectPersonnel: async (projectId, personId, payload) =>
+    api.delete(`/projects/${projectId}/personnel/${personId}`, { data: payload }),
+};
+
+export const messageAPI = {
+  list: async (projectId, userId) =>
+    api.get(`/projects/${projectId}/messages`, { params: { userId } }),
+  send: async (projectId, payload) => api.post(`/projects/${projectId}/messages`, payload),
+  update: async (projectId, messageId, payload) =>
+    api.put(`/projects/${projectId}/messages/${messageId}`, payload),
+  remove: async (projectId, messageId, payload) =>
+    api.delete(`/projects/${projectId}/messages/${messageId}`, { data: payload }),
 };
 
 // Invoice API calls (mocked for now)
@@ -144,6 +163,10 @@ export const invoiceAPI = {
       },
     });
   },
+};
+
+export const userAPI = {
+  listWorkers: async () => api.get('/users/worker'),
 };
 
 export default api;

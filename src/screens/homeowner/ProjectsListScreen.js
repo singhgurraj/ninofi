@@ -68,10 +68,10 @@ const ProjectsListScreen = ({ navigation }) => {
                 <TouchableOpacity
                   style={styles.action}
                   onPress={() =>
-                    navigation.navigate('CreateProject', { project, origin: 'ProjectsList' })
+                    navigation.navigate('ProjectOverview', { project, role: 'homeowner' })
                   }
                 >
-                  <Text style={styles.actionText}>Edit</Text>
+                  <Text style={styles.actionText}>View</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.action, styles.deleteAction]}
@@ -81,7 +81,7 @@ const ProjectsListScreen = ({ navigation }) => {
                 </TouchableOpacity>
               </View>
             </View>
-            <Text style={styles.address}>{project.address || 'No address provided'}</Text>
+            <Text style={styles.address}>{project.projectType || 'Project'}</Text>
           </View>
         ))}
       </ScrollView>
