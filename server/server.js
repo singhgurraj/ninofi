@@ -383,6 +383,20 @@ const initDb = async () => {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_personnel (
+      id SERIAL PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      personnel_role TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS project_personnel_unique ON project_personnel (project_id, user_id)'
+  );
+  await pool.query('CREATE INDEX IF NOT EXISTS project_personnel_project_idx ON project_personnel (project_id)');
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS project_messages (
       id UUID PRIMARY KEY,
       project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -686,6 +700,28 @@ const fetchMessageWithUsers = async (messageId) => {
   return result.rows[0] || null;
 };
 
+const fetchProjectPersonnel = async (projectId) => {
+  if (!projectId) return [];
+  await assertDbReady();
+  const result = await pool.query(
+    `
+      SELECT
+        pp.*,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.profile_photo_url,
+        u.role
+      FROM project_personnel pp
+      JOIN users u ON u.id = pp.user_id
+      WHERE pp.project_id = $1
+      ORDER BY pp.created_at ASC
+    `,
+    [projectId]
+  );
+  return result.rows;
+};
+
 const EXPENSE_CATEGORIES = new Set(['materials', 'gas', 'tools', 'other']);
 
 const mapExpenseRow = (row = {}) => ({
@@ -754,6 +790,24 @@ const mapMessageRow = (row = {}) => ({
         fullName: row.receiver_full_name,
         email: row.receiver_email,
         role: row.receiver_role,
+      }
+    : undefined,
+});
+
+const mapProjectPersonnelRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  userId: row.user_id,
+  role: row.personnel_role || row.role || '',
+  addedAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  user: row.user_id
+    ? {
+        id: row.user_id,
+        fullName: row.full_name,
+        email: row.email,
+        phone: row.phone,
+        profilePhotoUrl: row.profile_photo_url || '',
+        role: row.role,
       }
     : undefined,
 });
@@ -3025,6 +3079,108 @@ app.get('/api/projects/:projectId/messages', async (req, res) => {
       return res.status(500).json({ message });
     }
   });
+
+app.get('/api/projects/:projectId/personnel', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { userId } = req.query || {};
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || !isProjectParticipant(participants, userId)) {
+      return res.status(403).json({ message: 'Not authorized to view personnel' });
+    }
+
+    const rows = await fetchProjectPersonnel(projectId);
+    return res.json(rows.map((row) => mapProjectPersonnelRow(row)));
+  } catch (error) {
+    logError('project-personnel:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch personnel'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/projects/:projectId/personnel', async (req, res) => {
+  if (!pool) {
+    return res.status(500).json({ message: 'Database is not configured (set DATABASE_URL)' });
+  }
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { userId, people } = req.body || {};
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    if (!Array.isArray(people) || people.length === 0) {
+      return res.status(400).json({ message: 'people list is required' });
+    }
+
+    const uniqueIds = Array.from(
+      new Set(
+        people
+          .map((p) => p?.userId || p?.id)
+          .filter((id) => typeof id === 'string' && isUuid(id))
+      )
+    );
+    if (uniqueIds.length === 0) {
+      return res.status(400).json({ message: 'No valid personnel ids provided' });
+    }
+    if (uniqueIds.length > 10) {
+      return res.status(400).json({ message: 'You can add up to 10 people at a time' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || !isProjectParticipant(participants, userId)) {
+      return res.status(403).json({ message: 'Not authorized to add personnel' });
+    }
+
+    await client.query('BEGIN');
+    for (const personId of uniqueIds) {
+      const userRow = await client.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [personId]);
+      if (!userRow.rows.length) continue;
+      await client.query(
+        `
+          INSERT INTO project_personnel (project_id, user_id, personnel_role)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (project_id, user_id) DO NOTHING
+        `,
+        [projectId, personId, userRow.rows[0].role || null]
+      );
+    }
+    await client.query('COMMIT');
+
+    const rows = await fetchProjectPersonnel(projectId);
+    return res.status(201).json(rows.map((row) => mapProjectPersonnelRow(row)));
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    logError('project-personnel:create:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to add personnel'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
 
 app.post('/api/contracts', async (req, res) => {
   try {

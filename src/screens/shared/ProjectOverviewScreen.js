@@ -113,14 +113,6 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
           >
             <Text style={styles.contractText}>Propose Contract</Text>
           </TouchableOpacity>
-          {isContractor ? (
-            <TouchableOpacity
-              style={[styles.button, styles.addButton]}
-              onPress={() => navigation.navigate('ProjectPersonnel', { project, role })}
-            >
-              <Text style={styles.personnelText}>Add Personnel</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -175,7 +167,6 @@ const styles = StyleSheet.create({
   personnelText: { color: palette.text, fontWeight: '700' },
   muted: { color: palette.muted },
   contractButton: { backgroundColor: palette.primary },
-  addButton: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border },
   contractText: { color: '#fff', fontWeight: '700' },
 });
 

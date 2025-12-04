@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Image,
   SafeAreaView,
@@ -8,7 +8,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
+import { projectAPI } from '../../services/api';
 
 const buildPersonnel = (project) => {
   const people = [];
@@ -56,33 +59,56 @@ const roleLabel = (role) => {
 
 const ProjectPersonnelScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
-  const basePeople = useMemo(() => buildPersonnel(project), [project]);
-  const [people, setPeople] = useState(basePeople);
+  const { user } = useSelector((state) => state.auth);
+  const [people, setPeople] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
   const isContractor = role === 'contractor';
-
-  const availableEmployees = useMemo(
-    () => [
-      { id: 'emp-1', name: 'Taylor Foreman', role: 'foreman', email: 'taylor@example.com', phone: '555-333-1000' },
-      { id: 'emp-2', name: 'Jordan Mason', role: 'laborer', email: 'jordan@example.com', phone: '555-333-2000' },
-      { id: 'emp-3', name: 'Riley Sparks', role: 'laborer', email: 'riley@example.com', phone: '555-333-3000' },
-    ],
-    []
-  );
 
   const toggleSelect = (id) => setSelectedId((prev) => (prev === id ? null : id));
 
-  const handleAdd = (employee) => {
-    if (!employee) return;
-    if (people.find((p) => p.id === employee.id)) return;
-    const next = [...people, employee];
-    const order = ['owner', 'contractor', 'subcontractor', 'foreman', 'laborer'];
-    setPeople(
-      next.sort(
-        (a, b) => order.indexOf(a.role || 'laborer') - order.indexOf(b.role || 'laborer')
-      )
-    );
-  };
+  const loadPeople = useCallback(async () => {
+    if (!project?.id || !user?.id) return;
+    setIsLoading(true);
+    try {
+      const res = await projectAPI.getProjectPersonnel(project.id, user.id);
+      const rows = res.data || [];
+      const base = buildPersonnel(project);
+      const merged = [...base, ...rows.map((r) => ({
+        id: r.user?.id || r.userId,
+        name: r.user?.fullName,
+        role: r.role,
+        email: r.user?.email,
+        phone: r.user?.phone,
+        photo: r.user?.profilePhotoUrl,
+      }))];
+      const deduped = [];
+      const seen = new Set();
+      merged.forEach((p) => {
+        if (!p?.id || seen.has(p.id)) return;
+        if (user.id === p.id) return; // hide own card
+        seen.add(p.id);
+        deduped.push(p);
+      });
+      const order = ['owner', 'contractor', 'subcontractor', 'foreman', 'laborer', 'worker'];
+      const rank = (r) => {
+        const idx = order.indexOf((r || '').toLowerCase());
+        return idx === -1 ? order.length : idx;
+      };
+      deduped.sort((a, b) => rank(a.role) - rank(b.role));
+      setPeople(deduped);
+    } catch (error) {
+      console.log('personnel:load:error', error?.response?.data || error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [project, user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPeople();
+    }, [loadPeople])
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -91,12 +117,26 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.backText}>←</Text>
           </TouchableOpacity>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.title}>Project Personnel</Text>
             <Text style={styles.subtitle}>{project?.title || ''}</Text>
           </View>
+          {isContractor ? (
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() =>
+                navigation.navigate('ProjectPersonnelAdd', {
+                  project,
+                  role,
+                })
+              }
+            >
+              <Text style={styles.addButtonText}>Add</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
+        {isLoading ? <Text style={styles.muted}>Loading…</Text> : null}
         {people.map((person) => {
           const isSelected = selectedId === person.id;
           return (
@@ -135,24 +175,6 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
             </TouchableOpacity>
           );
         })}
-
-        {isContractor ? (
-          <View style={styles.addSection}>
-            <Text style={styles.addTitle}>Add Personnel</Text>
-            <View style={styles.employeeList}>
-              {availableEmployees.map((emp) => (
-                <TouchableOpacity
-                  key={emp.id}
-                  style={styles.employeeChip}
-                  onPress={() => handleAdd(emp)}
-                >
-                  <Text style={styles.employeeChipText}>{emp.name}</Text>
-                  <Text style={styles.employeeRole}>{roleLabel(emp.role)}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -161,7 +183,12 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
   content: { padding: 20, gap: 12 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 6 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 6,
+  },
   backText: { fontSize: 22, color: palette.text },
   title: { fontSize: 20, fontWeight: '700', color: palette.text },
   subtitle: { color: palette.muted },
@@ -197,26 +224,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   messageText: { color: '#fff', fontWeight: '700' },
-  addSection: {
-    marginTop: 12,
-    padding: 14,
-    backgroundColor: palette.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    gap: 10,
-  },
-  addTitle: { fontWeight: '700', color: palette.text },
-  employeeList: { gap: 8 },
-  employeeChip: {
-    padding: 10,
+  addButton: {
+    backgroundColor: palette.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: '#F5F5FF',
-    borderWidth: 1,
-    borderColor: palette.border,
   },
-  employeeChipText: { fontWeight: '700', color: palette.text },
-  employeeRole: { color: palette.muted, fontSize: 12 },
+  addButtonText: { color: '#fff', fontWeight: '700' },
+  muted: { color: palette.muted },
 });
 
 export default ProjectPersonnelScreen;

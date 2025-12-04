@@ -122,6 +122,10 @@ export const projectAPI = {
   getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
   leaveProject: async (projectId, contractorId) =>
     api.post(`/projects/${projectId}/leave`, { contractorId }),
+  getProjectPersonnel: async (projectId, userId) =>
+    api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
+  addProjectPersonnel: async (projectId, payload) =>
+    api.post(`/projects/${projectId}/personnel`, payload),
 };
 
 export const messageAPI = {
@@ -157,6 +161,10 @@ export const invoiceAPI = {
       },
     });
   },
+};
+
+export const userAPI = {
+  listWorkers: async () => api.get('/users/worker'),
 };
 
 export default api;
