@@ -663,20 +663,6 @@ const isProjectParticipant = (participants, userId) => {
   return participants.ownerId === userId || (!!participants.contractorId && participants.contractorId === userId);
 };
 
-const resolveMessageReceiver = (participants, senderId, requestedReceiverId) => {
-  if (!participants || !senderId) return null;
-  if (requestedReceiverId && isProjectParticipant(participants, requestedReceiverId)) {
-    return requestedReceiverId;
-  }
-  if (participants.ownerId && participants.ownerId !== senderId) {
-    return participants.ownerId;
-  }
-  if (participants.contractorId && participants.contractorId !== senderId) {
-    return participants.contractorId;
-  }
-  return null;
-};
-
 const fetchMessageWithUsers = async (messageId) => {
   if (!messageId) return null;
   const result = await pool.query(
@@ -720,6 +706,32 @@ const fetchProjectPersonnel = async (projectId) => {
     [projectId]
   );
   return result.rows;
+};
+
+const buildProjectMemberSet = async (projectId) => {
+  const participants = await getProjectParticipants(projectId);
+  const personnelRows = await fetchProjectPersonnel(projectId);
+  const memberIds = new Set();
+  if (participants?.ownerId) memberIds.add(participants.ownerId);
+  if (participants?.contractorId) memberIds.add(participants.contractorId);
+  for (const row of personnelRows) {
+    if (row.user_id) memberIds.add(row.user_id);
+  }
+  return { participants, memberIds };
+};
+
+const resolveMessageReceiver = (participants, memberIds, senderId, requestedReceiverId) => {
+  if (!participants || !memberIds || !senderId) return null;
+  if (requestedReceiverId && memberIds.has(requestedReceiverId)) {
+    return requestedReceiverId;
+  }
+  if (participants.ownerId && participants.ownerId !== senderId) {
+    return participants.ownerId;
+  }
+  if (participants.contractorId && participants.contractorId !== senderId) {
+    return participants.contractorId;
+  }
+  return null;
 };
 
 const EXPENSE_CATEGORIES = new Set(['materials', 'gas', 'tools', 'other']);
@@ -2892,11 +2904,11 @@ app.get('/api/projects/:projectId/messages', async (req, res) => {
       }
 
       await assertDbReady();
-      const participants = await getProjectParticipants(projectId);
+      const { participants, memberIds } = await buildProjectMemberSet(projectId);
       if (!participants) {
         return res.status(404).json({ message: 'Project not found' });
       }
-      if (!isProjectParticipant(participants, userId)) {
+      if (!memberIds.has(userId)) {
         return res.status(403).json({ message: 'Not authorized to view messages for this project' });
       }
 
@@ -2949,15 +2961,15 @@ app.get('/api/projects/:projectId/messages', async (req, res) => {
       }
 
       await assertDbReady();
-      const participants = await getProjectParticipants(projectId);
+      const { participants, memberIds } = await buildProjectMemberSet(projectId);
       if (!participants) {
         return res.status(404).json({ message: 'Project not found' });
       }
-      if (!isProjectParticipant(participants, senderId)) {
+      if (!memberIds.has(senderId)) {
         return res.status(403).json({ message: 'Not authorized to send messages for this project' });
       }
 
-      const resolvedReceiver = resolveMessageReceiver(participants, senderId, receiverId);
+      const resolvedReceiver = resolveMessageReceiver(participants, memberIds, senderId, receiverId);
       if (!resolvedReceiver) {
         return res.status(400).json({ message: 'No conversation partner available for this project' });
       }

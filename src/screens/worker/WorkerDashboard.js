@@ -6,11 +6,18 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
+import { useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
+import { loadNotifications } from '../../services/notifications';
+import { markAllRead } from '../../store/notificationSlice';
 
 const WorkerDashboard = ({ navigation }) => {
+  const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
+  const { items: notifications } = useSelector((state) => state.notifications);
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   // Mock data
   const stats = {
@@ -40,6 +47,26 @@ const WorkerDashboard = ({ navigation }) => {
     },
   ];
 
+  const fetchNotifs = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      await loadNotifications(user.id)(dispatch);
+      dispatch(markAllRead());
+    } catch {
+      // no-op
+    }
+  }, [dispatch, user?.id]);
+
+  useEffect(() => {
+    fetchNotifs();
+  }, [fetchNotifs]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchNotifs();
+    }, [fetchNotifs])
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -50,8 +77,16 @@ const WorkerDashboard = ({ navigation }) => {
             <Text style={styles.role}>Ready to work?</Text>
           </View>
           <View style={styles.headerButtons}>
-            <TouchableOpacity style={styles.notificationButton}>
+            <TouchableOpacity
+              style={styles.notificationButton}
+              onPress={() => navigation.navigate('Notifications')}
+            >
               <Text style={styles.notificationIcon}>🔔</Text>
+              {unreadCount > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{unreadCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -218,6 +253,17 @@ const styles = StyleSheet.create({
   notificationIcon: {
     fontSize: 20,
   },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    minWidth: 18,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+  },
+  badgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   statsContainer: {
     flexDirection: 'row',
     padding: 20,
