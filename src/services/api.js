@@ -126,6 +126,8 @@ export const projectAPI = {
     api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
   addProjectPersonnel: async (projectId, payload) =>
     api.post(`/projects/${projectId}/personnel`, payload),
+  deleteProjectPersonnel: async (projectId, personId, payload) =>
+    api.delete(`/projects/${projectId}/personnel/${personId}`, { data: payload }),
 };
 
 export const messageAPI = {

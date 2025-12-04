@@ -3182,6 +3182,55 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
   }
 });
 
+app.delete('/api/projects/:projectId/personnel/:personId', async (req, res) => {
+  try {
+    const { projectId, personId } = req.params;
+    const { userId } = req.body || {};
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    if (!personId || !isUuid(personId)) {
+      return res.status(400).json({ message: 'Invalid personId' });
+    }
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+
+    await assertDbReady();
+    const participants = await getProjectParticipants(projectId);
+    if (!participants) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (participants.contractorId !== userId) {
+      return res.status(403).json({ message: 'Only the assigned contractor can remove personnel' });
+    }
+
+    const existing = await pool.query(
+      'SELECT * FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+      [projectId, personId]
+    );
+    if (!existing.rows.length) {
+      return res.status(404).json({ message: 'Personnel not found on this project' });
+    }
+
+    await pool.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id = $2', [
+      projectId,
+      personId,
+    ]);
+    return res.status(204).send();
+  } catch (error) {
+    logError(
+      'project-personnel:delete:error',
+      { projectId: req.params?.projectId, personId: req.params?.personId },
+      error
+    );
+    const message = pool
+      ? 'Failed to remove personnel'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 app.post('/api/contracts', async (req, res) => {
   try {
     const { projectId, createdBy, title, terms } = req.body || {};

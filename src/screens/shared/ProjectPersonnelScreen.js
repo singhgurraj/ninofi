@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Alert,
   Image,
   SafeAreaView,
   ScrollView,
@@ -104,6 +105,25 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
     }
   }, [project, user?.id]);
 
+  const handleRemove = async (personId) => {
+    if (!project?.id || !user?.id || !personId) return;
+    Alert.alert('Remove person', 'Remove this person from the project?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await projectAPI.deleteProjectPersonnel(project.id, personId, { userId: user.id });
+            await loadPeople();
+          } catch (error) {
+            Alert.alert('Error', error?.response?.data?.message || 'Failed to remove');
+          }
+        },
+      },
+    ]);
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadPeople();
@@ -179,6 +199,14 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
                   >
                     <Text style={styles.messageText}>Message</Text>
                   </TouchableOpacity>
+                  {isContractor ? (
+                    <TouchableOpacity
+                      style={styles.removeButton}
+                      onPress={() => handleRemove(person.id)}
+                    >
+                      <Text style={styles.removeText}>Remove</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               )}
             </TouchableOpacity>
@@ -233,6 +261,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   messageText: { color: '#fff', fontWeight: '700' },
+  removeButton: {
+    marginTop: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.error || '#E45858',
+    alignItems: 'center',
+  },
+  removeText: { color: palette.error || '#E45858', fontWeight: '700' },
   addButton: {
     backgroundColor: palette.primary,
     paddingHorizontal: 12,
