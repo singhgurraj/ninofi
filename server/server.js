@@ -476,6 +476,20 @@ const mapProjectRow = (row = {}, milestones = [], media = []) => ({
             : null,
       }
     : undefined,
+  assignedContractor: row.accepted_contractor_id
+    ? {
+        id: row.accepted_contractor_id,
+        fullName: row.accepted_contractor_full_name,
+        email: row.accepted_contractor_email,
+        phone: row.accepted_contractor_phone,
+        profilePhotoUrl: row.accepted_contractor_profile_photo_url || '',
+        rating:
+          row.accepted_contractor_rating !== null && row.accepted_contractor_rating !== undefined
+            ? Number(row.accepted_contractor_rating)
+            : null,
+      }
+    : undefined,
+  acceptedApplicationId: row.accepted_app_id,
 });
 
 const mapMediaRow = (row = {}) => ({
@@ -1193,6 +1207,41 @@ app.get('/api/notifications/:userId', async (req, res) => {
   }
 });
 
+app.post('/api/notifications/mark-read', async (req, res) => {
+  try {
+    const { userId, notificationIds } = req.body || {};
+    await assertDbReady();
+
+    if (Array.isArray(notificationIds) && notificationIds.length) {
+      const validIds = notificationIds.filter((id) => isUuid(id));
+      if (!validIds.length) {
+        return res.status(400).json({ message: 'notificationIds must be valid UUIDs' });
+      }
+      const result = await pool.query(
+        'UPDATE notifications SET read = true WHERE id = ANY($1::uuid[])',
+        [validIds]
+      );
+      return res.json({ updated: result.rowCount });
+    }
+
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'Valid userId is required' });
+    }
+
+    const result = await pool.query(
+      'UPDATE notifications SET read = true WHERE user_id = $1 AND read = false',
+      [userId]
+    );
+    return res.json({ updated: result.rowCount });
+  } catch (error) {
+    console.error('Error marking notifications read:', error);
+    const message = pool
+      ? 'Failed to mark notifications read'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 app.post('/api/applications/:applicationId/:action', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -1215,10 +1264,18 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
     await assertDbReady();
     const appResult = await client.query(
       `
-        SELECT pa.*, p.user_id AS owner_id, p.title AS project_title, u.full_name AS contractor_name, u.email AS contractor_email, u.phone AS contractor_phone
+        SELECT
+          pa.*,
+          p.user_id AS owner_id,
+          p.title AS project_title,
+          u.full_name AS contractor_name,
+          u.email AS contractor_email,
+          u.phone AS contractor_phone,
+          owner.full_name AS owner_full_name
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = pa.contractor_id
+        LEFT JOIN users owner ON owner.id = p.user_id
         WHERE pa.id::text = $1
       `,
       [applicationId]
@@ -1264,6 +1321,15 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
     }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const ownerName = appRow.owner_full_name || 'Homeowner';
+    const notifTitle =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application`
+        : `${ownerName} responded to your application`;
+    const notifBody =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application for ${appRow.project_title}`
+        : `${appRow.project_title} has been ${newStatus}`;
     await client.query(
       `
         INSERT INTO notifications (id, user_id, title, body, data)
@@ -1272,13 +1338,14 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
       [
         notificationId,
         appRow.contractor_id,
-        `Your application was ${newStatus}`,
-        `${appRow.project_title} has been ${newStatus}`,
+        notifTitle,
+        notifBody,
         JSON.stringify({
           projectId: appRow.project_id,
           projectTitle: appRow.project_title,
           applicationId,
           status: newStatus,
+          ownerName,
         }),
       ]
     );
@@ -1326,10 +1393,18 @@ app.post('/api/applications/decide', async (req, res) => {
     await assertDbReady();
     const appResult = await client.query(
       `
-        SELECT pa.*, p.user_id AS owner_id, p.title AS project_title, u.full_name AS contractor_name, u.email AS contractor_email, u.phone AS contractor_phone
+        SELECT
+          pa.*,
+          p.user_id AS owner_id,
+          p.title AS project_title,
+          u.full_name AS contractor_name,
+          u.email AS contractor_email,
+          u.phone AS contractor_phone,
+          owner.full_name AS owner_full_name
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = pa.contractor_id
+        LEFT JOIN users owner ON owner.id = p.user_id
         WHERE pa.project_id = $1 AND pa.contractor_id = $2
       `,
       [projectId, contractorId]
@@ -1362,6 +1437,15 @@ app.post('/api/applications/decide', async (req, res) => {
     }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const ownerName = appRow.owner_full_name || 'Homeowner';
+    const notifTitle =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application`
+        : `${ownerName} responded to your application`;
+    const notifBody =
+      newStatus === 'accepted'
+        ? `${ownerName} accepted your application for ${appRow.project_title}`
+        : `${appRow.project_title} has been ${newStatus}`;
     await client.query(
       `
         INSERT INTO notifications (id, user_id, title, body, data)
@@ -1370,13 +1454,14 @@ app.post('/api/applications/decide', async (req, res) => {
       [
         notificationId,
         appRow.contractor_id,
-        `Your application was ${newStatus}`,
-        `${appRow.project_title} has been ${newStatus}`,
+        notifTitle,
+        notifBody,
         JSON.stringify({
           projectId: appRow.project_id,
           projectTitle: appRow.project_title,
           applicationId: appRow.id,
           status: newStatus,
+          ownerName,
         }),
       ]
     );
@@ -1904,11 +1989,33 @@ app.get('/api/projects/user/:userId', async (req, res) => {
           pm.id AS media_id,
           pm.url AS media_url,
           pm.label AS media_label,
-          pm.created_at AS media_created_at
+          pm.created_at AS media_created_at,
+          acc.accepted_app_id,
+          acc.accepted_contractor_id,
+          acc.accepted_contractor_full_name,
+          acc.accepted_contractor_email,
+          acc.accepted_contractor_phone,
+          acc.accepted_contractor_profile_photo_url,
+          acc.accepted_contractor_rating
         FROM projects p
         LEFT JOIN users u ON u.id = p.user_id
         LEFT JOIN milestones m ON m.project_id = p.id
         LEFT JOIN project_media pm ON pm.project_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT
+            pa.id AS accepted_app_id,
+            pa.contractor_id AS accepted_contractor_id,
+            uc.full_name AS accepted_contractor_full_name,
+            uc.email AS accepted_contractor_email,
+            uc.phone AS accepted_contractor_phone,
+            uc.profile_photo_url AS accepted_contractor_profile_photo_url,
+            uc.rating AS accepted_contractor_rating
+          FROM project_applications pa
+          JOIN users uc ON uc.id = pa.contractor_id
+          WHERE pa.project_id = p.id AND pa.status = 'accepted'
+          ORDER BY pa.created_at DESC
+          LIMIT 1
+        ) acc ON TRUE
         WHERE p.user_id = $1
         ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
       `,
@@ -1997,7 +2104,12 @@ app.get('/api/projects/open', async (_req, res) => {
       LEFT JOIN milestones m ON m.project_id = p.id
       LEFT JOIN project_media pm ON pm.project_id = p.id
       LEFT JOIN project_applications pa ON pa.project_id = p.id AND pa.contractor_id = $1
-      WHERE ($1::uuid IS NULL OR pa.id IS NULL OR pa.status NOT IN ('pending','accepted'))
+      WHERE
+        ($1::uuid IS NULL OR pa.id IS NULL OR pa.status NOT IN ('pending','accepted'))
+        AND NOT EXISTS (
+          SELECT 1 FROM project_applications pa2
+          WHERE pa2.project_id = p.id AND pa2.status = 'accepted'
+        )
       ORDER BY p.created_at DESC, m.position ASC, m.created_at ASC, pm.created_at ASC
     `,
       [contractorId]

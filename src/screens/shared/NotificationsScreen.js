@@ -2,8 +2,8 @@ import React, { useCallback, useEffect } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
-import { clearNotifications } from '../../store/notificationSlice';
-import { loadNotifications } from '../../services/notifications';
+import { markAllRead } from '../../store/notificationSlice';
+import { loadNotifications, markNotificationsRead } from '../../services/notifications';
 import palette from '../../styles/palette';
 
 const NotificationsScreen = ({ navigation }) => {
@@ -11,9 +11,14 @@ const NotificationsScreen = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const { items } = useSelector((state) => state.notifications);
 
-  const fetchNotifs = useCallback(() => {
+  const fetchNotifs = useCallback(async () => {
     if (user?.id) {
-      dispatch(clearNotifications());
+      try {
+        await markNotificationsRead(user.id);
+        dispatch(markAllRead());
+      } catch {
+        // no-op
+      }
       dispatch(loadNotifications(user.id));
     }
   }, [dispatch, user?.id]);

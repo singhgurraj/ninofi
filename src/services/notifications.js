@@ -19,3 +19,11 @@ export const decideApplication = (applicationId, action, ownerId) => {
 export const decideApplicationByProject = (payload) => {
   return projectAPI.decideApplicationByProject(payload);
 };
+
+export const markNotificationsRead = (userId, notificationIds) => {
+  const payload =
+    Array.isArray(notificationIds) && notificationIds.length
+      ? { notificationIds }
+      : { userId };
+  return api.post('/notifications/mark-read', payload);
+};

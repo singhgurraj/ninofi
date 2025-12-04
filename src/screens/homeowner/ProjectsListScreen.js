@@ -82,6 +82,13 @@ const ProjectsListScreen = ({ navigation }) => {
               </View>
             </View>
             <Text style={styles.address}>{project.address || 'No address provided'}</Text>
+            {project.assignedContractor?.fullName ? (
+              <Text style={styles.assigned}>
+                {project.assignedContractor.fullName} is working on this project.
+              </Text>
+            ) : (
+              <Text style={styles.assignedPending}>Looking for a contractor</Text>
+            )}
           </View>
         ))}
       </ScrollView>
@@ -106,6 +113,8 @@ const styles = StyleSheet.create({
   cardSubtitle: { color: palette.muted, marginTop: 4 },
   cardMeta: { color: palette.muted, marginTop: 4, fontSize: 13 },
   address: { marginTop: 10, color: palette.text },
+  assigned: { marginTop: 6, color: palette.primary, fontWeight: '600' },
+  assignedPending: { marginTop: 6, color: palette.muted },
   cardActions: { flexDirection: 'column', gap: 8 },
   homeButton: {
     alignSelf: 'flex-start',

@@ -11,15 +11,19 @@ import { useSelector, useDispatch } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
 import { loadProjectsForUser } from '../../services/projects';
+import { loadNotifications } from '../../services/notifications';
 
 const HomeownerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const { projects, isLoading } = useSelector((state) => state.projects);
+  const { items: notifications } = useSelector((state) => state.notifications);
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const fetchProjects = useCallback(() => {
     if (user?.id) {
       dispatch(loadProjectsForUser(user.id));
+      dispatch(loadNotifications(user.id));
     }
   }, [dispatch, user?.id]);
 
@@ -56,6 +60,13 @@ const HomeownerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('Notifications')}
             >
               <Text style={styles.notificationIcon}>🔔</Text>
+              {unreadCount > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -138,6 +149,13 @@ const HomeownerDashboard = ({ navigation }) => {
               <Text style={styles.projectContractor}>
                 {project.address || 'No address provided'}
               </Text>
+              {project.assignedContractor?.fullName ? (
+                <Text style={styles.assigned}>
+                  {project.assignedContractor.fullName} is working on this project.
+                </Text>
+              ) : (
+                <Text style={styles.assignedPending}>Looking for a contractor</Text>
+              )}
               
               <View style={styles.progressContainer}>
                 <Text style={styles.progressLabel}>Progress</Text>
@@ -202,9 +220,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1EAFF',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   notificationIcon: {
     fontSize: 20,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   statsContainer: {
     flexDirection: 'row',
@@ -325,6 +361,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: palette.muted,
     marginBottom: 15,
+  },
+  assigned: {
+    color: palette.primary,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  assignedPending: {
+    color: palette.muted,
+    marginBottom: 10,
   },
   progressContainer: {
     flexDirection: 'row',

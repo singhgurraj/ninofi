@@ -13,11 +13,14 @@ import VerificationBadge from '../../components/VerificationBadge';
 import palette from '../../styles/palette';
 import { glassCard, pillButton, pillButtonText, shadowCard } from '../../styles/ui';
 import { loadOpenProjects, loadContractorProjects } from '../../services/projects';
+import { loadNotifications } from '../../services/notifications';
 
 const ContractorDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const { openProjects, isLoadingOpen, contractorProjects, isLoadingContractor } = useSelector((state) => state.projects);
+  const { items: notifications } = useSelector((state) => state.notifications);
+  const unreadCount = notifications.filter((n) => !n.read).length;
   const stats = {
     earnings: 8450,
     activeProjects: 0,
@@ -28,6 +31,7 @@ const ContractorDashboard = ({ navigation }) => {
     if (user?.id) {
       dispatch(loadOpenProjects(user.id));
       dispatch(loadContractorProjects(user.id));
+      dispatch(loadNotifications(user.id));
     }
   }, [dispatch, user?.id]);
 
@@ -49,6 +53,13 @@ const ContractorDashboard = ({ navigation }) => {
             </View>
             <TouchableOpacity style={styles.notificationButton} onPress={() => navigation.navigate('Notifications')}>
               <Text style={styles.notificationIcon}>🔔</Text>
+              {unreadCount > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
           <View style={styles.heroStatsRow}>
@@ -289,6 +300,36 @@ const styles = StyleSheet.create({
   headerButtons: {
     flexDirection: 'row',
     gap: 10,
+  },
+  notificationButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  notificationIcon: {
+    fontSize: 20,
+    color: '#FFFFFF',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   verificationCard: {
     margin: 20,
