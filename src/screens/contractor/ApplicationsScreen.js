@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigation } from '@react-navigation/native';
 import palette from '../../styles/palette';
-import { loadContractorApplications, withdrawApplication } from '../../services/projects';
+import { getProjectDetails, loadContractorApplications, withdrawApplication } from '../../services/projects';
 
 const ApplicationsScreen = () => {
   const dispatch = useDispatch();
+  const navigation = useNavigation();
   const { user } = useSelector((state) => state.auth);
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -15,7 +17,8 @@ const ApplicationsScreen = () => {
     setLoading(true);
     try {
       const res = await loadContractorApplications(user.id);
-      setApplications(res.data || []);
+      const pendingOnly = (res.data || []).filter((app) => app.status === 'pending');
+      setApplications(pendingOnly);
     } catch (err) {
       Alert.alert('Error', err.response?.data?.message || 'Failed to load applications');
     } finally {
@@ -49,6 +52,19 @@ const ApplicationsScreen = () => {
     }
   };
 
+  const handleView = async (projectId) => {
+    if (!projectId) return;
+    try {
+      const res = await getProjectDetails(projectId);
+      navigation.navigate('ContractorProjectDetails', {
+        project: res.data,
+        canApply: false,
+      });
+    } catch (err) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to load project details');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -58,7 +74,7 @@ const ApplicationsScreen = () => {
           <Text style={styles.muted}>No applications yet.</Text>
         )}
         {applications.map((app) => (
-          <View key={app.id} style={styles.card}>
+          <TouchableOpacity key={app.id} style={styles.card} onPress={() => handleView(app.projectId)}>
             <Text style={styles.cardTitle}>{app.projectTitle || 'Project'}</Text>
             <Text style={styles.meta}>Status: {app.status}</Text>
             {app.estimatedBudget !== undefined && app.estimatedBudget !== null && (
@@ -72,13 +88,16 @@ const ApplicationsScreen = () => {
             <View style={styles.actions}>
               <TouchableOpacity
                 style={[styles.button, styles.withdraw]}
-              onPress={() => handleWithdraw(app.id, app.projectId)}
+              onPress={(e) => {
+                e?.stopPropagation?.();
+                handleWithdraw(app.id, app.projectId);
+              }}
               disabled={app.status !== 'pending'}
             >
               <Text style={styles.buttonText}>Withdraw</Text>
             </TouchableOpacity>
             </View>
-          </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
     </SafeAreaView>

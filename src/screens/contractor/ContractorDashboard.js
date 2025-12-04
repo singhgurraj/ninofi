@@ -171,7 +171,17 @@ const ContractorDashboard = ({ navigation }) => {
           )}
           {!isLoadingContractor &&
             contractorProjects?.map((project) => (
-              <View key={project.id} style={styles.projectCard}>
+              <TouchableOpacity
+                key={project.id}
+                style={styles.projectCard}
+                onPress={() =>
+                  navigation.navigate('ContractorProjectDetails', {
+                    project,
+                    canApply: false,
+                    canLeave: true,
+                  })
+                }
+              >
                 <View style={styles.projectHeader}>
                   <Text style={styles.projectTitle}>{project.title}</Text>
                   <Text style={styles.projectStatus}>{project.projectType || 'Project'}</Text>
@@ -183,7 +193,7 @@ const ContractorDashboard = ({ navigation }) => {
                 <Text style={styles.milestoneAmount}>
                   Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
                 </Text>
-              </View>
+              </TouchableOpacity>
             ))}
         </View>
 

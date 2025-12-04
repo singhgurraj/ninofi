@@ -1541,6 +1541,13 @@ app.get('/api/projects/contractor/:contractorId', async (req, res) => {
           u.phone AS owner_phone,
           u.profile_photo_url AS owner_profile_photo_url,
           u.rating AS owner_rating,
+          pa.id AS accepted_app_id,
+          pa.contractor_id AS accepted_contractor_id,
+          uc.full_name AS accepted_contractor_full_name,
+          uc.email AS accepted_contractor_email,
+          uc.phone AS accepted_contractor_phone,
+          uc.profile_photo_url AS accepted_contractor_profile_photo_url,
+          uc.rating AS accepted_contractor_rating,
           m.id AS milestone_id,
           m.name AS milestone_name,
           m.amount AS milestone_amount,
@@ -1554,6 +1561,7 @@ app.get('/api/projects/contractor/:contractorId', async (req, res) => {
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = p.user_id
+        JOIN users uc ON uc.id = pa.contractor_id
         LEFT JOIN milestones m ON m.project_id = p.id
         LEFT JOIN project_media pm ON pm.project_id = p.id
         WHERE pa.contractor_id = $1 AND pa.status = 'accepted'
@@ -1606,6 +1614,80 @@ app.get('/api/projects/contractor/:contractorId', async (req, res) => {
       ? 'Failed to fetch projects'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/projects/:projectId/leave', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { contractorId } = req.body || {};
+    if (!isUuid(projectId) || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    }
+    await assertDbReady();
+
+    const appResult = await client.query(
+      `
+        SELECT
+          pa.*,
+          p.title AS project_title,
+          p.user_id AS owner_id,
+          owner.full_name AS owner_full_name,
+          contractor.full_name AS contractor_full_name
+        FROM project_applications pa
+        JOIN projects p ON p.id = pa.project_id
+        JOIN users owner ON owner.id = p.user_id
+        JOIN users contractor ON contractor.id = pa.contractor_id
+        WHERE pa.project_id = $1 AND pa.contractor_id = $2 AND pa.status = 'accepted'
+        LIMIT 1
+      `,
+      [projectId, contractorId]
+    );
+
+    if (!appResult.rows.length) {
+      return res.status(404).json({ message: 'No accepted application found for this project' });
+    }
+
+    const appRow = appResult.rows[0];
+
+    await client.query('BEGIN');
+    await client.query('UPDATE project_applications SET status = $1 WHERE id = $2', [
+      'withdrawn',
+      appRow.id,
+    ]);
+
+    const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO notifications (id, user_id, title, body, data)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        notificationId,
+        appRow.owner_id,
+        `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}`,
+        `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}.`,
+        JSON.stringify({
+          contractorId,
+          projectId,
+          applicationId: appRow.id,
+          status: 'withdrawn',
+        }),
+      ]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ status: 'withdrawn', projectId, applicationId: appRow.id });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Error leaving project:', error);
+    const message = pool
+      ? 'Failed to leave project'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
   }
 });
 
@@ -2064,6 +2146,116 @@ app.get('/api/projects/user/:userId', async (req, res) => {
     console.error('Error fetching projects:', error);
     const message = pool
       ? 'Failed to fetch projects'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/projects/:projectId/details', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT
+          p.*,
+          u.id AS owner_id,
+          u.full_name AS owner_full_name,
+          u.email AS owner_email,
+          u.phone AS owner_phone,
+          u.profile_photo_url AS owner_profile_photo_url,
+          u.rating AS owner_rating,
+          m.id AS milestone_id,
+          m.name AS milestone_name,
+          m.amount AS milestone_amount,
+          m.description AS milestone_description,
+          m.position AS milestone_position,
+          m.created_at AS milestone_created_at,
+          pm.id AS media_id,
+          pm.url AS media_url,
+          pm.label AS media_label,
+          pm.created_at AS media_created_at,
+          acc.accepted_app_id,
+          acc.accepted_contractor_id,
+          acc.accepted_contractor_full_name,
+          acc.accepted_contractor_email,
+          acc.accepted_contractor_phone,
+          acc.accepted_contractor_profile_photo_url,
+          acc.accepted_contractor_rating
+        FROM projects p
+        LEFT JOIN users u ON u.id = p.user_id
+        LEFT JOIN milestones m ON m.project_id = p.id
+        LEFT JOIN project_media pm ON pm.project_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT
+            pa.id AS accepted_app_id,
+            pa.contractor_id AS accepted_contractor_id,
+            uc.full_name AS accepted_contractor_full_name,
+            uc.email AS accepted_contractor_email,
+            uc.phone AS accepted_contractor_phone,
+            uc.profile_photo_url AS accepted_contractor_profile_photo_url,
+            uc.rating AS accepted_contractor_rating
+          FROM project_applications pa
+          JOIN users uc ON uc.id = pa.contractor_id
+          WHERE pa.project_id = p.id AND pa.status = 'accepted'
+          ORDER BY pa.created_at DESC
+          LIMIT 1
+        ) acc ON TRUE
+        WHERE p.id = $1
+        ORDER BY m.position ASC, m.created_at ASC, pm.created_at ASC
+      `,
+      [projectId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      if (!grouped.has(row.id)) {
+        grouped.set(row.id, {
+          project: row,
+          milestones: [],
+          media: [],
+        });
+      }
+      if (row.milestone_id) {
+        grouped.get(row.id).milestones.push(
+          mapMilestoneRow({
+            id: row.milestone_id,
+            name: row.milestone_name,
+            amount: row.milestone_amount,
+            description: row.milestone_description,
+            position: row.milestone_position,
+            created_at: row.milestone_created_at,
+          })
+        );
+      }
+      if (row.media_id) {
+        grouped.get(row.id).media.push(
+          mapMediaRow({
+            id: row.media_id,
+            url: row.media_url,
+            label: row.media_label,
+            created_at: row.media_created_at,
+          })
+        );
+      }
+    }
+
+    const payload = Array.from(grouped.values()).map(({ project, milestones, media }) =>
+      mapProjectRow(project, milestones, media)
+    )[0];
+
+    return res.json(payload);
+  } catch (error) {
+    console.error('Error fetching project details:', error);
+    const message = pool
+      ? 'Failed to fetch project'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }

@@ -118,3 +118,22 @@ export const withdrawApplication = (applicationId, projectId, contractorId) => a
     dispatch(loadContractorProjects(contractorId));
   }
 };
+
+export const getProjectDetails = (projectId) => projectAPI.getProjectDetails(projectId);
+
+export const leaveProject = async (projectId, contractorId, dispatch) => {
+  if (!projectId || !contractorId) {
+    return { success: false, error: 'Missing projectId/contractorId' };
+  }
+  try {
+    await projectAPI.leaveProject(projectId, contractorId);
+    if (dispatch) {
+      dispatch(loadOpenProjects(contractorId));
+      dispatch(loadContractorProjects(contractorId));
+    }
+    return { success: true };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to leave project';
+    return { success: false, error: msg };
+  }
+};

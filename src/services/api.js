@@ -119,6 +119,9 @@ export const projectAPI = {
     api.get(`/applications/contractor/${contractorId}`),
   deleteApplication: async (applicationId, contractorId) =>
     api.delete(`/applications/${applicationId}`, { data: contractorId ? { contractorId } : {} }),
+  getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
+  leaveProject: async (projectId, contractorId) =>
+    api.post(`/projects/${projectId}/leave`, { contractorId }),
 };
 
 // Invoice API calls (mocked for now)
