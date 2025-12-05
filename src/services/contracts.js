@@ -59,3 +59,16 @@ export const uploadContractFile = async ({ projectId, userId, fileUri, fileName 
     return { success: false, error: msg };
   }
 };
+
+export const deleteContract = async ({ contractId, userId }) => {
+  if (!contractId || !userId) {
+    return { success: false, error: 'contractId and userId are required' };
+  }
+  try {
+    await projectAPI.deleteContract(contractId, { userId });
+    return { success: true };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to delete contract';
+    return { success: false, error: msg };
+  }
+};

@@ -1,11 +1,13 @@
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { fetchContractsForProject } from '../../services/contracts';
+import { deleteContract, fetchContractsForProject } from '../../services/contracts';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
+  const { user } = useSelector((state) => state.auth);
   const [contracts, setContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractsError, setContractsError] = useState(null);
@@ -59,6 +61,32 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
       loadContracts();
     }, [loadContracts])
   );
+
+  const handleDelete = async (contract) => {
+    if (!user?.id) {
+      Alert.alert('Not signed in', 'Please log in.');
+      return;
+    }
+    Alert.alert(
+      'Delete contract?',
+      `This will delete "${contract.title || 'Contract'}" if it is pending.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await deleteContract({ contractId: contract.id, userId: user.id });
+            if (!res.success) {
+              Alert.alert('Error', res.error);
+              return;
+            }
+            await loadContracts();
+          },
+        },
+      ]
+    );
+  };
 
   const isContractor = role === 'contractor';
   const showEdit = role === 'homeowner';
@@ -142,14 +170,24 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                     {typeof c.signatureCount === 'number' ? ` • Signatures: ${c.signatureCount}` : ''}
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={[styles.button, styles.signButton]}
-                  onPress={() => navigation.navigate('ContractSignature', { contract: c })}
-                >
-                  <Text style={styles.buttonText}>
-                    {statusLabel === 'SIGNED' ? 'View' : 'Sign'}
-                  </Text>
-                </TouchableOpacity>
+                <View style={styles.contractActions}>
+                  <TouchableOpacity
+                    style={[styles.button, styles.signButton]}
+                    onPress={() => navigation.navigate('ContractSignature', { contract: c })}
+                  >
+                    <Text style={styles.buttonText}>
+                      {statusLabel === 'SIGNED' ? 'View' : 'Sign'}
+                    </Text>
+                  </TouchableOpacity>
+                  {statusLabel === 'PENDING' ? (
+                    <TouchableOpacity
+                      style={[styles.button, styles.deleteButton]}
+                      onPress={() => handleDelete(c)}
+                    >
+                      <Text style={styles.deleteText}>🗑</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
             );
           })}
@@ -248,6 +286,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
   },
+  contractActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   signButton: { backgroundColor: palette.primary, flexBasis: 110 },
   refreshButton: {
     marginTop: 10,
@@ -256,6 +295,13 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   errorText: { color: '#c1121f' },
+  deleteButton: {
+    width: 44,
+    backgroundColor: '#ffe5e5',
+    borderWidth: 1,
+    borderColor: '#f25f5c',
+  },
+  deleteText: { color: '#c1121f', fontWeight: '700' },
 });
 
 export default ProjectOverviewScreen;

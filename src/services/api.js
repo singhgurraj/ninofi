@@ -129,6 +129,8 @@ export const projectAPI = {
   deleteProjectPersonnel: async (projectId, personId, payload) =>
     api.delete(`/projects/${projectId}/personnel/${personId}`, { data: payload }),
   createContract: async (payload) => api.post('/contracts', payload),
+  deleteContract: async (contractId, payload) =>
+    api.delete(`/contracts/${contractId}`, { data: payload }),
   getContractsForProject: async (projectId) => api.get(`/contracts/project/${projectId}`),
   getContract: async (contractId) => api.get(`/contracts/${contractId}`),
   signContract: async (contractId, payload) => api.post(`/contracts/${contractId}/sign`, payload),
