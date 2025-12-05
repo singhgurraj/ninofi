@@ -265,6 +265,12 @@ class AccountingIntegration {
   async syncPayoutTransaction(_transactionId, provider) {
     return { provider, synced: true };
   }
+
+  buildAuthUrl(provider, contractorId) {
+    const base = provider === 'XERO' ? 'https://login.xero.com/identity/connect/authorize' : 'https://appcenter.intuit.com/connect/oauth2';
+    // Stub query params; replace with real client/redirect scopes when wiring provider SDK
+    return `${base}?state=${encodeURIComponent(contractorId || '')}`;
+  }
 }
 
 const accountingIntegration = new AccountingIntegration();
@@ -3700,6 +3706,106 @@ app.post('/api/accounting/connect', async (req, res) => {
     await client.query('ROLLBACK').catch(() => {});
     console.error('accounting:connect:error', error);
     const message = pool ? 'Failed to connect accounting provider' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Contractor self: get current accounting connection
+app.get('/api/me/accounting', async (req, res) => {
+  try {
+    const { contractorId } = req.query || {};
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const connection = await getAccountingConnection(contractorId);
+    if (!connection) {
+      return res.json({ connected: false });
+    }
+    return res.json({
+      connected: true,
+      provider: connection.provider,
+      expiresAt: connection.expires_at,
+      lastSyncedAt: connection.last_synced_at,
+    });
+  } catch (error) {
+    console.error('accounting:self:get:error', error);
+    const message = pool ? 'Failed to load accounting connection' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Contractor self: initiate OAuth (returns auth URL)
+app.post('/api/me/accounting/connect', async (req, res) => {
+  try {
+    const { contractorId, provider } = req.body || {};
+    if (!contractorId || !provider) {
+      return res.status(400).json({ message: 'contractorId and provider are required' });
+    }
+    const providerUpper = provider.toUpperCase();
+    if (!['QUICKBOOKS', 'XERO'].includes(providerUpper)) {
+      return res.status(400).json({ message: 'Invalid provider' });
+    }
+    const authUrl = accountingIntegration.buildAuthUrl(providerUpper, contractorId);
+    return res.json({ provider: providerUpper, authUrl });
+  } catch (error) {
+    console.error('accounting:self:connect:error', error);
+    const message = pool ? 'Failed to start accounting connection' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// OAuth callback to finalize connection
+app.post('/api/accounting/callback', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { contractorId, provider, authCode } = req.body || {};
+    if (!contractorId || !provider || !authCode) {
+      return res.status(400).json({ message: 'contractorId, provider, and authCode are required' });
+    }
+    await assertDbReady();
+    const providerUpper = provider.toUpperCase();
+    if (!['QUICKBOOKS', 'XERO'].includes(providerUpper)) {
+      return res.status(400).json({ message: 'Invalid provider' });
+    }
+
+    let integrationResp;
+    try {
+      integrationResp = await accountingIntegration.connectProvider(contractorId, providerUpper, authCode);
+    } catch (err) {
+      console.error('accounting:callback:provider:error', err);
+      return res.status(502).json({ message: 'Provider connection failed' });
+    }
+
+    await client.query('BEGIN');
+    await client.query(
+      `
+        INSERT INTO contractor_accounting_connections (contractor_id, provider, access_token, refresh_token, expires_at, last_synced_at)
+        VALUES ($1, $2, $3, $4, $5, NULL)
+        ON CONFLICT (contractor_id, provider)
+        DO UPDATE SET
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          expires_at = EXCLUDED.expires_at,
+          updated_at = NOW()
+      `,
+      [
+        contractorId,
+        providerUpper,
+        integrationResp?.accessToken || null,
+        integrationResp?.refreshToken || null,
+        integrationResp?.expiresAt || null,
+      ]
+    );
+    await client.query('COMMIT');
+
+    return res.json({ success: true, provider: providerUpper });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('accounting:callback:error', error);
+    const message = pool ? 'Failed to complete accounting connection' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   } finally {
     client.release();
