@@ -1295,7 +1295,7 @@ const ensureProjectContract = async (client, projectRow, milestones = []) => {
       VALUES ($1, $2, $3, $4, $5, 'pending')
       RETURNING *
     `,
-    [contractId, projectRow.user_id, projectRow.title || 'Project Contract', 'Milestone Agreement', terms]
+    [contractId, projectRow.id, projectRow.user_id, 'Milestone Agreement', terms]
   );
   return inserted.rows[0];
 };
@@ -3421,8 +3421,11 @@ app.post('/api/projects', async (req, res) => {
 
     // Ensure a draft contract exists for this project, but do not block creation if it fails
     try {
+      await client.query('SAVEPOINT project_contract');
       await ensureProjectContract(client, projectResult.rows[0], milestoneResults);
+      await client.query('RELEASE SAVEPOINT project_contract');
     } catch (contractErr) {
+      await client.query('ROLLBACK TO SAVEPOINT project_contract').catch(() => {});
       logError('project:create:ensure-contract:error', { projectId }, contractErr);
     }
 
