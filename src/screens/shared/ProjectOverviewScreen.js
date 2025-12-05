@@ -32,7 +32,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   };
 
   const handleProposeContract = () => {
-    Alert.alert('Propose Contract', 'Contract proposal flow coming soon.');
+    navigation.navigate('ContractWizard', { project, role });
   };
 
   const isContractor = role === 'contractor';

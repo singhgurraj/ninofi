@@ -36,6 +36,17 @@ import ProjectOverviewScreen from '../screens/shared/ProjectOverviewScreen';
 import ProjectPersonnelScreen from '../screens/shared/ProjectPersonnelScreen';
 import RegisterWorkerScreen from '../screens/contractor/RegisterWorkerScreen';
 import ProjectPersonnelAddScreen from '../screens/shared/ProjectPersonnelAddScreen';
+import ContractWizardScreen from '../screens/contractor/ContractWizardScreen';
+import ContractSignatureScreen from '../screens/contractor/ContractSignatureScreen';
+import PortfolioScreen from '../screens/contractor/PortfolioScreen';
+import PortfolioEditScreen from '../screens/contractor/PortfolioEditScreen';
+import ReviewFormScreen from '../screens/homeowner/ReviewFormScreen';
+import AuditLogScreen from '../screens/shared/AuditLogScreen';
+import ComplianceScreen from '../screens/shared/ComplianceScreen';
+import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
+import AdminModerationScreen from '../screens/admin/AdminModerationScreen';
+import ContractorSearchScreen from '../screens/homeowner/ContractorSearchScreen';
+import ContractorProfileScreen from '../screens/homeowner/ContractorProfileScreen';
 import { setAuthToken } from '../services/api';
 
 const RootStack = createStackNavigator();
@@ -152,6 +163,61 @@ const MainAppStack = () => (
         name="SubmitMilestone"
         component={SubmitMilestoneScreen}
         options={{ title: 'Submit Milestone' }}
+      />
+      <MainStack.Screen
+        name="ContractWizard"
+        component={ContractWizardScreen}
+        options={{ title: 'Micro-Contract' }}
+      />
+      <MainStack.Screen
+        name="ContractSignature"
+        component={ContractSignatureScreen}
+        options={{ title: 'Sign Contract' }}
+      />
+      <MainStack.Screen
+        name="Portfolio"
+        component={PortfolioScreen}
+        options={{ title: 'Portfolio' }}
+      />
+      <MainStack.Screen
+        name="PortfolioEdit"
+        component={PortfolioEditScreen}
+        options={{ title: 'Edit Portfolio' }}
+      />
+      <MainStack.Screen
+        name="ReviewForm"
+        component={ReviewFormScreen}
+        options={{ title: 'Leave Review' }}
+      />
+      <MainStack.Screen
+        name="AuditLog"
+        component={AuditLogScreen}
+        options={{ title: 'Activity' }}
+      />
+      <MainStack.Screen
+        name="Compliance"
+        component={ComplianceScreen}
+        options={{ title: 'Compliance' }}
+      />
+      <MainStack.Screen
+        name="AdminDashboard"
+        component={AdminDashboardScreen}
+        options={{ title: 'Admin' }}
+      />
+      <MainStack.Screen
+        name="AdminModeration"
+        component={AdminModerationScreen}
+        options={{ title: 'Moderation' }}
+      />
+      <MainStack.Screen
+        name="ContractorSearch"
+        component={ContractorSearchScreen}
+        options={{ title: 'Find Contractors' }}
+      />
+      <MainStack.Screen
+        name="ContractorProfile"
+        component={ContractorProfileScreen}
+        options={{ title: 'Contractor Profile' }}
       />
       <MainStack.Screen
         name="Verification"

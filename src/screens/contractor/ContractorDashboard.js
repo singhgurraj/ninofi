@@ -128,6 +128,14 @@ const ContractorDashboard = ({ navigation }) => {
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
+              onPress={() => navigation.navigate('Portfolio')}
+            >
+              <Text style={styles.actionIcon}>🖼️</Text>
+              <Text style={styles.actionTitle}>Portfolio</Text>
+              <Text style={styles.actionText}>Showcase work</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('SubmitMilestone', {
                 project: projects[0],
                 milestone: { name: projects[0].nextMilestone, amount: projects[0].amount }
@@ -152,6 +160,22 @@ const ContractorDashboard = ({ navigation }) => {
               <Text style={styles.actionIcon}>👤</Text>
               <Text style={styles.actionTitle}>My Profile</Text>
               <Text style={styles.actionText}>Licenses & docs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.actionCard, shadowCard]}
+              onPress={() => navigation.navigate('Compliance')}
+            >
+              <Text style={styles.actionIcon}>📑</Text>
+              <Text style={styles.actionTitle}>Compliance</Text>
+              <Text style={styles.actionText}>Licenses & insurance</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.actionCard, shadowCard]}
+              onPress={() => navigation.navigate('AuditLog')}
+            >
+              <Text style={styles.actionIcon}>🕑</Text>
+              <Text style={styles.actionTitle}>Activity</Text>
+              <Text style={styles.actionText}>Recent actions</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}

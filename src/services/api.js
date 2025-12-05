@@ -128,6 +128,29 @@ export const projectAPI = {
     api.post(`/projects/${projectId}/personnel`, payload),
   deleteProjectPersonnel: async (projectId, personId, payload) =>
     api.delete(`/projects/${projectId}/personnel/${personId}`, { data: payload }),
+  createContract: async (payload) => api.post('/contracts', payload),
+  getContractsForProject: async (projectId) => api.get(`/contracts/project/${projectId}`),
+  getContract: async (contractId) => api.get(`/contracts/${contractId}`),
+  signContract: async (contractId, payload) => api.post(`/contracts/${contractId}/sign`, payload),
+  savePortfolio: async (payload) => api.post('/portfolio', payload),
+  getPortfolio: async (contractorId) => api.get(`/contractors/${contractorId}/portfolio`),
+  addPortfolioMedia: async (portfolioId, media) =>
+    api.post(`/portfolio/${portfolioId}/media`, { media }),
+  createReview: async (payload) => api.post('/reviews', payload),
+  getReviews: async (contractorId) => api.get(`/contractors/${contractorId}/reviews`),
+  respondReview: async (reviewId, payload) => api.post(`/reviews/${reviewId}/respond`, payload),
+  flagReview: async (reviewId) => api.post(`/reviews/${reviewId}/flag`),
+  getAudit: async (params) => api.get('/audit', { params }),
+  appendAudit: async (payload) => api.post('/audit', payload),
+  getCompliance: async (userId) => api.get(`/compliance/user/${userId}`),
+  uploadCompliance: async (payload) => api.post('/compliance', payload),
+  getAdminAnalytics: async (headers) => api.get('/admin/analytics', { headers }),
+  getAdminUsers: async (headers) => api.get('/admin/users', { headers }),
+  getAdminDisputes: async (headers) => api.get('/admin/disputes', { headers }),
+  resolveDispute: async (id, payload, headers) =>
+    api.post(`/admin/disputes/${id}/resolve`, payload, { headers }),
+  searchContractors: async (params) => api.get('/contractors/search', { params }),
+  getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
 };
 
 export const messageAPI = {

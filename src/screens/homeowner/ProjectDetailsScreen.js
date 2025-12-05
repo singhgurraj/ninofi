@@ -134,6 +134,20 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       <Text style={styles.actionIconOutline}>📞</Text>
       <Text style={styles.actionTextOutline}>Call</Text>
     </TouchableOpacity>
+    {project?.assignedContractor?.id ? (
+      <TouchableOpacity
+        style={styles.actionButtonOutline}
+        onPress={() =>
+          navigation.navigate('ReviewForm', {
+            contractorId: project.assignedContractor.id,
+            projectId: project.id,
+          })
+        }
+      >
+        <Text style={styles.actionIconOutline}>⭐</Text>
+        <Text style={styles.actionTextOutline}>Leave Review</Text>
+      </TouchableOpacity>
+    ) : null}
   </View>
 </View>
 
@@ -145,7 +159,13 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
               <Text style={styles.contractorName}>{project.contractor}</Text>
               <Text style={styles.contractorRating}>⭐ 4.8 (127 reviews) • Verified</Text>
             </View>
-            <TouchableOpacity>
+            <TouchableOpacity
+              onPress={() =>
+                navigation.navigate('ContractorProfile', {
+                  contractorId: project.assignedContractor?.id,
+                })
+              }
+            >
               <Text style={styles.viewProfile}>View Profile →</Text>
             </TouchableOpacity>
           </View>
