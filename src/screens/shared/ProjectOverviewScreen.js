@@ -1,9 +1,15 @@
-import React from 'react';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import palette from '../../styles/palette';
+import { fetchContractsForProject } from '../../services/contracts';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
+  const [contracts, setContracts] = useState([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractsError, setContractsError] = useState(null);
+
   if (!project) {
     return (
       <SafeAreaView style={styles.container}>
@@ -34,6 +40,25 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const handleProposeContract = () => {
     navigation.navigate('ContractWizard', { project, role });
   };
+
+  const loadContracts = useCallback(async () => {
+    if (!project?.id) return;
+    setContractsLoading(true);
+    setContractsError(null);
+    const res = await fetchContractsForProject(project.id);
+    if (res.success) {
+      setContracts(res.data || []);
+    } else {
+      setContractsError(res.error || 'Failed to load contracts');
+    }
+    setContractsLoading(false);
+  }, [project?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadContracts();
+    }, [loadContracts])
+  );
 
   const isContractor = role === 'contractor';
   const showEdit = role === 'homeowner';
@@ -95,6 +120,42 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               </View>
             ))
           )}
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Contracts</Text>
+            {contractsLoading ? <Text style={styles.muted}>Loading…</Text> : null}
+          </View>
+          {contractsError ? <Text style={styles.errorText}>{contractsError}</Text> : null}
+          {!contractsLoading && !contractsError && (!contracts || contracts.length === 0) ? (
+            <Text style={styles.muted}>No contracts yet.</Text>
+          ) : null}
+          {contracts?.map((c) => {
+            const statusLabel = (c.status || 'pending').toUpperCase();
+            return (
+              <View key={c.id} style={styles.contractRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.milestoneName}>{c.title || 'Contract'}</Text>
+                  <Text style={styles.milestoneMeta}>
+                    Status: {statusLabel}
+                    {typeof c.signatureCount === 'number' ? ` • Signatures: ${c.signatureCount}` : ''}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.button, styles.signButton]}
+                  onPress={() => navigation.navigate('ContractSignature', { contract: c })}
+                >
+                  <Text style={styles.buttonText}>
+                    {statusLabel === 'SIGNED' ? 'View' : 'Sign'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+          <TouchableOpacity style={[styles.button, styles.refreshButton]} onPress={loadContracts}>
+            <Text style={styles.personnelText}>Refresh</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.buttonRow}>
@@ -181,6 +242,20 @@ const styles = StyleSheet.create({
   muted: { color: palette.muted },
   contractButton: { backgroundColor: palette.primary },
   contractText: { color: '#fff', fontWeight: '700' },
+  contractRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  signButton: { backgroundColor: palette.primary, flexBasis: 110 },
+  refreshButton: {
+    marginTop: 10,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  errorText: { color: '#c1121f' },
 });
 
 export default ProjectOverviewScreen;
