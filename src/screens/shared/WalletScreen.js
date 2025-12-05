@@ -14,55 +14,13 @@ const WalletScreen = ({ navigation }) => {
   const { role } = useSelector((state) => state.auth);
   const [selectedTab, setSelectedTab] = useState('all');
 
-  // Mock data
   const walletData = {
-    balance: 8450,
-    pending: 3200,
-    thisMonth: 12800,
+    balance: 0,
+    pending: 0,
+    thisMonth: 0,
   };
 
-  const transactions = [
-    {
-      id: '1',
-      title: 'Kitchen Renovation - Milestone 2',
-      date: 'Jan 22, 2025',
-      amount: 3000,
-      type: 'credit',
-      status: 'completed',
-    },
-    {
-      id: '2',
-      title: 'Bathroom Remodel - Milestone 1',
-      date: 'Jan 18, 2025',
-      amount: 2500,
-      type: 'credit',
-      status: 'completed',
-    },
-    {
-      id: '3',
-      title: 'Withdrawal to Bank',
-      date: 'Jan 15, 2025',
-      amount: 5000,
-      type: 'debit',
-      status: 'completed',
-    },
-    {
-      id: '4',
-      title: 'Deck Installation - Milestone 1',
-      date: 'Jan 12, 2025',
-      amount: 1800,
-      type: 'credit',
-      status: 'completed',
-    },
-    {
-      id: '5',
-      title: 'Kitchen Renovation - Milestone 3',
-      date: 'Pending',
-      amount: 3200,
-      type: 'credit',
-      status: 'pending',
-    },
-  ];
+  const transactions = [];
 
   const filteredTransactions = transactions.filter(t => {
     if (selectedTab === 'all') return true;
@@ -205,38 +163,42 @@ const WalletScreen = ({ navigation }) => {
           </View>
 
           {/* Transaction List */}
-          {filteredTransactions.map((transaction) => (
-            <TouchableOpacity 
-              key={transaction.id}
-              style={styles.transactionCard}
-            >
-              <View style={[
-                styles.transactionIcon,
-                { backgroundColor: transaction.type === 'credit' ? '#E8F5E9' : '#FFEBEE' }
-              ]}>
-                <Text style={styles.transactionIconText}>
-                  {transaction.type === 'credit' ? '↓' : '↑'}
-                </Text>
-              </View>
-              
-              <View style={styles.transactionInfo}>
-                <Text style={styles.transactionTitle}>{transaction.title}</Text>
-                <Text style={styles.transactionDate}>{transaction.date}</Text>
-              </View>
-              
-              <View style={styles.transactionRight}>
-                <Text style={[
-                  styles.transactionAmount,
-                  { color: transaction.type === 'credit' ? '#4CAF50' : '#f44336' }
+          {filteredTransactions.length === 0 ? (
+            <Text style={styles.emptyText}>No transactions yet.</Text>
+          ) : (
+            filteredTransactions.map((transaction) => (
+              <TouchableOpacity 
+                key={transaction.id}
+                style={styles.transactionCard}
+              >
+                <View style={[
+                  styles.transactionIcon,
+                  { backgroundColor: transaction.type === 'credit' ? '#E8F5E9' : '#FFEBEE' }
                 ]}>
-                  {transaction.type === 'credit' ? '+' : '-'}${transaction.amount.toLocaleString()}
-                </Text>
-                {transaction.status === 'pending' && (
-                  <Text style={styles.pendingBadge}>Pending</Text>
-                )}
-              </View>
-            </TouchableOpacity>
-          ))}
+                  <Text style={styles.transactionIconText}>
+                    {transaction.type === 'credit' ? '↓' : '↑'}
+                  </Text>
+                </View>
+                
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionTitle}>{transaction.title}</Text>
+                  <Text style={styles.transactionDate}>{transaction.date}</Text>
+                </View>
+                
+                <View style={styles.transactionRight}>
+                  <Text style={[
+                    styles.transactionAmount,
+                    { color: transaction.type === 'credit' ? '#4CAF50' : '#f44336' }
+                  ]}>
+                    {transaction.type === 'credit' ? '+' : '-'}${transaction.amount.toLocaleString()}
+                  </Text>
+                  {transaction.status === 'pending' && (
+                    <Text style={styles.pendingBadge}>Pending</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
         </View>
 
         {/* View All Link */}
@@ -463,6 +425,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 8,
+  },
+  emptyText: {
+    color: '#666',
+    textAlign: 'center',
+    paddingVertical: 12,
   },
   viewAllButton: {
     alignItems: 'center',

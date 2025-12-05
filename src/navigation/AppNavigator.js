@@ -27,6 +27,7 @@ import ProfileScreen from '../screens/shared/ProfileScreen';
 import WalletScreen from '../screens/shared/WalletScreen';
 import ProjectsListScreen from '../screens/homeowner/ProjectsListScreen';
 import FindJobsScreen from '../screens/contractor/FindJobsScreen';
+import ContractorProjectsScreen from '../screens/contractor/ContractorProjectsScreen';
 import ContractorProjectDetailsScreen from '../screens/contractor/ContractorProjectDetailsScreen';
 import NotificationsScreen from '../screens/shared/NotificationsScreen';
 import NotificationDetailScreen from '../screens/shared/NotificationDetailScreen';
@@ -98,6 +99,11 @@ const MainAppStack = () => (
         name="ProjectsList"
         component={ProjectsListScreen}
         options={{ title: 'All Projects' }}
+      />
+      <MainStack.Screen
+        name="ContractorProjects"
+        component={ContractorProjectsScreen}
+        options={{ title: 'My Projects' }}
       />
       <MainStack.Screen
         name="FindJobs"

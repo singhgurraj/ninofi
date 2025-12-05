@@ -192,8 +192,8 @@ const ContractorDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Active Projects</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('FindJobs')}>
-              <Text style={styles.viewAll}>Find Jobs</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('ContractorProjects')}>
+              <Text style={styles.viewAll}>View All</Text>
             </TouchableOpacity>
           </View>
 
@@ -214,13 +214,13 @@ const ContractorDashboard = ({ navigation }) => {
                     <Text style={styles.projectTitle}>{project.title}</Text>
                     <Text style={styles.projectStatus}>{project.projectType || 'Project'}</Text>
                   </View>
-                <Text style={styles.projectClient}>{project.address || 'No address provided'}</Text>
-                <Text style={styles.milestoneLabel}>
-                  Milestones: {project.milestones?.length || 0}
-                </Text>
-                <Text style={styles.milestoneAmount}>
-                  Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
-                </Text>
+                  <Text style={styles.projectMeta}>{project.address || 'No address provided'}</Text>
+                  <Text style={styles.projectMeta}>
+                    Milestones: {project.milestones?.length || 0}
+                  </Text>
+                  <Text style={styles.projectMeta}>
+                    Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
+                  </Text>
               </TouchableOpacity>
             ))}
         </View>
@@ -233,22 +233,7 @@ const ContractorDashboard = ({ navigation }) => {
               <Text style={styles.viewAll}>View All</Text>
             </TouchableOpacity>
           </View>
-          
-          <View style={styles.paymentCard}>
-            <View style={styles.paymentInfo}>
-              <Text style={styles.paymentTitle}>Kitchen Demo Complete</Text>
-              <Text style={styles.paymentDate}>Jan 18, 2025</Text>
-            </View>
-            <Text style={styles.paymentAmount}>+$2,500</Text>
-          </View>
-          
-          <View style={styles.paymentCard}>
-            <View style={styles.paymentInfo}>
-              <Text style={styles.paymentTitle}>Bathroom Tile Work</Text>
-              <Text style={styles.paymentDate}>Jan 15, 2025</Text>
-            </View>
-            <Text style={styles.paymentAmount}>+$1,800</Text>
-          </View>
+          <Text style={styles.muted}>No payments to show yet.</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -519,11 +504,12 @@ const styles = StyleSheet.create({
   },
   projectCard: {
     backgroundColor: palette.surface,
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 15,
+    borderRadius: 12,
+    padding: 14,
     borderWidth: 1,
     borderColor: palette.border,
+    marginBottom: 12,
+    gap: 6,
   },
   projectHeader: {
     flexDirection: 'row',
@@ -539,31 +525,18 @@ const styles = StyleSheet.create({
   },
   projectStatus: {
     fontSize: 12,
-    color: palette.primary,
-    backgroundColor: '#EEE4FF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+    color: '#fff',
+    backgroundColor: palette.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    fontWeight: '700',
+    overflow: 'hidden',
+    marginLeft: 8,
   },
-  projectClient: {
-    fontSize: 14,
+  projectMeta: {
     color: palette.muted,
-    marginBottom: 15,
-  },
-  milestoneInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  milestoneLabel: {
-    fontSize: 14,
-    color: palette.text,
-  },
-  milestoneAmount: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: palette.primary,
+    fontSize: 12,
   },
   progressBar: {
     height: 6,
