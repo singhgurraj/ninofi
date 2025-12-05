@@ -41,14 +41,9 @@ const WorkerProjectScreen = ({ route, navigation }) => {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{project?.title || 'Project'}</Text>
-        <Text style={styles.muted}>{project?.description || 'No description provided.'}</Text>
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>People</Text>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('ProjectPersonnel', { project, role: 'worker' })}
-          >
-            <Text style={styles.link}>View project people</Text>
-          </TouchableOpacity>
+          <Text style={styles.cardTitle}>Description</Text>
+          <Text style={styles.body}>{project?.description || 'No description provided.'}</Text>
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Attachments</Text>
@@ -76,6 +71,12 @@ const WorkerProjectScreen = ({ route, navigation }) => {
             ))
           )}
         </View>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => navigation.navigate('ProjectPersonnel', { project, role: 'worker' })}
+        >
+          <Text style={styles.primaryText}>People</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.leaveButton} onPress={() => navigation.goBack()}>
           <Text style={styles.leaveText}>Leave Project</Text>
         </TouchableOpacity>
@@ -103,6 +104,14 @@ const styles = StyleSheet.create({
   assignmentRow: { gap: 2, paddingVertical: 4 },
   assignmentText: { color: palette.text, fontWeight: '600' },
   assignmentMeta: { color: palette.muted, fontSize: 12 },
+  primaryButton: {
+    marginTop: 8,
+    backgroundColor: palette.primary,
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  primaryText: { color: '#fff', fontWeight: '700' },
   leaveButton: {
     padding: 14,
     borderRadius: 12,

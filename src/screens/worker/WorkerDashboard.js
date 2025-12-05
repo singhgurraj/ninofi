@@ -121,14 +121,6 @@ const WorkerDashboard = ({ navigation }) => {
               <Text style={styles.actionIcon}>💰</Text>
               <Text style={styles.actionText}>My Wallet</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => navigation.navigate('Profile')}
-            >
-              <Text style={styles.actionIcon}>👤</Text>
-              <Text style={styles.actionText}>My Profile</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
