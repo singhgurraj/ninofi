@@ -3400,8 +3400,7 @@ app.post('/api/projects', async (req, res) => {
 
     const milestoneResults = [];
     for (const m of normalizedMilestones) {
-      const milestoneId =
-        crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const milestoneId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
       const result = await client.query(
         `
           INSERT INTO milestones (id, project_id, name, amount, description, position)
@@ -3420,7 +3419,8 @@ app.post('/api/projects', async (req, res) => {
       milestoneResults.push(result.rows[0]);
     }
 
-    const contractRow = await ensureProjectContract(client, projectResult.rows[0], milestoneResults);
+    // Ensure a draft contract exists for this project
+    await ensureProjectContract(client, projectResult.rows[0], milestoneResults);
 
     const persistedMedia = await persistMedia(projectId, normalizedMedia);
     const mediaResults = [];
