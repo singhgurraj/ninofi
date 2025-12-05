@@ -20,8 +20,8 @@ const WorkerGigsScreen = ({ navigation }) => {
             key={item.id}
             style={styles.card}
             onPress={() =>
-              navigation.navigate('WorkerGigDetail', {
-                assignment: item,
+              navigation.navigate('WorkerProject', {
+                projectId: item.projectId,
               })
             }
           >

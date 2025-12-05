@@ -34,6 +34,7 @@ import NotificationDetailScreen from '../screens/shared/NotificationDetailScreen
 import ApplicationsScreen from '../screens/contractor/ApplicationsScreen';
 import WorkerGigsScreen from '../screens/worker/WorkerGigsScreen';
 import WorkerGigDetailScreen from '../screens/worker/WorkerGigDetailScreen';
+import WorkerProjectScreen from '../screens/worker/WorkerProjectScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
 import ProjectOverviewScreen from '../screens/shared/ProjectOverviewScreen';
 import ProjectPersonnelScreen from '../screens/shared/ProjectPersonnelScreen';
@@ -168,6 +169,11 @@ const MainAppStack = () => (
         name="WorkerGigDetail"
         component={WorkerGigDetailScreen}
         options={{ title: 'Gig Details' }}
+      />
+      <MainStack.Screen
+        name="WorkerProject"
+        component={WorkerProjectScreen}
+        options={{ title: 'Project' }}
       />
       <MainStack.Screen
         name="FundProject"

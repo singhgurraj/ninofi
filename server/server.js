@@ -5392,6 +5392,7 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
     for (const personId of uniqueIds) {
       const userRow = await client.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [personId]);
       if (!userRow.rows.length) continue;
+      const roleLower = normalizeRole(userRow.rows[0].role);
       await client.query(
         `
           INSERT INTO project_personnel (project_id, user_id, personnel_role)
@@ -5400,6 +5401,27 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
         `,
         [projectId, personId, userRow.rows[0].role || null]
       );
+      if (roleLower === 'worker') {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await client.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            personId,
+            'Added to project',
+            `${project.title || 'A contractor'} added you to ${project.title || 'a project'}.`,
+            JSON.stringify({
+              type: 'worker-added',
+              projectId,
+              projectTitle: project.title || 'Project',
+              contractorName: req.body?.contractorName || '',
+            }),
+          ]
+        );
+      }
     }
     await client.query('COMMIT');
 

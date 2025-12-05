@@ -71,6 +71,11 @@ const NotificationsScreen = ({ navigation }) => {
         }
       }
 
+      if (data?.type === 'worker-added' && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
       navigation.navigate('NotificationDetail', { notification: n });
     },
     [navigation, user?.role]
