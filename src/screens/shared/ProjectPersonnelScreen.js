@@ -96,7 +96,8 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
       const deduped = [];
       const seen = new Set();
       merged.forEach((p) => {
-        if (!p?.id || seen.has(p.id)) return;
+        if (!p?.id) return;
+        if (seen.has(p.id)) return;
         if (user.id === p.id) return; // hide own card
         seen.add(p.id);
         deduped.push(p);

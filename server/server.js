@@ -5653,17 +5653,13 @@ app.get('/api/projects/:projectId/personnel', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
     const participants = await getProjectParticipants(projectId);
-    if (!participants || !isProjectParticipant(participants, userId)) {
-      const personnelCheck = await client.query(
-        'SELECT 1 FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
-        [projectId, userId]
-      );
-      if (!personnelCheck.rows.length) {
-        return res.status(403).json({ message: 'Not authorized to view personnel' });
-      }
+    const rows = await fetchProjectPersonnel(projectId);
+    const isOwnerOrContractor = participants && isProjectParticipant(participants, userId);
+    const isPersonnelMember = rows.some((r) => r.user_id === userId);
+    if (!isOwnerOrContractor && !isPersonnelMember) {
+      return res.status(403).json({ message: 'Not authorized to view personnel' });
     }
 
-    const rows = await fetchProjectPersonnel(projectId);
     return res.json(rows.map((row) => mapProjectPersonnelRow(row)));
   } catch (error) {
     logError('project-personnel:list:error', { projectId: req.params?.projectId }, error);
