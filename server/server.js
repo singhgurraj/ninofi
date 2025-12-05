@@ -1525,6 +1525,18 @@ const fetchProjectPersonnel = async (projectId) => {
   return result.rows;
 };
 
+const upsertPersonnel = async (client, projectId, userId, role = null) => {
+  if (!projectId || !userId) return;
+  await client.query(
+    `
+      INSERT INTO project_personnel (project_id, user_id, personnel_role)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (project_id, user_id) DO NOTHING
+    `,
+    [projectId, userId, role]
+  );
+};
+
 const buildProjectMemberSet = async (projectId) => {
   const participants = await getProjectParticipants(projectId);
   const personnelRows = await fetchProjectPersonnel(projectId);
@@ -2845,6 +2857,14 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
       );
     }
 
+    // Add accepted contractor/worker to personnel for visibility
+    try {
+      const role = appRow.worker_post_id ? 'worker' : 'contractor';
+      await upsertPersonnel(client, appRow.project_id, appRow.contractor_id, role);
+    } catch (err) {
+      logError('applications:update:personnel:error', { applicationId, projectId: appRow.project_id }, err);
+    }
+
     await client.query('COMMIT');
     logInfo('applications:update:success', { applicationId, newStatus });
     return res.json({ status: newStatus });
@@ -2960,6 +2980,14 @@ app.post('/api/applications/decide', async (req, res) => {
         }),
       ]
     );
+
+    if (newStatus === 'accepted') {
+      try {
+        await upsertPersonnel(client, projectId, contractorId, 'contractor');
+      } catch (err) {
+        logError('applications:decide:personnel:error', { projectId, contractorId }, err);
+      }
+    }
 
     await client.query('COMMIT');
     logInfo('applications:decide:success', { projectId, contractorId, newStatus });
@@ -3442,6 +3470,13 @@ app.post('/api/projects', async (req, res) => {
         [mediaId, projectId, item.url, item.label || '']
       );
       mediaResults.push(result.rows[0]);
+    }
+
+    // Ensure the owner shows up in personnel lists
+    try {
+      await upsertPersonnel(client, projectId, userId, 'owner');
+    } catch (personnelErr) {
+      logError('project:create:personnel:error', { projectId, userId }, personnelErr);
     }
 
     await client.query('COMMIT');
