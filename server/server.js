@@ -210,6 +210,51 @@ class StubPaymentProvider extends PaymentProvider {
 
 const paymentProvider = new StubPaymentProvider();
 
+// Simple storage abstraction (stub) to be replaced with S3/GCS adapter if available.
+class StorageService {
+  async uploadFile(_key, _base64, _mimeType) {
+    throw new Error('Not implemented');
+  }
+  async getSignedUrl(_key, _expiresInSeconds = 900) {
+    throw new Error('Not implemented');
+  }
+  async deleteFile(_key) {
+    throw new Error('Not implemented');
+  }
+}
+
+class StubStorageService extends StorageService {
+  constructor() {
+    super();
+    this.provider = 'stub-storage';
+  }
+
+  async uploadFile(key, base64, mimeType = 'application/octet-stream') {
+    if (!key || !base64) {
+      throw new Error('Missing key or file data');
+    }
+    return {
+      key,
+      url: `https://example.com/${encodeURIComponent(key)}`,
+      mimeType,
+    };
+  }
+
+  async getSignedUrl(key, expiresInSeconds = 900) {
+    return {
+      key,
+      url: `https://example.com/${encodeURIComponent(key)}?expires_in=${expiresInSeconds}`,
+      expiresIn: expiresInSeconds,
+    };
+  }
+
+  async deleteFile(_key) {
+    return { success: true };
+  }
+}
+
+const storageService = new StubStorageService();
+
 const ensureDefaultFeatureFlags = async () => {
   if (!pool) return;
   for (const flag of DEFAULT_FEATURE_FLAGS) {
@@ -386,6 +431,20 @@ const initDb = async () => {
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS invoices_milestone_idx ON invoices (milestone_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS invoices_project_idx ON invoices (project_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices (status)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS milestone_attachments (
+      id UUID PRIMARY KEY,
+      milestone_id UUID NOT NULL REFERENCES milestones(id) ON DELETE CASCADE,
+      uploader_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      storage_key TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS milestone_attachments_milestone_idx ON milestone_attachments (milestone_id)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_media (
@@ -838,6 +897,17 @@ const mapTransactionWithContext = (row = {}) => {
   };
 };
 
+const mapAttachmentRow = (row = {}) => ({
+  id: row.id,
+  milestoneId: row.milestone_id,
+  uploaderId: row.uploader_id,
+  storageKey: row.storage_key,
+  fileName: row.file_name,
+  mimeType: row.mime_type,
+  fileSize: row.file_size !== null && row.file_size !== undefined ? Number(row.file_size) : null,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+});
+
 const mapEscrowRow = (row = {}) => ({
   id: row.id,
   projectId: row.project_id,
@@ -1106,6 +1176,23 @@ const getProjectParticipants = async (projectId) => {
     contractorName: row.contractor_full_name,
   };
 };
+
+const getProjectIdForMilestone = async (milestoneId) => {
+  if (!milestoneId) return null;
+  await assertDbReady();
+  const res = await pool.query('SELECT project_id FROM milestones WHERE id = $1 LIMIT 1', [milestoneId]);
+  return res.rows[0]?.project_id || null;
+};
+
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'video/mp4',
+  'application/pdf',
+];
+
+const isAllowedMime = (mime) => ALLOWED_MIME_TYPES.includes((mime || '').toLowerCase());
 
 const isProjectParticipant = (participants, userId) => {
   if (!participants || !userId) return false;
@@ -3608,6 +3695,134 @@ app.get('/api/contractors/:contractorId/payouts', async (req, res) => {
   } catch (error) {
     console.error('payments:list:contractor:error', error);
     const message = pool ? 'Failed to fetch payouts' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Upload milestone attachments (participants only)
+app.post('/api/milestones/:milestoneId/attachments', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { milestoneId } = req.params;
+    const { userId, fileName, mimeType, fileData, fileSize } = req.body || {};
+
+    if (!milestoneId || !userId || !fileName || !mimeType || !fileData) {
+      return res.status(400).json({ message: 'milestoneId, userId, fileName, mimeType, and fileData are required' });
+    }
+
+    if (!isAllowedMime(mimeType)) {
+      return res.status(400).json({ message: 'Unsupported file type' });
+    }
+
+    const sizeNum = Number(fileSize || 0);
+    const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+    if (sizeNum && sizeNum > MAX_SIZE) {
+      return res.status(400).json({ message: 'File too large (max 15MB)' });
+    }
+
+    await assertDbReady();
+    const projectId = await getProjectIdForMilestone(milestoneId);
+    if (!projectId) {
+      return res.status(404).json({ message: 'Milestone not found' });
+    }
+
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || (participants.ownerId !== userId && participants.contractorId !== userId)) {
+      return res.status(403).json({ message: 'Not authorized to attach files for this milestone' });
+    }
+
+    const safeName = fileName.replace(/\s+/g, '_');
+    const storageKey = `milestones/${milestoneId}/${Date.now()}_${safeName}`;
+
+    let uploadResult;
+    try {
+      uploadResult = await storageService.uploadFile(storageKey, fileData, mimeType);
+    } catch (storageError) {
+      console.error('attachments:upload:storage:error', storageError);
+      return res.status(502).json({ message: 'Failed to upload file' });
+    }
+
+    await client.query('BEGIN');
+    const attachmentId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const inserted = await client.query(
+      `
+        INSERT INTO milestone_attachments (id, milestone_id, uploader_id, storage_key, file_name, mime_type, file_size)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [
+        attachmentId,
+        milestoneId,
+        userId,
+        uploadResult.key,
+        fileName,
+        mimeType,
+        sizeNum || null,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    const signed = await storageService.getSignedUrl(uploadResult.key);
+
+    return res.status(201).json({
+      success: true,
+      attachment: {
+        ...mapAttachmentRow(inserted.rows[0]),
+        signedUrl: signed?.url || null,
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('attachments:upload:error', error);
+    const message = pool ? 'Failed to upload attachment' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// List milestone attachments (participants only)
+app.get('/api/milestones/:milestoneId/attachments', async (req, res) => {
+  try {
+    const { milestoneId } = req.params;
+    const { userId } = req.query || {};
+
+    if (!milestoneId || !userId) {
+      return res.status(400).json({ message: 'milestoneId and userId are required' });
+    }
+
+    await assertDbReady();
+    const projectId = await getProjectIdForMilestone(milestoneId);
+    if (!projectId) {
+      return res.status(404).json({ message: 'Milestone not found' });
+    }
+
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || (participants.ownerId !== userId && participants.contractorId !== userId)) {
+      return res.status(403).json({ message: 'Not authorized to view attachments for this milestone' });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT * FROM milestone_attachments
+        WHERE milestone_id = $1
+        ORDER BY created_at DESC
+      `,
+      [milestoneId]
+    );
+
+    const attachments = await Promise.all(
+      result.rows.map(async (row) => {
+        const signed = await storageService.getSignedUrl(row.storage_key);
+        return { ...mapAttachmentRow(row), signedUrl: signed?.url || null };
+      })
+    );
+
+    return res.json({ success: true, attachments });
+  } catch (error) {
+    console.error('attachments:list:error', error);
+    const message = pool ? 'Failed to fetch attachments' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
 });
