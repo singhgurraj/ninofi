@@ -5668,7 +5668,44 @@ app.get('/api/projects/:projectId/personnel', async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to view personnel' });
     }
 
-    return res.json(rows.map((row) => mapProjectPersonnelRow(row)));
+    const augmented = [...rows];
+    const seen = new Set(rows.map((r) => r.user_id));
+    if (participants?.ownerId && !seen.has(participants.ownerId)) {
+      const ownerUser = await getUserById(participants.ownerId);
+      if (ownerUser) {
+        augmented.push({
+          id: null,
+          project_id: projectId,
+          user_id: ownerUser.id,
+          personnel_role: 'owner',
+          created_at: project?.created_at || new Date(),
+          full_name: ownerUser.full_name,
+          email: ownerUser.email,
+          phone: ownerUser.phone,
+          profile_photo_url: ownerUser.profile_photo_url,
+          role: ownerUser.role,
+        });
+      }
+    }
+    if (participants?.contractorId && !seen.has(participants.contractorId)) {
+      const contractorUser = await getUserById(participants.contractorId);
+      if (contractorUser) {
+        augmented.push({
+          id: null,
+          project_id: projectId,
+          user_id: contractorUser.id,
+          personnel_role: 'contractor',
+          created_at: project?.created_at || new Date(),
+          full_name: contractorUser.full_name,
+          email: contractorUser.email,
+          phone: contractorUser.phone,
+          profile_photo_url: contractorUser.profile_photo_url,
+          role: contractorUser.role,
+        });
+      }
+    }
+
+    return res.json(augmented.map((row) => mapProjectPersonnelRow(row)));
   } catch (error) {
     logError('project-personnel:list:error', { projectId: req.params?.projectId }, error);
     const message = pool
@@ -5716,7 +5753,16 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
     const participants = await getProjectParticipants(projectId);
-    if (!participants || !isProjectParticipant(participants, userId)) {
+    const isOwnerOrContractor = participants && isProjectParticipant(participants, userId);
+    let isAcceptedContractor = false;
+    if (!isOwnerOrContractor) {
+      const acceptedApp = await client.query(
+        "SELECT 1 FROM project_applications WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted' LIMIT 1",
+        [projectId, userId]
+      );
+      isAcceptedContractor = acceptedApp.rows.length > 0;
+    }
+    if (!isOwnerOrContractor && !isAcceptedContractor) {
       return res.status(403).json({ message: 'Not authorized to add personnel' });
     }
 
