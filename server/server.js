@@ -3128,19 +3128,50 @@ app.post('/api/projects/:projectId/leave', async (req, res) => {
       }
       const project = await getProjectById(projectId);
       if (!project) return res.status(404).json({ message: 'Project not found' });
+      const worker = await getUserById(workerId);
       const participants = await getProjectParticipants(projectId);
       const personnelRow = await client.query(
         'SELECT * FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
         [projectId, workerId]
       );
-      if (!personnelRow.rows.length) {
+      const gigApplications = await client.query(
+        `
+          SELECT pa.id, pa.worker_post_id, gig.status AS gig_status
+          FROM project_applications pa
+          LEFT JOIN project_applications gig ON gig.id = pa.worker_post_id
+          WHERE pa.project_id = $1
+            AND pa.contractor_id = $2
+            AND pa.worker_post_id IS NOT NULL
+            AND pa.status IN ('pending','accepted')
+        `,
+        [projectId, workerId]
+      );
+      if (!personnelRow.rows.length && !gigApplications.rows.length) {
         return res.status(404).json({ message: 'Worker not found on project' });
       }
       await client.query('BEGIN');
-      await client.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id = $2', [
-        projectId,
-        workerId,
-      ]);
+      if (personnelRow.rows.length) {
+        await client.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id = $2', [
+          projectId,
+          workerId,
+        ]);
+      }
+      if (gigApplications.rows.length) {
+        const appIds = gigApplications.rows.map((r) => r.id);
+        await client.query(
+          `UPDATE project_applications SET status = 'withdrawn' WHERE id = ANY($1::uuid[])`,
+          [appIds]
+        );
+        const gigIds = Array.from(
+          new Set(gigApplications.rows.map((r) => r.worker_post_id).filter(Boolean))
+        );
+        if (gigIds.length) {
+          await client.query(
+            `UPDATE project_applications SET status = 'pending' WHERE id = ANY($1::uuid[])`,
+            [gigIds]
+          );
+        }
+      }
       const notifyIds = [];
       if (participants?.ownerId) notifyIds.push(participants.ownerId);
       if (participants?.contractorId && participants.contractorId !== participants.ownerId) {
@@ -3156,8 +3187,8 @@ app.post('/api/projects/:projectId/leave', async (req, res) => {
           [
             notifId,
             uid,
-            'Worker left project',
-            'A worker has left the project.',
+            `${worker?.full_name || 'Worker'} left ${project.title || 'project'}`,
+            `${worker?.full_name || 'Worker'} has left ${project.title || 'the project'}.`,
             JSON.stringify({ projectId, workerId, type: 'worker-left' }),
           ]
         );
@@ -3559,20 +3590,74 @@ app.delete('/api/projects/:projectId', async (req, res) => {
 
     await assertDbReady();
 
+    const projectRes = await client.query('SELECT * FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+    if (!projectRes.rows.length) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
     if (userId) {
-      const existing = await client.query(
-        'SELECT 1 FROM projects WHERE id = $1 AND user_id = $2 LIMIT 1',
-        [projectId, userId]
-      );
-      if (!existing.rows.length) {
-        return res.status(404).json({ message: 'Project not found for this user' });
+      if (projectRes.rows[0].user_id !== userId) {
+        return res.status(403).json({ message: 'Only the project owner can delete this project' });
       }
     }
 
+    // Collect participants to notify before deletion
+    const participants = new Set();
+    participants.add(projectRes.rows[0].user_id);
+
+    const contractorRes = await client.query(
+      `
+        SELECT contractor_id
+        FROM project_applications
+        WHERE project_id = $1 AND status = 'accepted' AND (is_worker_post IS NOT TRUE OR is_worker_post = false)
+      `,
+      [projectId]
+    );
+    contractorRes.rows.forEach((r) => r.contractor_id && participants.add(r.contractor_id));
+
+    const personnelRes = await client.query(
+      'SELECT user_id FROM project_personnel WHERE project_id = $1',
+      [projectId]
+    );
+    personnelRes.rows.forEach((r) => r.user_id && participants.add(r.user_id));
+
+    const gigApplicantsRes = await client.query(
+      `
+        SELECT contractor_id
+        FROM project_applications
+        WHERE project_id = $1
+          AND worker_post_id IS NOT NULL
+          AND status IN ('pending','accepted')
+      `,
+      [projectId]
+    );
+    gigApplicantsRes.rows.forEach((r) => r.contractor_id && participants.add(r.contractor_id));
+
     await client.query('BEGIN');
-    // milestones are deleted via ON DELETE CASCADE
-    await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
+    // Remove old notifications tied to this project
     await client.query('DELETE FROM notifications WHERE data->>\'projectId\' = $1', [projectId]);
+    // Delete project (dependent tables assumed ON DELETE CASCADE)
+    await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
+
+    // Notify everyone involved (except duplicates)
+    for (const uid of participants) {
+      if (!uid) continue;
+      const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          notifId,
+          uid,
+          'Project deleted',
+          `${projectRes.rows[0].title || 'A project'} has been deleted by the owner.`,
+          JSON.stringify({ type: 'project-deleted', projectId }),
+        ]
+      );
+    }
+
     await client.query('COMMIT');
 
     return res.status(204).send();

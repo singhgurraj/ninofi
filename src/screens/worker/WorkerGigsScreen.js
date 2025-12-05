@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
 import { projectAPI } from '../../services/api';
@@ -23,6 +24,12 @@ const WorkerGigsScreen = ({ navigation }) => {
   useEffect(() => {
     loadApplications();
   }, [loadApplications]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadApplications();
+    }, [loadApplications])
+  );
 
   const projects = (workerProjects || []).filter((p) => p);
   const acceptedApps = apps.filter((a) => (a.status || '').toLowerCase() === 'accepted');

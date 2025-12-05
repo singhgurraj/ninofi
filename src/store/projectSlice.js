@@ -135,6 +135,12 @@ const projectSlice = createSlice({
         state.workerProjects.push(action.payload);
       }
     },
+    removeWorkerProject: (state, action) => {
+      const projectId = action.payload;
+      if (!projectId) return;
+      state.workerProjects = state.workerProjects.filter((p) => p.id !== projectId);
+      state.workerAssignments = state.workerAssignments.filter((a) => a.projectId !== projectId);
+    },
   },
 });
 
@@ -157,6 +163,7 @@ export const {
   fetchContractorProjectsFailure,
   addWorkerAssignment,
   addWorkerProject,
+  removeWorkerProject,
 } = projectSlice.actions;
 
 export default projectSlice.reducer;

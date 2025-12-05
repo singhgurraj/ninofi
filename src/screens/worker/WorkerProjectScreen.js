@@ -3,7 +3,7 @@ import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } fr
 import palette from '../../styles/palette';
 import { projectAPI } from '../../services/api';
 import { useSelector, useDispatch } from 'react-redux';
-import { addWorkerProject } from '../../store/projectSlice';
+import { addWorkerProject, removeWorkerProject } from '../../store/projectSlice';
 
 const WorkerProjectScreen = ({ route, navigation }) => {
   const { projectId } = route.params || {};
@@ -82,6 +82,7 @@ const WorkerProjectScreen = ({ route, navigation }) => {
           onPress={async () => {
             const res = await projectAPI.leaveProject(projectId, { workerId: user?.id });
             if (res?.status === 200 || res?.data?.status === 'left') {
+              dispatch(removeWorkerProject(projectId));
               navigation.goBack();
             }
           }}
