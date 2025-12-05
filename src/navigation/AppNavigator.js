@@ -32,6 +32,8 @@ import ContractorProjectDetailsScreen from '../screens/contractor/ContractorProj
 import NotificationsScreen from '../screens/shared/NotificationsScreen';
 import NotificationDetailScreen from '../screens/shared/NotificationDetailScreen';
 import ApplicationsScreen from '../screens/contractor/ApplicationsScreen';
+import WorkerGigsScreen from '../screens/worker/WorkerGigsScreen';
+import WorkerGigDetailScreen from '../screens/worker/WorkerGigDetailScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
 import ProjectOverviewScreen from '../screens/shared/ProjectOverviewScreen';
 import ProjectPersonnelScreen from '../screens/shared/ProjectPersonnelScreen';
@@ -39,6 +41,7 @@ import RegisterWorkerScreen from '../screens/contractor/RegisterWorkerScreen';
 import ProjectPersonnelAddScreen from '../screens/shared/ProjectPersonnelAddScreen';
 import ContractWizardScreen from '../screens/contractor/ContractWizardScreen';
 import ContractSignatureScreen from '../screens/contractor/ContractSignatureScreen';
+import ContractViewScreen from '../screens/contractor/ContractViewScreen';
 import PortfolioScreen from '../screens/contractor/PortfolioScreen';
 import PortfolioEditScreen from '../screens/contractor/PortfolioEditScreen';
 import ReviewFormScreen from '../screens/homeowner/ReviewFormScreen';
@@ -48,6 +51,7 @@ import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
 import AdminModerationScreen from '../screens/admin/AdminModerationScreen';
 import ContractorSearchScreen from '../screens/homeowner/ContractorSearchScreen';
 import ContractorProfileScreen from '../screens/homeowner/ContractorProfileScreen';
+import AssignWorkScreen from '../screens/contractor/AssignWorkScreen';
 import { setAuthToken } from '../services/api';
 
 const RootStack = createStackNavigator();
@@ -156,6 +160,16 @@ const MainAppStack = () => (
         options={{ title: 'My Applications' }}
       />
       <MainStack.Screen
+        name="WorkerGigs"
+        component={WorkerGigsScreen}
+        options={{ title: 'My Gigs' }}
+      />
+      <MainStack.Screen
+        name="WorkerGigDetail"
+        component={WorkerGigDetailScreen}
+        options={{ title: 'Gig Details' }}
+      />
+      <MainStack.Screen
         name="FundProject"
         component={FundProjectScreen}
         options={{ title: 'Fund Project' }}
@@ -179,6 +193,16 @@ const MainAppStack = () => (
         name="ContractSignature"
         component={ContractSignatureScreen}
         options={{ title: 'Sign Contract' }}
+      />
+      <MainStack.Screen
+        name="ContractView"
+        component={ContractViewScreen}
+        options={{ title: 'View Contract' }}
+      />
+      <MainStack.Screen
+        name="AssignWork"
+        component={AssignWorkScreen}
+        options={{ title: 'Assign Work' }}
       />
       <MainStack.Screen
         name="Portfolio"

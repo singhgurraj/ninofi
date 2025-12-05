@@ -200,6 +200,29 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
                     <Text style={styles.messageText}>Message</Text>
                   </TouchableOpacity>
                   {isContractor ? (
+                    <>
+                      {String(person.role || '').toLowerCase() === 'worker' ? (
+                        <TouchableOpacity
+                          style={styles.assignButton}
+                          onPress={() =>
+                            navigation.navigate('AssignWork', {
+                              project,
+                              worker: person,
+                            })
+                          }
+                        >
+                          <Text style={styles.assignText}>Assign Work</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      <TouchableOpacity
+                        style={styles.removeButton}
+                        onPress={() => handleRemove(person.id)}
+                      >
+                        <Text style={styles.removeText}>Remove</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                  {!isContractor ? (
                     <TouchableOpacity
                       style={styles.removeButton}
                       onPress={() => handleRemove(person.id)}
@@ -261,6 +284,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   messageText: { color: '#fff', fontWeight: '700' },
+  assignButton: {
+    marginTop: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.primary,
+    alignItems: 'center',
+  },
+  assignText: { color: palette.primary, fontWeight: '700' },
   removeButton: {
     marginTop: 8,
     paddingVertical: 8,

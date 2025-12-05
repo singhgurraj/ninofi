@@ -39,6 +39,7 @@ const initialState = {
   contractorProjects: [],
   isLoadingContractor: false,
   contractorError: null,
+  workerAssignments: [],
 };
 
 const projectSlice = createSlice({
@@ -113,6 +114,17 @@ const projectSlice = createSlice({
       state.isLoadingContractor = false;
       state.contractorError = action.payload;
     },
+    addWorkerAssignment: (state, action) => {
+      state.workerAssignments.push({
+        id: action.payload.id,
+        projectId: action.payload.projectId,
+        workerId: action.payload.workerId,
+        description: action.payload.description,
+        dueDate: action.payload.dueDate,
+        pay: action.payload.pay,
+        createdAt: new Date().toISOString(),
+      });
+    },
   },
 });
 
@@ -133,6 +145,7 @@ export const {
   fetchContractorProjectsStart,
   fetchContractorProjectsSuccess,
   fetchContractorProjectsFailure,
+  addWorkerAssignment,
 } = projectSlice.actions;
 
 export default projectSlice.reducer;

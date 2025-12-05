@@ -171,7 +171,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                   ) : null}
                 </View>
                 <View style={styles.contractActions}>
-                  <TouchableOpacity onPress={() => navigation.navigate('ContractSignature', { contract: c })}>
+                  <TouchableOpacity onPress={() => navigation.navigate('ContractView', { contract: c })}>
                     <Text style={styles.actionLink}>View</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => navigation.navigate('ContractSignature', { contract: c })}>

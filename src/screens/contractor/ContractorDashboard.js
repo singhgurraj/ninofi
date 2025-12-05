@@ -155,14 +155,6 @@ const ContractorDashboard = ({ navigation }) => {
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
-              onPress={() => navigation.navigate('Profile')}
-            >
-              <Text style={styles.actionIcon}>👤</Text>
-              <Text style={styles.actionTitle}>My Profile</Text>
-              <Text style={styles.actionText}>Licenses & docs</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Compliance')}
             >
               <Text style={styles.actionIcon}>📑</Text>
