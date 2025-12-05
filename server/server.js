@@ -5626,6 +5626,15 @@ app.delete('/api/contracts/:contractId', async (req, res) => {
     }
 
     const contractTitle = contractRow.title || 'Contract';
+    const deleter = await getUserById(userId);
+    const deleterName = deleter?.full_name || 'A team member';
+
+    // Clean up sign-request notifications tied to this contract
+    await pool.query(
+      "DELETE FROM notifications WHERE data->>'contractId' = $1 AND data->>'type' = 'contract-signature'",
+      [contractId]
+    );
+
     await pool.query('DELETE FROM contracts WHERE id = $1', [contractId]);
 
     const notificationPromises = [];
@@ -5641,12 +5650,14 @@ app.delete('/api/contracts/:contractId', async (req, res) => {
             notifId,
             cid,
             'Contract deleted',
-            `${contractTitle} delete pending contract: ${contractTitle}`,
+            `${deleterName} deleted pending contract: ${contractTitle}`,
             JSON.stringify({
               type: 'contract-deleted',
               contractId,
               projectId: contractRow.project_id,
               title: contractTitle,
+              deleterId: userId,
+              deleterName,
             }),
           ]
         )

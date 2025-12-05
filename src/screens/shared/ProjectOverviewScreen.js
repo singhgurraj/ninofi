@@ -152,7 +152,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
 
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Contracts</Text>
+            <Text style={styles.sectionTitle}>Proposed Contracts</Text>
             {contractsLoading ? <Text style={styles.muted}>Loading…</Text> : null}
           </View>
           {contractsError ? <Text style={styles.errorText}>{contractsError}</Text> : null}
