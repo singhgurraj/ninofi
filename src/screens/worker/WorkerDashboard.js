@@ -11,7 +11,6 @@ import { useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
 import { loadNotifications } from '../../services/notifications';
-import { markAllRead } from '../../store/notificationSlice';
 
 const WorkerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -29,7 +28,6 @@ const WorkerDashboard = ({ navigation }) => {
     if (!user?.id) return;
     try {
       await loadNotifications(user.id)(dispatch);
-      dispatch(markAllRead());
     } catch {
       // no-op
     }

@@ -3420,8 +3420,6 @@ app.post('/api/projects', async (req, res) => {
       milestoneResults.push(result.rows[0]);
     }
 
-    await ensureProjectContract(client, existing.rows[0], milestoneResults);
-
     const contractRow = await ensureProjectContract(client, projectResult.rows[0], milestoneResults);
 
     const persistedMedia = await persistMedia(projectId, normalizedMedia);
