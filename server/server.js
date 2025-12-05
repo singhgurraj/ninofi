@@ -5654,17 +5654,18 @@ app.get('/api/projects/:projectId/personnel', async (req, res) => {
     }
     const participants = await getProjectParticipants(projectId);
     const rows = await fetchProjectPersonnel(projectId);
-    const isOwnerOrContractor = participants && isProjectParticipant(participants, userId);
+
+    // Authorization: owner, assigned contractor, any accepted contractor app, or any listed personnel
+    const isOwner = project.user_id === userId;
+    const isAssignedContractor = participants && participants.contractorId === userId;
     const isPersonnelMember = rows.some((r) => r.user_id === userId);
-    let isAcceptedContractor = false;
-    if (!isOwnerOrContractor) {
-      const acceptedApp = await pool.query(
-        "SELECT 1 FROM project_applications WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted' LIMIT 1",
-        [projectId, userId]
-      );
-      isAcceptedContractor = acceptedApp.rows.length > 0;
-    }
-    if (!isOwnerOrContractor && !isPersonnelMember && !isAcceptedContractor) {
+    const acceptedApp = await pool.query(
+      "SELECT 1 FROM project_applications WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted' LIMIT 1",
+      [projectId, userId]
+    );
+    const isAcceptedContractor = acceptedApp.rows.length > 0;
+
+    if (!isOwner && !isAssignedContractor && !isPersonnelMember && !isAcceptedContractor) {
       return res.status(403).json({ message: 'Not authorized to view personnel' });
     }
 
@@ -5685,6 +5686,7 @@ app.get('/api/projects/:projectId/personnel', async (req, res) => {
           profile_photo_url: ownerUser.profile_photo_url,
           role: ownerUser.role,
         });
+        seen.add(ownerUser.id);
       }
     }
     if (participants?.contractorId && !seen.has(participants.contractorId)) {
@@ -5702,6 +5704,7 @@ app.get('/api/projects/:projectId/personnel', async (req, res) => {
           profile_photo_url: contractorUser.profile_photo_url,
           role: contractorUser.role,
         });
+        seen.add(contractorUser.id);
       }
     }
 
