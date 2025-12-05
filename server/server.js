@@ -301,6 +301,33 @@ class IdVerificationProvider {
 
 const idVerificationProvider = new IdVerificationProvider();
 
+// E-signature provider (stub)
+class ESignatureProvider {
+  constructor() {
+    this.provider = 'stub-esign';
+  }
+
+  async createSignatureRequest(contract, participants = []) {
+    const externalId = `esign_${contract.id}_${Date.now()}`;
+    return {
+      externalId,
+      signingUrls: participants.reduce((acc, p) => ({ ...acc, [p.role]: `https://esign.example.com/sign/${externalId}?user=${p.id}` }), {}),
+    };
+  }
+
+  async parseWebhook(payload) {
+    return {
+      externalId: payload.externalId || payload.id,
+      status: (payload.status || '').toLowerCase(),
+      fileBase64: payload.fileBase64,
+      fileName: payload.fileName || 'contract.pdf',
+      mimeType: payload.mimeType || 'application/pdf',
+    };
+  }
+}
+
+const eSignatureProvider = new ESignatureProvider();
+
 const ensureDefaultFeatureFlags = async () => {
   if (!pool) return;
   for (const flag of DEFAULT_FEATURE_FLAGS) {
@@ -630,6 +657,10 @@ const initDb = async () => {
   await pool.query('CREATE INDEX IF NOT EXISTS contracts_created_by_idx ON contracts (created_by)');
   await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS pdf_url TEXT");
   await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS provider TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS external_id TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signed_file_key TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_signatures (
@@ -999,6 +1030,20 @@ const mapVerificationSessionRow = (row = {}) => ({
   updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
 });
 
+const mapContractRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  createdBy: row.created_by,
+  title: row.title,
+  terms: row.terms,
+  status: row.status,
+  provider: row.provider || null,
+  externalId: row.external_id || null,
+  signedFileKey: row.signed_file_key || null,
+  signedAt: row.signed_at instanceof Date ? row.signed_at.toISOString() : row.signed_at,
+  pdfUrl: row.pdf_url || null,
+});
+
 const mapEscrowRow = (row = {}) => ({
   id: row.id,
   projectId: row.project_id,
@@ -1167,6 +1212,29 @@ const buildInvoiceNumber = (projectId) => {
   return `INV-${datePart}-${projectId?.slice(0, 6) || 'PROJ'}-${rand}`;
 };
 
+const buildContractTerms = (projectRow, milestones = []) => {
+  const milestoneLines = milestones
+    .map((m, idx) => `  ${idx + 1}. ${m.name} - $${Number(m.amount || 0).toFixed(2)}`)
+    .join('\n');
+  return `Project: ${projectRow.title}\nAddress: ${projectRow.address || 'N/A'}\n\nScope & Milestones:\n${milestoneLines}\n\nPayment Terms: Funds held in escrow and released per approved milestone.`;
+};
+
+const ensureProjectContract = async (client, projectRow, milestones = []) => {
+  const existing = await client.query('SELECT * FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1', [projectRow.id]);
+  if (existing.rows.length) return existing.rows[0];
+  const contractId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+  const terms = buildContractTerms(projectRow, milestones);
+  const inserted = await client.query(
+    `
+      INSERT INTO contracts (id, project_id, created_by, title, terms, status)
+      VALUES ($1, $2, $3, $4, $5, 'pending')
+      RETURNING *
+    `,
+    [contractId, projectRow.user_id, projectRow.title || 'Project Contract', 'Milestone Agreement', terms]
+  );
+  return inserted.rows[0];
+};
+
 const generateInvoiceForMilestone = async (client, milestoneId, { createStatus = 'SENT', markPaid = false } = {}) => {
   if (!milestoneId) return null;
   const milestoneRes = await client.query(
@@ -1286,11 +1354,17 @@ const ALLOWED_MIME_TYPES = [
 const isAllowedMime = (mime) => ALLOWED_MIME_TYPES.includes((mime || '').toLowerCase());
 
 const webhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || 'stub-secret';
+const esignWebhookSecret = process.env.ESIGN_WEBHOOK_SECRET || 'stub-esign';
 
 const validatePaymentSignature = (headers, payloadString = '') => {
   // Stub: replace with provider HMAC validation. For now, compare header to secret.
   const signature = headers['x-provider-signature'] || headers['x-signature'] || '';
   return signature === webhookSecret || webhookSecret === 'stub-secret';
+};
+
+const validateEsignSignature = (headers) => {
+  const signature = headers['x-esign-signature'] || headers['x-signature'] || '';
+  return signature === esignWebhookSecret || esignWebhookSecret === 'stub-esign';
 };
 
 const markInvoicePaid = async (client, milestoneId) => {
@@ -2909,6 +2983,10 @@ app.post('/api/projects', async (req, res) => {
       milestoneResults.push(result.rows[0]);
     }
 
+    await ensureProjectContract(client, existing.rows[0], milestoneResults);
+
+    const contractRow = await ensureProjectContract(client, projectResult.rows[0], milestoneResults);
+
     const persistedMedia = await persistMedia(projectId, normalizedMedia);
     const mediaResults = [];
     for (const item of persistedMedia) {
@@ -3365,6 +3443,15 @@ app.post('/api/projects/:projectId/escrow/deposit', async (req, res) => {
       return res.status(403).json({ message: 'Only the project owner can fund escrow' });
     }
 
+    const contractSigned = await pool.query(
+      "SELECT status FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1",
+      [projectId]
+    );
+    const latestContractStatus = (contractSigned.rows[0]?.status || '').toLowerCase();
+    if (latestContractStatus !== 'signed') {
+      return res.status(403).json({ message: 'Contract must be fully signed before funding' });
+    }
+
     const milestoneRows = await pool.query(
       'SELECT id, amount FROM milestones WHERE project_id = $1',
       [projectId]
@@ -3501,6 +3588,15 @@ app.post('/api/projects/:projectId/milestones/:milestoneId/submit', async (req, 
       return res.status(404).json({ message: 'Project not found' });
     }
 
+    const contractRes = await pool.query(
+      'SELECT status FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [projectId]
+    );
+    const contractStatus = (contractRes.rows[0]?.status || '').toLowerCase();
+    if (contractStatus !== 'signed') {
+      return res.status(403).json({ message: 'Contract must be signed before submitting work' });
+    }
+
     const assignedContractorId = await getAssignedContractorId(projectId, client);
     if (!assignedContractorId || assignedContractorId !== contractorId) {
       return res.status(403).json({ message: 'Contractor is not assigned to this project' });
@@ -3612,6 +3708,16 @@ app.post('/api/projects/:projectId/milestones/:milestoneId/approve', async (req,
     if (available < milestoneAmount) {
       await client.query('ROLLBACK');
       return res.status(409).json({ message: 'Insufficient escrow balance' });
+    }
+
+    const contractRes = await client.query(
+      'SELECT status FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [projectId]
+    );
+    const contractStatus = (contractRes.rows[0]?.status || '').toLowerCase();
+    if (contractStatus !== 'signed') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Contract must be signed before payout' });
     }
 
     const contractorToPay = contractorId || assignedContractorId;
@@ -4085,6 +4191,10 @@ app.post('/webhooks/payments', async (req, res) => {
           [milestoneId]
         );
         await markInvoicePaid(client, milestoneId);
+        await client.query(
+          `UPDATE contracts SET status = 'signed', signed_at = COALESCE(signed_at, NOW()) WHERE project_id = $1 AND status <> 'signed'`,
+          [txRow.project_id]
+        );
       }
 
       // Adjust escrow only if this was not already completed
@@ -4127,6 +4237,67 @@ app.post('/webhooks/payments', async (req, res) => {
     await client.query('ROLLBACK').catch(() => {});
     console.error('webhooks:payments:error', error);
     const message = pool ? 'Failed to process webhook' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// E-signature webhook handler
+app.post('/webhooks/esign', async (req, res) => {
+  const rawHeaders = req.headers || {};
+  if (!validateEsignSignature(rawHeaders)) {
+    return res.status(401).json({ message: 'Invalid signature' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const parsed = await eSignatureProvider.parseWebhook(req.body || {});
+    const externalId = parsed.externalId;
+    if (!externalId) {
+      await client.query('ROLLBACK').catch(() => {});
+      return res.status(400).json({ message: 'externalId is required' });
+    }
+
+    await assertDbReady();
+    await client.query('BEGIN');
+    const contractRes = await client.query('SELECT * FROM contracts WHERE external_id = $1 FOR UPDATE', [externalId]);
+    if (!contractRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    let signedFileKey = null;
+    if (parsed.fileBase64) {
+      const key = `contracts/${contractRes.rows[0].id}/${parsed.fileName || 'signed.pdf'}`;
+      try {
+        await storageService.uploadFile(key, parsed.fileBase64, parsed.mimeType || 'application/pdf');
+        signedFileKey = key;
+      } catch (uploadErr) {
+        console.error('esign:webhook:upload:error', uploadErr);
+      }
+    }
+
+    const finalStatus = parsed.status === 'completed' || parsed.status === 'signed' ? 'signed' : 'pending';
+    const updated = await client.query(
+      `
+        UPDATE contracts
+        SET status = $1,
+            signed_file_key = COALESCE($2, signed_file_key),
+            signed_at = CASE WHEN $1 = 'signed' THEN NOW() ELSE signed_at END,
+            updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+      `,
+      [finalStatus, signedFileKey, contractRes.rows[0].id]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ success: true, contract: mapContractRow(updated.rows[0]) });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('esign:webhook:error', error);
+    const message = pool ? 'Failed to process e-sign webhook' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   } finally {
     client.release();
@@ -4369,6 +4540,72 @@ app.get('/api/milestones/:milestoneId/attachments', async (req, res) => {
     console.error('attachments:list:error', error);
     const message = pool ? 'Failed to fetch attachments' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+// Create e-signature request for homeowner + contractor
+app.post('/api/contracts/:contractId/sign-request', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { contractId } = req.params;
+    const { userId } = req.body || {};
+
+    if (!contractId || !userId) {
+      return res.status(400).json({ message: 'contractId and userId are required' });
+    }
+
+    await assertDbReady();
+    await client.query('BEGIN');
+    const contractRes = await client.query('SELECT * FROM contracts WHERE id = $1 FOR UPDATE', [contractId]);
+    if (!contractRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const contractRow = contractRes.rows[0];
+    const projectRow = await getProjectById(contractRow.project_id);
+    if (!projectRow) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const participants = await getProjectParticipants(projectRow.id);
+    if (!participants || !participants.ownerId || !participants.contractorId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Contractor must be assigned before e-sign' });
+    }
+    if (![participants.ownerId, participants.contractorId].includes(userId)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized to initiate signature' });
+    }
+
+    const esignResp = await eSignatureProvider.createSignatureRequest(contractRow, [
+      { id: participants.ownerId, role: 'homeowner' },
+      { id: participants.contractorId, role: 'contractor' },
+    ]);
+
+    const updated = await client.query(
+      `
+        UPDATE contracts
+        SET provider = $1, external_id = $2, status = 'pending', updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+      `,
+      [eSignatureProvider.provider, esignResp.externalId, contractId]
+    );
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      contract: mapContractRow(updated.rows[0]),
+      signingUrls: esignResp.signingUrls || {},
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('esign:request:error', error);
+    const message = pool ? 'Failed to create signature request' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
   }
 });
 
