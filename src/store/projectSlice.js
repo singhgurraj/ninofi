@@ -1,7 +1,34 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+const defaultProjects = [
+  {
+    id: '1',
+    title: 'Kitchen Renovation',
+    contractor: 'BuildCorp Contractors',
+    status: 'In Progress',
+    progress: 65,
+    budget: 8500,
+    milestones: [
+      { id: 'm1', name: 'Demo & Prep Work', amount: 2500, status: 'approved' },
+      { id: 'm2', name: 'Plumbing Installation', amount: 3000, status: 'submitted' },
+    ],
+  },
+  {
+    id: '2',
+    title: 'Bathroom Remodel',
+    contractor: 'ProTile Solutions',
+    status: 'Pending Approval',
+    progress: 90,
+    budget: 4000,
+    milestones: [
+      { id: 'm3', name: 'Tile Installation', amount: 1800, status: 'approved' },
+      { id: 'm4', name: 'Final Inspection', amount: 2200, status: 'pending' },
+    ],
+  },
+];
+
 const initialState = {
-  projects: [],
+  projects: defaultProjects,
   currentProject: null,
   isLoading: false,
   error: null,
