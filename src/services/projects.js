@@ -121,15 +121,15 @@ export const withdrawApplication = (applicationId, projectId, contractorId) => a
 
 export const getProjectDetails = (projectId) => projectAPI.getProjectDetails(projectId);
 
-export const leaveProject = async (projectId, contractorId, dispatch) => {
-  if (!projectId || !contractorId) {
-    return { success: false, error: 'Missing projectId/contractorId' };
+export const leaveProject = async (projectId, payload, dispatch) => {
+  if (!projectId) {
+    return { success: false, error: 'Missing projectId' };
   }
   try {
-    await projectAPI.leaveProject(projectId, contractorId);
-    if (dispatch) {
-      dispatch(loadOpenProjects(contractorId));
-      dispatch(loadContractorProjects(contractorId));
+    await projectAPI.leaveProject(projectId, payload);
+    if (dispatch && payload?.contractorId) {
+      dispatch(loadOpenProjects(payload.contractorId));
+      dispatch(loadContractorProjects(payload.contractorId));
     }
     return { success: true };
   } catch (error) {

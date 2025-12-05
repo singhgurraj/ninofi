@@ -77,7 +77,15 @@ const WorkerProjectScreen = ({ route, navigation }) => {
         >
           <Text style={styles.primaryText}>People</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.leaveButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          style={styles.leaveButton}
+          onPress={async () => {
+            const res = await projectAPI.leaveProject(projectId, { workerId: user?.id });
+            if (res?.status === 200 || res?.data?.status === 'left') {
+              navigation.goBack();
+            }
+          }}
+        >
           <Text style={styles.leaveText}>Leave Project</Text>
         </TouchableOpacity>
         {loading && <Text style={styles.muted}>Loading…</Text>}

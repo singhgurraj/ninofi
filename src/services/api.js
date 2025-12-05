@@ -120,8 +120,7 @@ export const projectAPI = {
   deleteApplication: async (applicationId, contractorId) =>
     api.delete(`/applications/${applicationId}`, { data: contractorId ? { contractorId } : {} }),
   getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
-  leaveProject: async (projectId, contractorId) =>
-    api.post(`/projects/${projectId}/leave`, { contractorId }),
+  leaveProject: async (projectId, payload) => api.post(`/projects/${projectId}/leave`, payload),
   getProjectPersonnel: async (projectId, userId) =>
     api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
   addProjectPersonnel: async (projectId, payload) =>

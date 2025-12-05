@@ -3116,11 +3116,59 @@ app.post('/api/projects/:projectId/leave', async (req, res) => {
   const client = await pool.connect();
   try {
     const { projectId } = req.params;
-    const { contractorId } = req.body || {};
-    if (!isUuid(projectId) || !isUuid(contractorId)) {
-      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    const { contractorId, workerId } = req.body || {};
+    if (!isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
     }
     await assertDbReady();
+
+    if (workerId) {
+      if (!isUuid(workerId)) {
+        return res.status(400).json({ message: 'Invalid workerId' });
+      }
+      const project = await getProjectById(projectId);
+      if (!project) return res.status(404).json({ message: 'Project not found' });
+      const participants = await getProjectParticipants(projectId);
+      const personnelRow = await client.query(
+        'SELECT * FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+        [projectId, workerId]
+      );
+      if (!personnelRow.rows.length) {
+        return res.status(404).json({ message: 'Worker not found on project' });
+      }
+      await client.query('BEGIN');
+      await client.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id = $2', [
+        projectId,
+        workerId,
+      ]);
+      const notifyIds = [];
+      if (participants?.ownerId) notifyIds.push(participants.ownerId);
+      if (participants?.contractorId && participants.contractorId !== participants.ownerId) {
+        notifyIds.push(participants.contractorId);
+      }
+      for (const uid of notifyIds) {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await client.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            uid,
+            'Worker left project',
+            'A worker has left the project.',
+            JSON.stringify({ projectId, workerId, type: 'worker-left' }),
+          ]
+        );
+      }
+      await client.query('COMMIT');
+      return res.json({ status: 'left', projectId, workerId });
+    }
+
+    if (!contractorId || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    }
 
     const appResult = await client.query(
       `
