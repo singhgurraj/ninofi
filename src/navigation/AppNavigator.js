@@ -165,11 +165,6 @@ const MainAppStack = () => (
         options={{ title: 'My Gigs' }}
       />
       <MainStack.Screen
-        name="WorkerGigDetail"
-        component={WorkerGigDetailScreen}
-        options={{ title: 'Gig Details' }}
-      />
-      <MainStack.Screen
         name="WorkerProject"
         component={WorkerProjectScreen}
         options={{ title: 'Project' }}
