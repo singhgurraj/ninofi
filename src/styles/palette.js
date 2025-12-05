@@ -7,6 +7,10 @@ const palette = {
   text: '#1C1C1C',
   muted: '#6E6A7C',
   border: '#E2D4FF',
+  success: '#41C87A',
+  warning: '#F4A640',
+  error: '#E45858',
+  textSecondary: '#6E6A7C',
 };
 
 export default palette;

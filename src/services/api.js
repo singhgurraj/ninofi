@@ -1,23 +1,25 @@
 import Constants from 'expo-constants';
 import axios from 'axios';
 
+let authToken = null;
+
 const resolveBaseUrl = () => {
+  // Preferred: explicit env var for Railway/production
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  const host =
-    Constants.expoConfig?.hostUri?.split(':')[0] ||
-    Constants.manifest?.debuggerHost?.split(':')[0];
-
-  if (host) {
-    return `http://${host}:3001/api`;
+  // Optional: expo config extra
+  if (Constants.expoConfig?.extra?.apiUrl) {
+    return Constants.expoConfig.extra.apiUrl;
   }
 
-  return 'http://127.0.0.1:3001/api';
+  // Default to deployed API to avoid hitting LAN/localhost on device
+  return 'https://ninofi-production.up.railway.app/api';
 };
 
 const API_BASE_URL = resolveBaseUrl();
+console.log('[api] base URL', API_BASE_URL);
 
 // Create axios instance
 const api = axios.create({
@@ -31,11 +33,9 @@ const api = axios.create({
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    // Token will be added here once we have it
-    // const token = store.getState().auth.token;
-    // if (token) {
-    //   config.headers.Authorization = `Bearer ${token}`;
-    // }
+    if (authToken) {
+      config.headers.Authorization = `Bearer ${authToken}`;
+    }
     return config;
   },
   (error) => {
@@ -74,32 +74,99 @@ export const authAPI = {
   },
 };
 
+export const setAuthToken = (token) => {
+  authToken = token || null;
+};
+
 // Project API calls
 export const projectAPI = {
-  getProjects: async () => {
-    // return api.get('/projects');
+  getProjectsForUser: async (userId) => api.get(`/projects/user/${userId}`),
+  getProjectsForContractor: async (contractorId) =>
+    api.get(`/projects/contractor/${contractorId}`),
+  getOpenProjects: async (contractorId) =>
+    api.get('/projects/open', { params: contractorId ? { contractorId } : {} }),
+  createProject: async (projectData) => api.post('/projects', projectData),
+  updateProject: async (id, projectData) => api.put(`/projects/${id}`, projectData),
+  deleteProject: async (id) => api.delete(`/projects/${id}`),
+  deleteProjectForUser: async (id, userId) =>
+    api.delete(`/projects/${id}`, { data: userId ? { userId } : undefined }),
+  applyToProject: async (projectId, payload) =>
+    api.post(`/projects/${projectId}/apply`, payload),
+  decideApplication: async (applicationId, action, ownerId) => {
+    const url = `/applications/${applicationId}/${action}`;
+    console.log('[api] decideApplication ->', API_BASE_URL + url, { ownerId });
+    try {
+      const res = await api.post(url, ownerId ? { ownerId } : {});
+      console.log('[api] decideApplication success', res.status);
+      return res;
+    } catch (err) {
+      console.log('[api] decideApplication error', err?.response?.status, err?.message);
+      throw err;
+    }
+  },
+  decideApplicationByProject: async (payload) => {
+    console.log('[api] decideApplicationByProject ->', API_BASE_URL + '/applications/decide', payload);
+    try {
+      const res = await api.post('/applications/decide', payload);
+      console.log('[api] decideApplicationByProject success', res.status);
+      return res;
+    } catch (err) {
+      console.log('[api] decideApplicationByProject error', err?.response?.status, err?.message);
+      throw err;
+    }
+  },
+  getApplicationsForContractor: async (contractorId) =>
+    api.get(`/applications/contractor/${contractorId}`),
+  deleteApplication: async (applicationId, contractorId) =>
+    api.delete(`/applications/${applicationId}`, { data: contractorId ? { contractorId } : {} }),
+  getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
+  leaveProject: async (projectId, contractorId) =>
+    api.post(`/projects/${projectId}/leave`, { contractorId }),
+  getProjectPersonnel: async (projectId, userId) =>
+    api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
+  addProjectPersonnel: async (projectId, payload) =>
+    api.post(`/projects/${projectId}/personnel`, payload),
+  deleteProjectPersonnel: async (projectId, personId, payload) =>
+    api.delete(`/projects/${projectId}/personnel/${personId}`, { data: payload }),
+};
+
+export const messageAPI = {
+  list: async (projectId, userId) =>
+    api.get(`/projects/${projectId}/messages`, { params: { userId } }),
+  send: async (projectId, payload) => api.post(`/projects/${projectId}/messages`, payload),
+  update: async (projectId, messageId, payload) =>
+    api.put(`/projects/${projectId}/messages/${messageId}`, payload),
+  remove: async (projectId, messageId, payload) =>
+    api.delete(`/projects/${projectId}/messages/${messageId}`, { data: payload }),
+};
+
+// Invoice API calls (mocked for now)
+export const invoiceAPI = {
+  listInvoices: async () => {
+    // return api.get('/invoices');
     return Promise.resolve({ data: [] });
   },
-
-  getProjectById: async (id) => {
-    // return api.get(`/projects/${id}`);
-    return Promise.resolve({ data: {} });
+  saveInvoice: async (invoice) => {
+    // return api.post('/invoices', invoice);
+    return Promise.resolve({ data: invoice });
   },
-
-  createProject: async (projectData) => {
-    // return api.post('/projects', projectData);
-    return Promise.resolve({ data: projectData });
+  updateInvoice: async (invoice) => {
+    // return api.put(`/invoices/${invoice.id}`, invoice);
+    return Promise.resolve({ data: invoice });
   },
-
-  updateProject: async (id, projectData) => {
-    // return api.put(`/projects/${id}`, projectData);
-    return Promise.resolve({ data: projectData });
+  uploadFile: async (fileUri) => {
+    // return api.post('/uploads', { fileUri });
+    return Promise.resolve({
+      data: {
+        fileUri,
+        thumbnailUri: fileUri,
+      },
+    });
   },
+};
 
-  deleteProject: async (id) => {
-    // return api.delete(`/projects/${id}`);
-    return Promise.resolve({ data: { id } });
-  },
+export const userAPI = {
+  listWorkers: async () => api.get('/users/worker'),
 };
 
 export default api;

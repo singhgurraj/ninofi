@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -7,16 +7,42 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
+import { loadProjectsForUser } from '../../services/projects';
+import { loadNotifications } from '../../services/notifications';
 
 const HomeownerDashboard = ({ navigation }) => {
+  const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
-  const { projects } = useSelector((state) => state.projects);
+  const { projects, isLoading } = useSelector((state) => state.projects);
+  const { items: notifications } = useSelector((state) => state.notifications);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const fetchProjects = useCallback(() => {
+    if (user?.id) {
+      dispatch(loadProjectsForUser(user.id));
+      dispatch(loadNotifications(user.id));
+    }
+  }, [dispatch, user?.id]);
+
+  useEffect(() => {
+    fetchProjects();
+  }, [fetchProjects]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchProjects();
+    }, [fetchProjects])
+  );
 
   const stats = {
     activeProjects: projects?.length || 0,
-    inEscrow: projects?.reduce((sum, project) => sum + (project.budget || 0), 0),
+    inEscrow: projects?.reduce(
+      (sum, project) => sum + (project.estimatedBudget || 0),
+      0
+    ),
   };
 
   return (
@@ -29,8 +55,18 @@ const HomeownerDashboard = ({ navigation }) => {
             <Text style={styles.role}>Homeowner</Text>
           </View>
           <View style={styles.headerButtons}>
-            <TouchableOpacity style={styles.notificationButton}>
+            <TouchableOpacity
+              style={styles.notificationButton}
+              onPress={() => navigation.navigate('Notifications')}
+            >
               <Text style={styles.notificationIcon}>🔔</Text>
+              {unreadCount > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -76,45 +112,64 @@ const HomeownerDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Active Projects</Text>
-            <TouchableOpacity onPress={() => console.log('View All - Coming soon')}>
+            <TouchableOpacity onPress={() => navigation.navigate('ProjectsList')}>
               <Text style={styles.viewAll}>View All</Text>
             </TouchableOpacity>
           </View>
 
-          {projects?.map((project) => (
+          {isLoading && (
+            <Text style={styles.loadingText}>Loading projects…</Text>
+          )}
+
+          {!isLoading && (!projects || projects.length === 0) && (
+            <Text style={styles.mutedText}>No projects yet. Create one to get started.</Text>
+          )}
+
+          {projects?.map((project) => {
+            const progress =
+              project.milestones && project.milestones.length
+                ? Math.round(
+                    (project.milestones.filter((m) => m.status === 'completed').length /
+                      project.milestones.length) *
+                      100
+                  )
+                : 0;
+
+            return (
             <TouchableOpacity 
               key={project.id}
               style={styles.projectCard}
-              onPress={() => navigation.navigate('ProjectDetails', { project })}
+              onPress={() =>
+                navigation.navigate('ProjectOverview', { project, role: 'homeowner' })
+              }
             >
               <View style={styles.projectHeader}>
                 <Text style={styles.projectTitle}>{project.title}</Text>
-                <Text style={styles.projectStatus}>{project.status}</Text>
+                <Text style={styles.projectStatus}>{project.projectType || 'Project'}</Text>
               </View>
               
-              <Text style={styles.projectContractor}>
-                With {project.contractor}
-              </Text>
-              
+             
               <View style={styles.progressContainer}>
                 <Text style={styles.progressLabel}>Progress</Text>
-                <Text style={styles.progressValue}>{project.progress}%</Text>
+                <Text style={styles.progressValue}>{progress}%</Text>
               </View>
               <View style={styles.progressBar}>
                 <View 
                   style={[
                     styles.progressFill, 
-                    { width: `${project.progress}%` }
+                    { width: `${progress}%` }
                   ]} 
                 />
               </View>
               
               <View style={styles.projectFooter}>
-                <Text style={styles.budget}>Budget: ${project.budget}</Text>
-                <Text style={styles.viewDetails}>View Details →</Text>
+                <Text style={styles.budget}>
+                  Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
+                </Text>
               </View>
             </TouchableOpacity>
-          ))}
+          );
+          })}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -156,9 +211,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1EAFF',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   notificationIcon: {
     fontSize: 20,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   statsContainer: {
     flexDirection: 'row',
@@ -280,6 +353,15 @@ const styles = StyleSheet.create({
     color: palette.muted,
     marginBottom: 15,
   },
+  assigned: {
+    color: palette.primary,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  assignedPending: {
+    color: palette.muted,
+    marginBottom: 10,
+  },
   progressContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -308,6 +390,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  loadingText: {
+    color: palette.muted,
+    marginBottom: 12,
+  },
+  mutedText: {
+    color: palette.muted,
   },
   budget: {
     fontSize: 14,

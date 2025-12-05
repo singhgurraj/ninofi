@@ -28,6 +28,13 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "We need access to your photos to attach drawings and inspiration to projects.",
+          "cameraPermission": "We need camera access to take photos for your project attachments."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",

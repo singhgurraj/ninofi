@@ -49,12 +49,13 @@ const RoleSelectionScreen = ({ navigation }) => {
         >
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
+        <View style={styles.headerCopy}>
+          <Text style={styles.title}>Choose Your Role</Text>
+          <Text style={styles.subtitle}>
+            Select how you'll be using Ninofi to get started
+          </Text>
+        </View>
       </View>
-
-      <Text style={styles.title}>Choose Your Role</Text>
-      <Text style={styles.subtitle}>
-        Select how you'll be using NINOFI to get started
-      </Text>
 
       <View style={styles.cardStack}>
       {roles.map((role) => (
@@ -96,14 +97,27 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
     backgroundColor: palette.background,
+    paddingTop: 60,
   },
   header: {
-    marginBottom: 10,
+    marginTop: 0,
+    marginBottom: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    minHeight: 48,
   },
   backButton: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
     width: 40,
     height: 40,
     justifyContent: 'center',
+  },
+  headerCopy: {
+    width: '100%',
+    paddingTop: 60,
   },
   backText: {
     fontSize: 24,
@@ -112,18 +126,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
+    marginBottom: 15,
+    textAlign: 'left',
     color: palette.text,
   },
   subtitle: {
     fontSize: 16,
     color: palette.muted,
-    marginBottom: 30,
     textAlign: 'center',
   },
   cardStack: {
-    marginTop: 20,
+    marginTop: 14,
   },
   roleCard: {
     backgroundColor: palette.surface,
@@ -165,7 +178,7 @@ const styles = StyleSheet.create({
     marginRight: 15,
   },
   loginButton: {
-    marginTop: 20,
+    marginTop: 30,
     padding: 15,
     alignItems: 'center',
   },

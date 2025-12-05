@@ -8,13 +8,14 @@ import {
   registerSuccess,
 } from '../store/authSlice';
 import { clearProjects } from '../store/projectSlice';
-import { authAPI } from './api';
+import { authAPI, setAuthToken } from './api';
 
 export const login = (email, password) => async (dispatch) => {
   try {
     dispatch(loginStart());
     const response = await authAPI.login(email, password);
     dispatch(loginSuccess(response.data));
+    setAuthToken(response.data?.token);
     return { success: true };
   } catch (error) {
     const errorMessage = error.response?.data?.message || 'Login failed';
@@ -28,6 +29,7 @@ export const register = (userData) => async (dispatch) => {
     dispatch(registerStart());
     const response = await authAPI.register(userData);
     dispatch(registerSuccess(response.data));
+    setAuthToken(response.data?.token);
     return { success: true };
   } catch (error) {
     const errorMessage = error.response?.data?.message || 'Registration failed';
@@ -41,11 +43,13 @@ export const logout = () => async (dispatch) => {
     await authAPI.logout();
     dispatch(clearProjects());
     dispatch(logoutAction());
+    setAuthToken(null);
     return { success: true };
   } catch (error) {
     console.error('Logout error:', error);
     dispatch(clearProjects());
     dispatch(logoutAction()); // Logout locally even if API call fails
+    setAuthToken(null);
     return { success: true };
   }
 };

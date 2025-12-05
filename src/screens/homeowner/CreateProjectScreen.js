@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -10,24 +10,48 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Image,
 } from 'react-native';
-import { useDispatch } from 'react-redux';
-import { addProject } from '../../store/projectSlice';
+import { useDispatch, useSelector } from 'react-redux';
+import * as ImagePicker from 'expo-image-picker';
+import { saveProject, removeProject } from '../../services/projects';
 
-const CreateProjectScreen = ({ navigation }) => {
+const CreateProjectScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
+  const { user } = useSelector((state) => state.auth);
+  const existingProject = route?.params?.project;
+  const origin = route?.params?.origin || null;
+
   const [step, setStep] = useState(1);
-  const [projectType, setProjectType] = useState('');
+  const [projectType, setProjectType] = useState(existingProject?.projectType || '');
   const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    budget: '',
-    timeline: '',
-    address: '',
+    title: existingProject?.title || '',
+    description: existingProject?.description || '',
+    estimatedBudget: existingProject?.estimatedBudget?.toString() || '',
+    timeline: existingProject?.timeline || '',
+    address: existingProject?.address || '',
   });
   const [milestones, setMilestones] = useState([
-    { name: '', amount: '', description: '' }
+    ...(existingProject?.milestones?.length
+      ? existingProject.milestones.map((m, idx) => ({
+          name: m.name || '',
+          amount: m.amount?.toString?.() || '',
+          description: m.description || '',
+          position: idx,
+        }))
+      : [{ name: '', amount: '', description: '' }]),
   ]);
+  const [attachments, setAttachments] = useState(
+    existingProject?.media?.length
+      ? existingProject.media.map((m) => ({
+          url: m.url || '',
+          label: m.label || '',
+          localUri: '',
+          dataUri: '',
+        }))
+      : [{ url: '', label: '', localUri: '', dataUri: '' }]
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const projectTypes = [
     { id: 'kitchen', label: 'Kitchen', icon: '🍳' },
@@ -56,9 +80,25 @@ const CreateProjectScreen = ({ navigation }) => {
     setMilestones(updated);
   };
 
+  const addAttachment = () => {
+    setAttachments((prev) => [...prev, { url: '', label: '' }]);
+  };
+
+  const updateAttachment = (index, field, value) => {
+    setAttachments((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const removeAttachment = (index) => {
+    setAttachments((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  };
+
   const handleContinue = () => {
     if (step === 1) {
-      if (!formData.title || !projectType || !formData.description || !formData.budget) {
+      if (!formData.title || !projectType || !formData.description || !formData.estimatedBudget) {
         Alert.alert('Required', 'Please fill in all required fields');
         return;
       }
@@ -74,8 +114,54 @@ const CreateProjectScreen = ({ navigation }) => {
     }
   };
 
-  const handleSubmit = () => {
-    const budgetValue = parseFloat(formData.budget);
+  useEffect(() => {
+    if (existingProject) {
+      setStep(3);
+    }
+  }, [existingProject]);
+
+  const pickAttachment = async (index) => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Permission required', 'Please grant photo access to attach images.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        base64: true,
+        quality: 0.7,
+      });
+
+      if (result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset) return;
+
+      const dataUri = asset.base64 ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}` : '';
+      setAttachments((prev) => {
+        const next = [...prev];
+        next[index] = {
+          ...next[index],
+          localUri: asset.uri || '',
+          dataUri: dataUri || '',
+          url: dataUri || asset.uri || next[index].url,
+        };
+        return next;
+      });
+    } catch (err) {
+      console.error('Image pick error', err);
+      Alert.alert('Error', 'Could not open photo library.');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!user?.id) {
+      Alert.alert('Not signed in', 'Please log in again.');
+      return;
+    }
+
+    const budgetValue = parseFloat(formData.estimatedBudget);
     const totalMilestones = milestones.reduce((sum, m) => sum + (parseFloat(m.amount) || 0), 0);
 
     if (Number.isNaN(budgetValue)) {
@@ -88,28 +174,48 @@ const CreateProjectScreen = ({ navigation }) => {
       return;
     }
 
-    const projectData = {
-      id: Date.now().toString(),
+    const projectPayload = {
+      id: existingProject?.id,
+      userId: user.id,
       title: formData.title.trim(),
-      contractor: 'Pending Contractor Match',
-      status: 'Draft',
-      progress: 0,
-      budget: budgetValue,
+      projectType,
+      description: formData.description,
+      estimatedBudget: budgetValue,
       timeline: formData.timeline,
       address: formData.address,
-      projectType,
       milestones: milestones.map((milestone, index) => ({
-        ...milestone,
-        id: `${Date.now()}-${index}`,
-        amount: parseFloat(milestone.amount) || 0,
+        name: milestone.name,
+        amount: parseFloat(milestone.amount) || null,
+        description: milestone.description,
+        position: milestone.position ?? index,
       })),
+      media: attachments
+        .filter((a) => a.url)
+        .map((a) => ({
+          url: a.url,
+          label: a.label || '',
+        })),
     };
 
-    dispatch(addProject(projectData));
-
-    Alert.alert('Success', 'Project created! Now fund it to get started.', [
-      { text: 'OK', onPress: () => navigation.navigate('Dashboard') }
-    ]);
+    try {
+      setIsSubmitting(true);
+      const result = await dispatch(saveProject(projectPayload));
+      if (result?.success) {
+        Alert.alert('Success', `Project ${existingProject ? 'updated' : 'created'}!`, [
+          {
+            text: 'OK',
+            onPress: () =>
+              navigation.navigate(origin === 'ProjectsList' ? 'ProjectsList' : 'Dashboard'),
+          },
+        ]);
+      } else {
+        Alert.alert('Error', result?.error || 'Failed to save project');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save project');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const renderStep1 = () => (
@@ -161,8 +267,8 @@ const CreateProjectScreen = ({ navigation }) => {
         style={styles.input}
         placeholder="Enter amount in USD"
         keyboardType="numeric"
-        value={formData.budget}
-        onChangeText={(value) => updateField('budget', value)}
+        value={formData.estimatedBudget}
+        onChangeText={(value) => updateField('estimatedBudget', value)}
       />
     </View>
   );
@@ -240,15 +346,67 @@ const CreateProjectScreen = ({ navigation }) => {
           <Text style={styles.addButtonText}>+ Add Milestone</Text>
         </TouchableOpacity>
 
-        {formData.budget && (
+        {formData.estimatedBudget && (
           <View style={styles.totalContainer}>
             <Text style={styles.totalLabel}>Total Milestones: ${totalAmount}</Text>
-            <Text style={styles.budgetLabel}>Project Budget: ${formData.budget}</Text>
-            {totalAmount > parseFloat(formData.budget) && (
+            <Text style={styles.budgetLabel}>Project Budget: ${formData.estimatedBudget}</Text>
+            {totalAmount > parseFloat(formData.estimatedBudget) && (
               <Text style={styles.warningText}>⚠️ Total exceeds budget</Text>
             )}
           </View>
         )}
+
+        <View style={styles.attachmentsHeader}>
+          <Text style={styles.stepTitle}>Inspiration / Drawings</Text>
+          <Text style={styles.stepSubtitle}>
+            Add URLs to architectural drawings or inspiration images
+          </Text>
+        </View>
+
+        {attachments.map((attachment, index) => (
+          <View key={`att-${index}`} style={styles.milestoneCard}>
+            <View style={styles.milestoneHeader}>
+              <Text style={styles.milestoneTitle}>Attachment {index + 1}</Text>
+              {attachments.length > 1 && (
+                <TouchableOpacity onPress={() => removeAttachment(index)}>
+                  <Text style={styles.removeButton}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.pickButton}
+              onPress={() => pickAttachment(index)}
+            >
+              <Text style={styles.pickButtonText}>
+                {attachment.localUri || attachment.url ? 'Change Image' : 'Pick from Library'}
+              </Text>
+            </TouchableOpacity>
+            {(attachment.localUri || attachment.url) ? (
+              <Image
+                source={{ uri: attachment.localUri || attachment.url }}
+                style={styles.preview}
+              />
+            ) : null}
+            <TextInput
+              style={styles.input}
+              placeholder="Image or drawing URL"
+              value={attachment.url}
+              onChangeText={(value) => updateAttachment(index, 'url', value)}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Label (optional)"
+              value={attachment.label}
+              onChangeText={(value) => updateAttachment(index, 'label', value)}
+            />
+          </View>
+        ))}
+
+        <TouchableOpacity style={styles.addButton} onPress={addAttachment}>
+          <Text style={styles.addButtonText}>+ Add Attachment</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -268,7 +426,9 @@ const CreateProjectScreen = ({ navigation }) => {
             >
               <Text style={styles.backText}>←</Text>
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Create New Project</Text>
+            <Text style={styles.headerTitle}>
+              {existingProject ? 'Edit Project' : 'Create New Project'}
+            </Text>
             <View style={styles.placeholder} />
           </View>
 
@@ -301,10 +461,45 @@ const CreateProjectScreen = ({ navigation }) => {
               onPress={handleContinue}
             >
               <Text style={styles.primaryButtonText}>
-                {step === 3 ? 'Create Project' : 'Continue'}
+                {step === 3 ? (existingProject ? 'Submit Changes' : 'Create Project') : 'Continue'}
               </Text>
             </TouchableOpacity>
           </View>
+
+          {existingProject && (
+            <View style={styles.deleteContainer}>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() =>
+                  Alert.alert(
+                    'Delete Project',
+                    'Are you sure you want to delete this project?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: async () => {
+                          const result = await dispatch(
+                            removeProject(existingProject.id, user?.id)
+                          );
+                          if (result?.success) {
+                            navigation.navigate(
+                              origin === 'ProjectsList' ? 'ProjectsList' : 'Dashboard'
+                            );
+                          } else {
+                            Alert.alert('Error', result?.error || 'Failed to delete project');
+                          }
+                        },
+                      },
+                    ]
+                  )
+                }
+              >
+                <Text style={styles.deleteButtonText}>Delete Project</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -476,6 +671,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 5,
   },
+  attachmentsHeader: {
+    marginTop: 10,
+    marginBottom: 8,
+  },
   buttonContainer: {
     flexDirection: 'row',
     padding: 20,
@@ -509,6 +708,21 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     flex: 1,
+  },
+  deleteContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+  },
+  deleteButton: {
+    marginTop: 10,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    color: '#B91C1C',
+    fontWeight: '700',
   },
 });
 

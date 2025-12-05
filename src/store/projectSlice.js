@@ -32,6 +32,13 @@ const initialState = {
   currentProject: null,
   isLoading: false,
   error: null,
+  openProjects: [],
+  isLoadingOpen: false,
+  openError: null,
+  appliedProjectIds: [],
+  contractorProjects: [],
+  isLoadingContractor: false,
+  contractorError: null,
 };
 
 const projectSlice = createSlice({
@@ -68,6 +75,43 @@ const projectSlice = createSlice({
     clearProjects: (state) => {
       state.projects = [];
       state.currentProject = null;
+      state.appliedProjectIds = [];
+      state.openProjects = [];
+    },
+    fetchOpenProjectsStart: (state) => {
+      state.isLoadingOpen = true;
+      state.openError = null;
+    },
+    fetchOpenProjectsSuccess: (state, action) => {
+      state.isLoadingOpen = false;
+      state.openProjects = action.payload;
+    },
+    fetchOpenProjectsFailure: (state, action) => {
+      state.isLoadingOpen = false;
+      state.openError = action.payload;
+    },
+    applyForProject: (state, action) => {
+      const projectId = action.payload;
+      if (projectId && !state.appliedProjectIds.includes(projectId)) {
+        state.appliedProjectIds.push(projectId);
+        state.openProjects = state.openProjects.filter((p) => p.id !== projectId);
+      }
+    },
+    withdrawApplicationLocal: (state, action) => {
+      const projectId = action.payload;
+      state.appliedProjectIds = state.appliedProjectIds.filter((x) => x !== projectId);
+    },
+    fetchContractorProjectsStart: (state) => {
+      state.isLoadingContractor = true;
+      state.contractorError = null;
+    },
+    fetchContractorProjectsSuccess: (state, action) => {
+      state.isLoadingContractor = false;
+      state.contractorProjects = action.payload;
+    },
+    fetchContractorProjectsFailure: (state, action) => {
+      state.isLoadingContractor = false;
+      state.contractorError = action.payload;
     },
   },
 });
@@ -81,6 +125,14 @@ export const {
   updateProject,
   deleteProject,
   clearProjects,
+  fetchOpenProjectsStart,
+  fetchOpenProjectsSuccess,
+  fetchOpenProjectsFailure,
+  applyForProject,
+  withdrawApplicationLocal,
+  fetchContractorProjectsStart,
+  fetchContractorProjectsSuccess,
+  fetchContractorProjectsFailure,
 } = projectSlice.actions;
 
 export default projectSlice.reducer;
