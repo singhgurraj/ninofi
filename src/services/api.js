@@ -135,8 +135,12 @@ export const projectAPI = {
   getContract: async (contractId) => api.get(`/contracts/${contractId}`),
   signContract: async (contractId, payload) => api.post(`/contracts/${contractId}/sign`, payload),
   postWorkGig: async (projectId, payload) => api.post(`/projects/${projectId}/gigs`, payload),
-  listOpenGigs: async () => api.get('/gigs/open'),
+  listOpenGigs: async (workerId) =>
+    api.get('/gigs/open', { params: workerId ? { workerId } : {} }),
   applyToGig: async (gigId, payload) => api.post(`/gigs/${gigId}/apply`, payload),
+  listGigApplications: async (workerId) => api.get('/gigs/applications', { params: { workerId } }),
+  withdrawGigApplication: async (applicationId, payload) =>
+    api.delete(`/gigs/applications/${applicationId}`, { data: payload }),
   savePortfolio: async (payload) => api.post('/portfolio', payload),
   getPortfolio: async (contractorId) => api.get(`/contractors/${contractorId}/portfolio`),
   addPortfolioMedia: async (portfolioId, media) =>

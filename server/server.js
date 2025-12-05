@@ -2491,6 +2491,20 @@ app.post('/api/gigs/:gigId/apply', async (req, res) => {
 // Worker-facing gigs list
 app.get('/api/gigs/open', async (_req, res) => {
   try {
+    const workerId = _req.query?.workerId;
+    const params = [];
+    let extraFilter = '';
+    if (workerId && isUuid(workerId)) {
+      params.push(workerId);
+      extraFilter = `
+        AND NOT EXISTS (
+          SELECT 1 FROM project_applications pa2
+          WHERE pa2.worker_post_id = pa.id
+            AND pa2.contractor_id = $1
+            AND pa2.status IN ('pending','accepted')
+        )
+      `;
+    }
     await assertDbReady();
     const result = await pool.query(
       `
@@ -2503,13 +2517,71 @@ app.get('/api/gigs/open', async (_req, res) => {
             SELECT 1 FROM project_applications pa2
             WHERE pa2.worker_post_id = pa.id AND pa2.status = 'accepted'
           )
+          ${extraFilter}
         ORDER BY pa.created_at DESC
-      `
+      `,
+      params
     );
     return res.json(result.rows);
   } catch (error) {
     console.error('gigs:list:error', error);
     const message = pool ? 'Failed to load gigs' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Worker gig applications list
+app.get('/api/gigs/applications', async (req, res) => {
+  try {
+    const { workerId } = req.query || {};
+    if (!workerId || !isUuid(workerId)) {
+      return res.status(400).json({ message: 'workerId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT pa.*, p.title AS project_title
+        FROM project_applications pa
+        JOIN projects p ON p.id = pa.project_id
+        WHERE pa.contractor_id = $1
+          AND pa.worker_post_id IS NOT NULL
+        ORDER BY pa.created_at DESC
+      `,
+      [workerId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('gigs:applications:list:error', error);
+    const message = pool ? 'Failed to load applications' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Worker withdraws gig application
+app.delete('/api/gigs/applications/:applicationId', async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { workerId } = req.body || {};
+    if (!isUuid(applicationId) || !isUuid(workerId)) {
+      return res.status(400).json({ message: 'applicationId and workerId are required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        UPDATE project_applications
+        SET status = 'withdrawn'
+        WHERE id::text = $1 AND contractor_id = $2 AND worker_post_id IS NOT NULL AND status = 'pending'
+        RETURNING *
+      `,
+      [applicationId, workerId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Application not found or not withdrawable' });
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('gigs:applications:withdraw:error', error);
+    const message = pool ? 'Failed to withdraw application' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
 });

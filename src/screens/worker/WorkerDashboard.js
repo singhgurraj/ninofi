@@ -93,7 +93,7 @@ const WorkerDashboard = ({ navigation }) => {
           <View style={styles.quickActions}>
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => console.log('Browse Gigs - Coming soon')}
+              onPress={() => navigation.navigate('BrowseGigs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
               <Text style={styles.actionText}>Browse Gigs</Text>
@@ -105,6 +105,13 @@ const WorkerDashboard = ({ navigation }) => {
             >
               <Text style={styles.actionIcon}>📋</Text>
               <Text style={styles.actionText}>My Gigs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('WorkerGigApplications')}
+            >
+              <Text style={styles.actionIcon}>✅</Text>
+              <Text style={styles.actionText}>My Applications</Text>
             </TouchableOpacity>
 
             <TouchableOpacity

@@ -34,6 +34,8 @@ import NotificationDetailScreen from '../screens/shared/NotificationDetailScreen
 import ApplicationsScreen from '../screens/contractor/ApplicationsScreen';
 import WorkerGigsScreen from '../screens/worker/WorkerGigsScreen';
 import WorkerProjectScreen from '../screens/worker/WorkerProjectScreen';
+import BrowseGigsScreen from '../screens/worker/BrowseGigsScreen';
+import WorkerGigApplicationsScreen from '../screens/worker/WorkerGigApplicationsScreen';
 import ChatScreen from '../screens/shared/ChatScreen';
 import ProjectOverviewScreen from '../screens/shared/ProjectOverviewScreen';
 import ProjectPersonnelScreen from '../screens/shared/ProjectPersonnelScreen';
@@ -53,6 +55,7 @@ import ContractorSearchScreen from '../screens/homeowner/ContractorSearchScreen'
 import ContractorProfileScreen from '../screens/homeowner/ContractorProfileScreen';
 import AssignWorkScreen from '../screens/contractor/AssignWorkScreen';
 import PostWorkScreen from '../screens/contractor/PostWorkScreen';
+import BrowseGigsScreen from '../screens/worker/BrowseGigsScreen';
 import { setAuthToken } from '../services/api';
 
 const RootStack = createStackNavigator();
@@ -164,6 +167,16 @@ const MainAppStack = () => (
         name="WorkerGigs"
         component={WorkerGigsScreen}
         options={{ title: 'My Gigs' }}
+      />
+      <MainStack.Screen
+        name="BrowseGigs"
+        component={BrowseGigsScreen}
+        options={{ title: 'Browse Gigs' }}
+      />
+      <MainStack.Screen
+        name="WorkerGigApplications"
+        component={WorkerGigApplicationsScreen}
+        options={{ title: 'My Applications' }}
       />
       <MainStack.Screen
         name="WorkerProject"
