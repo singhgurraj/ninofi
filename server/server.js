@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const PDFDocument = require('pdfkit');
 require('dotenv').config();
 const asyncHandler = require('./utils/asyncHandler');
 const { ensureUuid } = require('./utils/validation');
@@ -367,6 +368,8 @@ const initDb = async () => {
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS contracts_project_id_idx ON contracts (project_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS contracts_created_by_idx ON contracts (created_by)');
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS pdf_url TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_signatures (
@@ -415,6 +418,119 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS project_messages_sender_idx ON project_messages (sender_id)'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS portfolios (
+      id UUID PRIMARY KEY,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT,
+      bio TEXT,
+      specialties TEXT[],
+      hourly_rate NUMERIC,
+      service_area TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS portfolios_contractor_id_idx ON portfolios (contractor_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS portfolio_media (
+      id UUID PRIMARY KEY,
+      portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+      type TEXT,
+      url TEXT NOT NULL,
+      caption TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS portfolio_media_portfolio_idx ON portfolio_media (portfolio_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id UUID PRIMARY KEY,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      project_id UUID,
+      reviewer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      rating_overall INTEGER,
+      rating_quality INTEGER,
+      rating_timeliness INTEGER,
+      rating_communication INTEGER,
+      rating_budget INTEGER,
+      comment TEXT,
+      photos JSONB DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending',
+      response_text TEXT,
+      response_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS reviews_contractor_idx ON reviews (contractor_id, created_at DESC)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id UUID PRIMARY KEY,
+      actor_id UUID,
+      actor_role TEXT,
+      action TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS audit_actor_idx ON audit_logs (actor_id, created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS audit_entity_idx ON audit_logs (entity_type, entity_id, created_at DESC)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS compliance_documents (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      url TEXT NOT NULL,
+      expires_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS compliance_user_idx ON compliance_documents (user_id, status, expires_at)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS disputes (
+      id UUID PRIMARY KEY,
+      project_id UUID,
+      milestone_id UUID,
+      raised_by UUID,
+      against_user_id UUID,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      priority TEXT,
+      resolution_notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS disputes_status_idx ON disputes (status, priority)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS flags (
+      id UUID PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      moderator_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS feature_flags (
@@ -854,6 +970,8 @@ const mapContractRow = (row = {}, signatures = []) => ({
   terms: row.terms || '',
   status: row.status || 'pending',
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  version: typeof row.version === 'number' ? row.version : row.version ? Number(row.version) : 1,
+  pdfUrl: row.pdf_url || '',
   signatureCount: Number(row.signature_count ?? row.signatures_count ?? signatures.length ?? 0),
   signatures,
 });
@@ -873,6 +991,60 @@ const mapSignatureRow = (row = {}) => ({
         role: row.user_role,
       }
     : undefined,
+});
+
+const mapPortfolioRow = (row = {}, media = []) => ({
+  id: row.id,
+  contractorId: row.contractor_id,
+  title: row.title || '',
+  bio: row.bio || '',
+  specialties: row.specialties || [],
+  hourlyRate:
+    row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : null,
+  serviceArea: row.service_area || '',
+  media,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapReviewRow = (row = {}) => ({
+  id: row.id,
+  contractorId: row.contractor_id,
+  projectId: row.project_id,
+  reviewerId: row.reviewer_id,
+  ratingOverall: row.rating_overall,
+  ratingQuality: row.rating_quality,
+  ratingTimeliness: row.rating_timeliness,
+  ratingCommunication: row.rating_communication,
+  ratingBudget: row.rating_budget,
+  comment: row.comment || '',
+  photos: Array.isArray(row.photos) ? row.photos : [],
+  status: row.status,
+  responseText: row.response_text || '',
+  responseAt: row.response_at,
+  createdAt: row.created_at,
+});
+
+const mapAuditRow = (row = {}) => ({
+  id: row.id,
+  actorId: row.actor_id,
+  actorRole: row.actor_role,
+  action: row.action,
+  entityType: row.entity_type,
+  entityId: row.entity_id,
+  metadata: row.metadata || {},
+  createdAt: row.created_at,
+});
+
+const mapComplianceRow = (row = {}) => ({
+  id: row.id,
+  userId: row.user_id,
+  type: row.type,
+  url: row.url,
+  expiresAt: row.expires_at,
+  status: row.status || 'active',
+  notes: row.notes || '',
+  createdAt: row.created_at,
 });
 
 const fetchContractWithProject = async (contractId) => {
@@ -981,6 +1153,24 @@ const escapeAttribute = (value = '') =>
 
 const isDataUri = (value = '') => /^data:/i.test(value);
 
+const sanitizeFileName = (value = '') => value.replace(/[^\w.-]/g, '_');
+
+const inferExtension = (fileName = '', mimeType = '') => {
+  const ext = path.extname(fileName || '').replace('.', '');
+  if (ext) return ext;
+  if (mimeType && mimeType.includes('/')) {
+    return mimeType.split('/')[1] || 'bin';
+  }
+  return 'bin';
+};
+
+const extractBase64Payload = (raw = '') => {
+  if (!raw) return '';
+  if (!isDataUri(raw)) return raw;
+  const [, data] = raw.split(',');
+  return data || '';
+};
+
 const persistMedia = async (projectId, mediaItems = []) => {
   const saved = [];
   for (const item of mediaItems) {
@@ -1007,6 +1197,127 @@ const persistMedia = async (projectId, mediaItems = []) => {
     }
   }
   return saved;
+};
+
+const persistPortfolioMedia = async (portfolioId, mediaItems = []) => {
+  const saved = [];
+  for (const item of mediaItems) {
+    if (!item.url) continue;
+    if (!isDataUri(item.url)) {
+      saved.push({ url: item.url, caption: item.caption || '', type: item.type || 'general' });
+      continue;
+    }
+    try {
+      const [meta, base64Data] = item.url.split(',');
+      const mimeMatch = /data:(.*?);base64/.exec(meta || '');
+      const mimeType = mimeMatch?.[1] || 'image/jpeg';
+      const extension = mimeType.split('/')[1] || 'jpg';
+      const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
+      const dir = path.join(UPLOAD_DIR, 'portfolio', portfolioId);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const filePath = path.join(dir, filename);
+      await fs.promises.writeFile(filePath, base64Data || '', 'base64');
+      const relativePath = path.relative(__dirname, filePath);
+      saved.push({ url: `/${relativePath}`, caption: item.caption || '', type: item.type || 'general' });
+    } catch (err) {
+      console.error('Error saving portfolio media:', err);
+    }
+  }
+  return saved;
+};
+
+const persistComplianceFile = async (userId, type, fileName, mimeType, base64Data) => {
+  const extension = inferExtension(fileName, mimeType);
+  const safeName = sanitizeFileName(fileName || `${type}-${Date.now()}.${extension}`);
+  const finalName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
+  const dir = path.join(UPLOAD_DIR, 'compliance', userId || 'misc');
+  await fs.promises.mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, finalName);
+  await fs.promises.writeFile(filePath, extractBase64Payload(base64Data || ''), 'base64');
+  const relativePath = path.relative(__dirname, filePath);
+  return { url: `/${relativePath}`, fileName: safeName, mimeType: mimeType || 'application/octet-stream' };
+};
+
+const generateContractPdf = async ({ contract, project, signatures = [] }) => {
+  if (!contract?.id) return null;
+  const dir = path.join(UPLOAD_DIR, 'contracts', contract.id);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const filename = `${contract.id}-v${contract.version || 1}.pdf`;
+  const filePath = path.join(dir, filename);
+
+  const doc = new PDFDocument({ margin: 50 });
+  const stream = fs.createWriteStream(filePath);
+  doc.pipe(stream);
+
+  doc.fontSize(20).text(contract.title || 'Contract', { align: 'center' }).moveDown(1);
+  doc.fontSize(12).text(`Project: ${project?.title || ''}`);
+  doc.text(`Address: ${project?.address || ''}`);
+  doc.text(`Timeline: ${project?.timeline || ''}`);
+  doc.text(`Budget: $${Number(project?.estimated_budget || 0).toLocaleString()}`);
+  doc.moveDown();
+  doc.fontSize(14).text('Terms & Deliverables', { underline: true }).moveDown(0.5);
+  doc.fontSize(12).text(contract.terms || '', { align: 'left' });
+  doc.moveDown();
+  doc.fontSize(14).text('Signatures', { underline: true }).moveDown(0.5);
+  signatures.forEach((sig, idx) => {
+    doc.fontSize(12).text(
+      `${idx + 1}. ${sig.user?.fullName || sig.userId} (${sig.user?.role || ''}) at ${
+        sig.signedAt || ''
+      }`
+    );
+  });
+
+  doc.end();
+
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+
+  const relativePath = path.relative(__dirname, filePath);
+  return {
+    pdfUrl: `/${relativePath}`,
+    fileName: filename,
+    mimeType: 'application/pdf',
+  };
+};
+
+const appendAudit = async ({
+  actorId = null,
+  actorRole = null,
+  action = '',
+  entityType = null,
+  entityId = null,
+  metadata = {},
+}) => {
+  if (!action) return;
+  if (!pool) return;
+  try {
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, metadata)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `,
+      [id, actorId, actorRole, action, entityType, entityId, metadata ? metadata : {}]
+    );
+  } catch (err) {
+    console.error('appendAudit error', err);
+  }
+};
+
+const isAdminRequest = (req) => {
+  const key = req.headers['x-admin-key'] || req.body?.adminKey || req.query?.adminKey;
+  if (process.env.ADMIN_KEY && key && key === process.env.ADMIN_KEY) return true;
+  return false;
+};
+
+const requireAdmin = (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(403).json({ message: 'Admin access required' });
+    return false;
+  }
+  return true;
 };
 
 app.get('/', (req, res) => {
@@ -3316,9 +3627,25 @@ app.post('/api/contracts', async (req, res) => {
       [contractId, projectId, createdBy, title.trim(), terms]
     );
 
+    const pdfMeta = await generateContractPdf({
+      contract: { ...result.rows[0], version: 1 },
+      project,
+      signatures: [],
+    });
+    if (pdfMeta?.pdfUrl) {
+      await pool.query('UPDATE contracts SET pdf_url = $1 WHERE id = $2', [pdfMeta.pdfUrl, contractId]);
+    }
+
     return res
       .status(201)
-      .json(mapContractRow({ ...result.rows[0], owner_id: project.user_id, signature_count: 0 }));
+      .json(
+        mapContractRow({
+          ...result.rows[0],
+          owner_id: project.user_id,
+          signature_count: 0,
+          pdf_url: pdfMeta?.pdfUrl || '',
+        })
+      );
   } catch (error) {
     logError('contracts:create:error', { body: req.body }, error);
     const message = pool
@@ -3494,12 +3821,672 @@ app.post('/api/contracts/:contractId/sign', async (req, res) => {
       user_email: signer.email,
       user_role: signer.role,
     });
+
+    // Re-generate PDF with signatures
+    const project = await getProjectById(contractRow.project_id);
+    const signatureRows = await pool.query(
+      `
+        SELECT cs.*, u.full_name AS user_full_name, u.email AS user_email, u.role AS user_role
+        FROM contract_signatures cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.contract_id = $1
+        ORDER BY cs.signed_at ASC
+      `,
+      [contractId]
+    );
+    const pdfMeta = await generateContractPdf({
+      contract: { ...contractRow, version: contractRow.version || 1 },
+      project,
+      signatures: signatureRows.rows.map(mapSignatureRow),
+    });
+    if (pdfMeta?.pdfUrl) {
+      await pool.query('UPDATE contracts SET pdf_url = $1 WHERE id = $2', [pdfMeta.pdfUrl, contractId]);
+    }
+
+    // Notify other party
+    const otherUserId = contractRow.owner_id === userId ? contractRow.created_by : contractRow.owner_id;
+    if (otherUserId) {
+      const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1,$2,$3,$4,$5)
+        `,
+        [
+          notifId,
+          otherUserId,
+          'Contract signature needed',
+          `${signer.full_name || 'A user'} signed ${contractRow.title || 'a contract'}. Please sign to activate.`,
+          JSON.stringify({ contractId, projectId: contractRow.project_id, type: 'contract-signature' }),
+        ]
+      );
+    }
+
     return res.status(201).json(payload);
   } catch (error) {
     logError('contracts:sign:error', { contractId: req.params?.contractId }, error);
     const message = pool
       ? 'Failed to sign contract'
       : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/:contractorId/portfolio', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const portfolioRes = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
+      contractorId,
+    ]);
+    if (!portfolioRes.rows.length) {
+      return res.json(null);
+    }
+    const portfolio = portfolioRes.rows[0];
+    const mediaRes = await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [
+      portfolio.id,
+    ]);
+    return res.json(mapPortfolioRow(portfolio, mediaRes.rows.map(mapMediaRow)));
+  } catch (error) {
+    logError('portfolio:get:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch portfolio'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/portfolio', async (req, res) => {
+  try {
+    const { contractorId, title, bio, specialties = [], hourlyRate, serviceArea, media = [] } =
+      req.body || {};
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+
+    const existing = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
+      contractorId,
+    ]);
+    const portfolioId =
+      existing.rows[0]?.id || crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const savedMedia = media?.length ? await persistPortfolioMedia(portfolioId, media) : [];
+
+    if (existing.rows.length) {
+      await pool.query(
+        `
+          UPDATE portfolios
+          SET title = $1, bio = $2, specialties = $3, hourly_rate = $4, service_area = $5, updated_at = NOW()
+          WHERE contractor_id = $6
+        `,
+        [title || '', bio || '', specialties, hourlyRate || null, serviceArea || '', contractorId]
+      );
+    } else {
+      await pool.query(
+        `
+          INSERT INTO portfolios (id, contractor_id, title, bio, specialties, hourly_rate, service_area)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+        `,
+        [
+          portfolioId,
+          contractorId,
+          title || '',
+          bio || '',
+          specialties,
+          hourlyRate || null,
+          serviceArea || '',
+        ]
+      );
+    }
+
+    if (savedMedia.length) {
+      for (const item of savedMedia) {
+        const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          'INSERT INTO portfolio_media (id, portfolio_id, type, url, caption) VALUES ($1,$2,$3,$4,$5)',
+          [id, portfolioId, item.type || 'general', item.url, item.caption || '']
+        );
+      }
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM portfolios WHERE contractor_id = $1 LIMIT 1',
+      [contractorId]
+    );
+    const mediaRes = await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [
+      portfolioId,
+    ]);
+    await appendAudit({
+      actorId: contractorId,
+      actorRole: 'contractor',
+      action: existing.rows.length ? 'portfolio.update' : 'portfolio.create',
+      entityType: 'portfolio',
+      entityId: portfolioId,
+    });
+    return res.json(mapPortfolioRow(result.rows[0], mediaRes.rows.map(mapMediaRow)));
+  } catch (error) {
+    logError('portfolio:save:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to save portfolio'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/portfolio/:portfolioId/media', async (req, res) => {
+  try {
+    const { portfolioId } = req.params;
+    const { media = [] } = req.body || {};
+    if (!portfolioId) {
+      return res.status(400).json({ message: 'portfolioId is required' });
+    }
+    await assertDbReady();
+    const saved = await persistPortfolioMedia(portfolioId, media);
+    for (const item of saved) {
+      const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        'INSERT INTO portfolio_media (id, portfolio_id, type, url, caption) VALUES ($1,$2,$3,$4,$5)',
+        [id, portfolioId, item.type || 'general', item.url, item.caption || '']
+      );
+    }
+    const mediaRes = await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [
+      portfolioId,
+    ]);
+    return res.json(mediaRes.rows.map(mapMediaRow));
+  } catch (error) {
+    logError('portfolio:media:error', { portfolioId: req.params?.portfolioId }, error);
+    const message = pool ? 'Failed to add media' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/reviews', async (req, res) => {
+  try {
+    const {
+      contractorId,
+      projectId,
+      reviewerId,
+      ratingOverall,
+      ratingQuality,
+      ratingTimeliness,
+      ratingCommunication,
+      ratingBudget,
+      comment,
+      photos = [],
+    } = req.body || {};
+
+    if (!contractorId || !reviewerId || !ratingOverall) {
+      return res
+        .status(400)
+        .json({ message: 'contractorId, reviewerId, and ratingOverall are required' });
+    }
+    await assertDbReady();
+
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO reviews (
+          id, contractor_id, project_id, reviewer_id, rating_overall, rating_quality,
+          rating_timeliness, rating_communication, rating_budget, comment, photos, status
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `,
+      [
+        id,
+        contractorId,
+        projectId || null,
+        reviewerId,
+        ratingOverall,
+        ratingQuality || ratingOverall,
+        ratingTimeliness || ratingOverall,
+        ratingCommunication || ratingOverall,
+        ratingBudget || ratingOverall,
+        comment || '',
+        JSON.stringify(photos || []),
+        'pending',
+      ]
+    );
+
+    await appendAudit({
+      actorId: reviewerId,
+      actorRole: 'homeowner',
+      action: 'review.create',
+      entityType: 'review',
+      entityId: id,
+      metadata: { contractorId, projectId },
+    });
+    return res.status(201).json({ id });
+  } catch (error) {
+    logError('reviews:create:error', { body: req.body }, error);
+    const message = pool ? 'Failed to create review' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/:contractorId/reviews', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT r.*, u.full_name AS reviewer_name
+        FROM reviews r
+        LEFT JOIN users u ON u.id = r.reviewer_id
+        WHERE contractor_id = $1
+        ORDER BY created_at DESC
+      `,
+      [contractorId]
+    );
+    return res.json(result.rows.map(mapReviewRow));
+  } catch (error) {
+    logError('reviews:list:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool ? 'Failed to fetch reviews' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/reviews/:reviewId/respond', async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    const { responseText } = req.body || {};
+    if (!reviewId) {
+      return res.status(400).json({ message: 'reviewId is required' });
+    }
+    await assertDbReady();
+    await pool.query('UPDATE reviews SET response_text = $1, response_at = NOW() WHERE id = $2', [
+      responseText || '',
+      reviewId,
+    ]);
+    return res.json({ success: true });
+  } catch (error) {
+    logError('reviews:respond:error', { reviewId }, error);
+    const message = pool ? 'Failed to respond' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/reviews/:reviewId/flag', async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    if (!reviewId) {
+      return res.status(400).json({ message: 'reviewId is required' });
+    }
+    await assertDbReady();
+    await pool.query('UPDATE reviews SET status = $1 WHERE id = $2', ['flagged', reviewId]);
+    return res.json({ success: true });
+  } catch (error) {
+    logError('reviews:flag:error', { reviewId }, error);
+    const message = pool ? 'Failed to flag review' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/audit', async (req, res) => {
+  try {
+    const { actorId, entityType, entityId, limit = 50 } = req.query;
+    await assertDbReady();
+    const params = [];
+    let query = 'SELECT * FROM audit_logs WHERE 1=1';
+    if (actorId) {
+      params.push(actorId);
+      query += ` AND actor_id = $${params.length}`;
+    }
+    if (entityType) {
+      params.push(entityType);
+      query += ` AND entity_type = $${params.length}`;
+    }
+    if (entityId) {
+      params.push(entityId);
+      query += ` AND entity_id = $${params.length}`;
+    }
+    params.push(Math.min(Number(limit) || 50, 200));
+    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+    const result = await pool.query(query, params);
+    return res.json(result.rows.map(mapAuditRow));
+  } catch (error) {
+    logError('audit:list:error', { query: req.query }, error);
+    const message = pool ? 'Failed to fetch audit logs' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/audit', async (req, res) => {
+  try {
+    const { actorId, actorRole, action, entityType, entityId, metadata } = req.body || {};
+    if (!action) {
+      return res.status(400).json({ message: 'action is required' });
+    }
+    await appendAudit({ actorId, actorRole, action, entityType, entityId, metadata });
+    return res.json({ success: true });
+  } catch (error) {
+    logError('audit:create:error', { body: req.body }, error);
+    const message = pool ? 'Failed to append audit' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/compliance/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      'SELECT * FROM compliance_documents WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    return res.json(result.rows.map(mapComplianceRow));
+  } catch (error) {
+    logError('compliance:list:error', { userId: req.params?.userId }, error);
+    const message = pool
+      ? 'Failed to fetch compliance documents'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/compliance', async (req, res) => {
+  try {
+    const { userId, type, fileData, fileName, mimeType, expiresAt, notes } = req.body || {};
+    if (!userId || !type || !fileData) {
+      return res.status(400).json({ message: 'userId, type, and fileData are required' });
+    }
+    await assertDbReady();
+    const persisted = await persistComplianceFile(userId, type, fileName, mimeType, fileData);
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO compliance_documents (id, user_id, type, url, expires_at, status, notes)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `,
+      [id, userId, type, persisted.url, expiresAt || null, 'active', notes || '']
+    );
+    await appendAudit({
+      actorId: userId,
+      actorRole: 'contractor',
+      action: 'compliance.upload',
+      entityType: 'compliance',
+      entityId: id,
+      metadata: { type, expiresAt },
+    });
+    return res
+      .status(201)
+      .json(mapComplianceRow({ id, user_id: userId, type, url: persisted.url, expires_at: expiresAt, status: 'active', notes }));
+  } catch (error) {
+    logError('compliance:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to upload compliance document'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/compliance/check-expiry', async (_req, res) => {
+  try {
+    await assertDbReady();
+    const now = new Date();
+    const soon = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    await pool.query(
+      "UPDATE compliance_documents SET status = 'expired' WHERE expires_at IS NOT NULL AND expires_at < NOW() AND status <> 'expired'"
+    );
+    await pool.query(
+      "UPDATE compliance_documents SET status = 'expiring' WHERE expires_at IS NOT NULL AND expires_at BETWEEN NOW() AND $1 AND status = 'active'",
+      [soon.toISOString()]
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    logError('compliance:check-expiry:error', {}, error);
+    const message = pool ? 'Failed to check expiry' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/analytics', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const projects = await pool.query('SELECT COUNT(*) FROM projects');
+    const users = await pool.query('SELECT COUNT(*) FROM users');
+    const disputes = await pool.query("SELECT COUNT(*) FROM disputes WHERE status = 'open'");
+    const contractors = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'contractor'");
+    return res.json({
+      activeProjects: Number(projects.rows[0].count || 0),
+      users: Number(users.rows[0].count || 0),
+      disputesOpen: Number(disputes.rows[0].count || 0),
+      contractors: Number(contractors.rows[0].count || 0),
+    });
+  } catch (error) {
+    logError('admin:analytics:error', {}, error);
+    const message = pool ? 'Failed to fetch analytics' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const result = await pool.query('SELECT id, full_name, email, role, created_at, profile_photo_url FROM users ORDER BY created_at DESC LIMIT 200');
+    return res.json(result.rows.map(mapDbUser));
+  } catch (error) {
+    logError('admin:users:error', {}, error);
+    const message = pool ? 'Failed to fetch users' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/disputes', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const result = await pool.query('SELECT * FROM disputes ORDER BY created_at DESC LIMIT 200');
+    return res.json(result.rows.map(mapDisputeRow));
+  } catch (error) {
+    logError('admin:disputes:error', {}, error);
+    const message = pool ? 'Failed to fetch disputes' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/admin/disputes/:id/resolve', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    const { id } = req.params;
+    const { status, resolutionNotes } = req.body || {};
+    if (!id || !status) {
+      return res.status(400).json({ message: 'id and status are required' });
+    }
+    await assertDbReady();
+    await pool.query(
+      'UPDATE disputes SET status = $1, resolution_notes = $2, updated_at = NOW() WHERE id = $3',
+      [status, resolutionNotes || '', id]
+    );
+    await appendAudit({
+      actorRole: 'admin',
+      action: 'dispute.resolve',
+      entityType: 'dispute',
+      entityId: id,
+      metadata: { status },
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    logError('admin:disputes:resolve:error', { id: req.params?.id }, error);
+    const message = pool ? 'Failed to resolve dispute' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/search', async (req, res) => {
+  try {
+    const { specialty, ratingMin, serviceArea, priceMin, priceMax } = req.query || {};
+    await assertDbReady();
+    const params = [];
+    let where = "u.role = 'contractor'";
+    if (specialty) {
+      params.push(specialty.toLowerCase());
+      where += ` AND EXISTS (SELECT 1 FROM unnest(p.specialties) s WHERE lower(s) = $${params.length})`;
+    }
+    if (ratingMin) {
+      params.push(Number(ratingMin));
+      where += ` AND COALESCE(u.rating, 0) >= $${params.length}`;
+    }
+    if (serviceArea) {
+      params.push(`%${serviceArea.toLowerCase()}%`);
+      where += ` AND lower(p.service_area) LIKE $${params.length}`;
+    }
+    if (priceMin) {
+      params.push(Number(priceMin));
+      where += ` AND p.hourly_rate >= $${params.length}`;
+    }
+    if (priceMax) {
+      params.push(Number(priceMax));
+      where += ` AND p.hourly_rate <= $${params.length}`;
+    }
+    const result = await pool.query(
+      `
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.phone,
+          u.profile_photo_url,
+          u.rating,
+          p.title,
+          p.bio,
+          p.specialties,
+          p.hourly_rate,
+          p.service_area,
+          COALESCE(avg(r.rating_overall), u.rating) AS avg_rating,
+          COUNT(r.id) AS review_count
+        FROM users u
+        LEFT JOIN portfolios p ON p.contractor_id = u.id
+        LEFT JOIN reviews r ON r.contractor_id = u.id AND r.status <> 'flagged'
+        WHERE ${where}
+        GROUP BY u.id, p.title, p.bio, p.specialties, p.hourly_rate, p.service_area
+        ORDER BY avg_rating DESC NULLS LAST
+        LIMIT 100
+      `,
+      params
+    );
+    const mapped = result.rows.map((row) => ({
+      id: row.id,
+      fullName: row.full_name,
+      email: row.email,
+      phone: row.phone,
+      profilePhotoUrl: row.profile_photo_url || '',
+      rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
+      avgRating: row.avg_rating !== null && row.avg_rating !== undefined ? Number(row.avg_rating) : null,
+      reviewCount: Number(row.review_count || 0),
+      specialties: row.specialties || [],
+      hourlyRate:
+        row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : null,
+      serviceArea: row.service_area || '',
+      title: row.title || '',
+      bio: row.bio || '',
+    }));
+    return res.json(mapped);
+  } catch (error) {
+    logError('contractors:search:error', { query: req.query }, error);
+    const message = pool
+      ? 'Failed to search contractors'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/:contractorId/profile', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const userRes = await pool.query('SELECT * FROM users WHERE id = $1 AND role = $2 LIMIT 1', [
+      contractorId,
+      'contractor',
+    ]);
+    if (!userRes.rows.length) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+    const portfolioRes = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
+      contractorId,
+    ]);
+    const portfolio = portfolioRes.rows[0] || null;
+    const mediaRes = portfolio
+      ? await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [portfolio.id])
+      : { rows: [] };
+    const reviewsRes = await pool.query(
+      `
+        SELECT r.*, u.full_name AS reviewer_name
+        FROM reviews r
+        LEFT JOIN users u ON u.id = r.reviewer_id
+        WHERE r.contractor_id = $1 AND r.status <> 'flagged'
+        ORDER BY r.created_at DESC
+      `,
+      [contractorId]
+    );
+    const avgRating =
+      reviewsRes.rows.length > 0
+        ? reviewsRes.rows.reduce((sum, r) => sum + Number(r.rating_overall || 0), 0) /
+          reviewsRes.rows.length
+        : userRes.rows[0].rating;
+
+    return res.json({
+      id: userRes.rows[0].id,
+      fullName: userRes.rows[0].full_name,
+      email: userRes.rows[0].email,
+      phone: userRes.rows[0].phone,
+      profilePhotoUrl: userRes.rows[0].profile_photo_url || '',
+      avgRating: avgRating ? Number(avgRating) : null,
+      reviewCount: reviewsRes.rows.length,
+      portfolio: portfolio ? mapPortfolioRow(portfolio, mediaRes.rows.map(mapMediaRow)) : null,
+      reviews: reviewsRes.rows.map(mapReviewRow),
+    });
+  } catch (error) {
+    logError('contractors:profile:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch contractor profile'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/flags', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const result = await pool.query('SELECT * FROM flags ORDER BY created_at DESC LIMIT 200');
+    return res.json(result.rows);
+  } catch (error) {
+    logError('admin:flags:error', {}, error);
+    const message = pool ? 'Failed to fetch flags' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/admin/flags/:id/resolve', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    const { id } = req.params;
+    await assertDbReady();
+    await pool.query("UPDATE flags SET status = 'resolved', updated_at = NOW() WHERE id = $1", [id]);
+    await appendAudit({
+      actorRole: 'admin',
+      action: 'flag.resolve',
+      entityType: 'flag',
+      entityId: id,
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    logError('admin:flags:resolve:error', { id }, error);
+    const message = pool ? 'Failed to resolve flag' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
 });

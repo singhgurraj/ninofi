@@ -100,7 +100,7 @@ const HomeownerDashboard = ({ navigation }) => {
             
             <TouchableOpacity 
               style={styles.actionButtonOutline}
-              onPress={() => console.log('Find Contractors - Coming soon')}
+              onPress={() => navigation.navigate('ContractorSearch')}
             >
               <Text style={styles.actionIconOutline}>🔍</Text>
               <Text style={styles.actionTextOutline}>Find Contractors</Text>
