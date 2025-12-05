@@ -447,6 +447,10 @@ const initDb = async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(
+    "ALTER TABLE milestones ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_funding'"
+  );
+  await pool.query("ALTER TABLE milestones ALTER COLUMN status SET DEFAULT 'pending_funding'");
 
   await pool.query('CREATE INDEX IF NOT EXISTS projects_user_id_idx ON projects (user_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS milestones_project_id_idx ON milestones (project_id, position)');
@@ -508,6 +512,8 @@ const initDb = async () => {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'DRAFT'");
+  await pool.query("ALTER TABLE invoices ALTER COLUMN status SET DEFAULT 'DRAFT'");
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS invoices_milestone_idx ON invoices (milestone_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS invoices_project_idx ON invoices (project_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices (status)');
@@ -791,6 +797,8 @@ const initDb = async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query("ALTER TABLE compliance_documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'");
+  await pool.query("ALTER TABLE compliance_documents ALTER COLUMN status SET DEFAULT 'active'");
   await pool.query('CREATE INDEX IF NOT EXISTS compliance_user_idx ON compliance_documents (user_id, status, expires_at)');
 
   await pool.query(`
@@ -808,6 +816,8 @@ const initDb = async () => {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query("ALTER TABLE disputes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'");
+  await pool.query("ALTER TABLE disputes ALTER COLUMN status SET DEFAULT 'open'");
   await pool.query('CREATE INDEX IF NOT EXISTS disputes_status_idx ON disputes (status, priority)');
 
   await pool.query(`
