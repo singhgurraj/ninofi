@@ -794,6 +794,50 @@ const mapInvoiceRow = (row = {}) => ({
   updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
 });
 
+const mapTransactionWithContext = (row = {}) => {
+  const invoice = row.invoice_id
+    ? {
+        id: row.invoice_id,
+        invoiceNumber: row.invoice_number,
+        status: (row.invoice_status || 'DRAFT').toUpperCase(),
+        amount: row.invoice_amount !== null && row.invoice_amount !== undefined ? Number(row.invoice_amount) : null,
+        currency: row.invoice_currency || 'USD',
+        issueDate: row.invoice_issue_date instanceof Date
+          ? row.invoice_issue_date.toISOString()
+          : row.invoice_issue_date,
+        dueDate: row.invoice_due_date instanceof Date
+          ? row.invoice_due_date.toISOString()
+          : row.invoice_due_date,
+      }
+    : null;
+
+  const milestone = row.milestone_id
+    ? {
+        id: row.milestone_id,
+        name: row.milestone_name,
+        status: (row.milestone_status || '').toLowerCase(),
+        amount: row.milestone_amount !== null && row.milestone_amount !== undefined ? Number(row.milestone_amount) : null,
+      }
+    : null;
+
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    milestoneId: row.milestone_id || null,
+    type: row.type,
+    status: row.status,
+    amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : null,
+    currency: invoice?.currency || 'USD',
+    reference: row.reference || null,
+    provider: row.provider || null,
+    externalId: row.external_id || null,
+    failureReason: row.failure_reason || null,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    milestone,
+    invoice,
+  };
+};
+
 const mapEscrowRow = (row = {}) => ({
   id: row.id,
   projectId: row.project_id,
@@ -3454,6 +3498,117 @@ app.post('/api/projects/:projectId/milestones/:milestoneId/approve', async (req,
     return res.status(500).json({ message });
   } finally {
     client.release();
+  }
+});
+
+// Homeowner: list project payment transactions + invoices
+app.get('/api/projects/:projectId/payments', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { homeownerId, page = 1, pageSize = 20 } = req.query || {};
+
+    if (!projectId || !homeownerId) {
+      return res.status(400).json({ message: 'projectId and homeownerId are required' });
+    }
+
+    await assertDbReady();
+    const projectRow = await getProjectById(projectId);
+    if (!projectRow) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (projectRow.user_id !== homeownerId) {
+      return res.status(403).json({ message: 'Not authorized to view this project' });
+    }
+
+    const pageNum = Math.max(Number(page) || 1, 1);
+    const pageSizeNum = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const listPromise = pool.query(
+      `
+        SELECT
+          pt.*, m.name AS milestone_name, m.status AS milestone_status, m.amount AS milestone_amount,
+          inv.id AS invoice_id, inv.invoice_number, inv.status AS invoice_status, inv.amount AS invoice_amount,
+          inv.currency AS invoice_currency, inv.issue_date AS invoice_issue_date, inv.due_date AS invoice_due_date
+        FROM payment_transactions pt
+        LEFT JOIN milestones m ON m.id = pt.milestone_id
+        LEFT JOIN invoices inv ON inv.milestone_id = pt.milestone_id
+        WHERE pt.project_id = $1
+        ORDER BY pt.created_at DESC
+        LIMIT $2 OFFSET $3
+      `,
+      [projectId, pageSizeNum, offset]
+    );
+
+    const countPromise = pool.query(
+      'SELECT COUNT(*) FROM payment_transactions WHERE project_id = $1',
+      [projectId]
+    );
+
+    const [listResult, countResult] = await Promise.all([listPromise, countPromise]);
+
+    return res.json({
+      data: listResult.rows.map(mapTransactionWithContext),
+      page: pageNum,
+      pageSize: pageSizeNum,
+      total: Number(countResult.rows[0].count || 0),
+    });
+  } catch (error) {
+    console.error('payments:list:homeowner:error', error);
+    const message = pool ? 'Failed to fetch payments' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Contractor: list payouts + related invoices
+app.get('/api/contractors/:contractorId/payouts', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    const { page = 1, pageSize = 20 } = req.query || {};
+
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+
+    await assertDbReady();
+
+    const pageNum = Math.max(Number(page) || 1, 1);
+    const pageSizeNum = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const listPromise = pool.query(
+      `
+        SELECT
+          pt.*, m.name AS milestone_name, m.status AS milestone_status, m.amount AS milestone_amount,
+          inv.id AS invoice_id, inv.invoice_number, inv.status AS invoice_status, inv.amount AS invoice_amount,
+          inv.currency AS invoice_currency, inv.issue_date AS invoice_issue_date, inv.due_date AS invoice_due_date
+        FROM payment_transactions pt
+        LEFT JOIN milestones m ON m.id = pt.milestone_id
+        LEFT JOIN invoices inv ON inv.milestone_id = pt.milestone_id
+        WHERE pt.payee_id = $1 AND pt.type = 'PAYOUT'
+        ORDER BY pt.created_at DESC
+        LIMIT $2 OFFSET $3
+      `,
+      [contractorId, pageSizeNum, offset]
+    );
+
+    const countPromise = pool.query(
+      'SELECT COUNT(*) FROM payment_transactions WHERE payee_id = $1 AND type = \'PAYOUT\'',
+      [contractorId]
+    );
+
+    const [listResult, countResult] = await Promise.all([listPromise, countPromise]);
+
+    return res.json({
+      data: listResult.rows.map(mapTransactionWithContext),
+      page: pageNum,
+      pageSize: pageSizeNum,
+      total: Number(countResult.rows[0].count || 0),
+    });
+  } catch (error) {
+    console.error('payments:list:contractor:error', error);
+    const message = pool ? 'Failed to fetch payouts' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
   }
 });
 
