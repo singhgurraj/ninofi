@@ -162,29 +162,24 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
           {contracts?.map((c) => {
             const statusLabel = (c.status || 'pending').toUpperCase();
             return (
-              <View key={c.id} style={styles.contractRow}>
+              <View key={c.id} style={styles.contractCard}>
                 <View style={styles.contractHeader}>
                   <Text style={styles.contractTitle}>{c.title || 'Contract'}</Text>
-                  <Text style={styles.contractMeta}>
-                    Status: {statusLabel}
-                    {typeof c.signatureCount === 'number' ? ` • Signatures: ${c.signatureCount}` : ''}
-                  </Text>
+                  <Text style={styles.contractMeta}>Status: {statusLabel}</Text>
+                  {typeof c.signatureCount === 'number' ? (
+                    <Text style={styles.contractMeta}>Signatures: {c.signatureCount}</Text>
+                  ) : null}
                 </View>
                 <View style={styles.contractActions}>
-                  <TouchableOpacity
-                    style={[styles.button, styles.signButton]}
-                    onPress={() => navigation.navigate('ContractSignature', { contract: c })}
-                  >
-                    <Text style={styles.buttonText}>
-                      {statusLabel === 'SIGNED' ? 'View' : 'Sign'}
-                    </Text>
+                  <TouchableOpacity onPress={() => navigation.navigate('ContractSignature', { contract: c })}>
+                    <Text style={styles.actionLink}>View</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => navigation.navigate('ContractSignature', { contract: c })}>
+                    <Text style={styles.actionLink}>{statusLabel === 'SIGNED' ? 'View' : 'Sign'}</Text>
                   </TouchableOpacity>
                   {statusLabel === 'PENDING' ? (
-                    <TouchableOpacity
-                      style={[styles.button, styles.deleteButton]}
-                      onPress={() => handleDelete(c)}
-                    >
-                      <Text style={styles.deleteText}>🗑</Text>
+                    <TouchableOpacity onPress={() => handleDelete(c)}>
+                      <Text style={styles.actionLink}>Delete</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -280,16 +275,19 @@ const styles = StyleSheet.create({
   muted: { color: palette.muted },
   contractButton: { backgroundColor: palette.primary },
   contractText: { color: '#fff', fontWeight: '700' },
-  contractRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'flex-start',
-    paddingVertical: 10,
+  contractCard: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+    marginBottom: 10,
+    backgroundColor: palette.surface,
   },
   contractHeader: { flex: 1, gap: 2 },
   contractTitle: { fontWeight: '700', color: palette.text, fontSize: 15 },
   contractMeta: { color: palette.muted, fontSize: 12 },
-  contractActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  contractActions: { flexDirection: 'row', gap: 16, alignItems: 'center' },
   signButton: { backgroundColor: palette.primary, paddingHorizontal: 14, paddingVertical: 10 },
   refreshButton: {
     marginTop: 10,
@@ -298,14 +296,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   errorText: { color: '#c1121f' },
-  deleteButton: {
-    width: 40,
-    paddingVertical: 10,
-    backgroundColor: '#ffe5e5',
-    borderWidth: 1,
-    borderColor: '#f25f5c',
-  },
-  deleteText: { color: '#c1121f', fontWeight: '700' },
+  actionLink: { color: palette.primary, fontWeight: '700' },
 });
 
 export default ProjectOverviewScreen;
