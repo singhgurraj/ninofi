@@ -50,15 +50,13 @@ const ContractsScreen = ({ navigation }) => {
         setIsLoading(true);
       }
       try {
-        if ((user.role || '').toLowerCase() === 'contractor') {
-          const approved = await fetchApprovedContractsForContractor(user.id);
-          setApprovedGenerated(approved.success ? approved.data || [] : []);
-          setContracts([]);
-        } else {
-          const approved = await fetchApprovedContractsForUser(user.id);
-          setApprovedGenerated(approved.success ? approved.data || [] : []);
-          setContracts([]);
-        }
+        const roleLower = (user.role || '').toLowerCase();
+        const approved =
+          roleLower === 'contractor'
+            ? await fetchApprovedContractsForContractor(user.id)
+            : await fetchApprovedContractsForUser(user.id);
+        setApprovedGenerated(approved.success ? approved.data || [] : []);
+        setContracts([]);
       } catch (error) {
         Alert.alert('Error', error.response?.data?.message || 'Failed to load contracts');
       } finally {
@@ -116,37 +114,34 @@ const ContractsScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
       >
         {isLoading && <Text style={styles.muted}>Loading contracts...</Text>}
-        {!isLoading && isContractor && approvedGenerated.length === 0 && (
+        {!isLoading && approvedGenerated.length === 0 && (
           <Text style={styles.muted}>No signed contracts yet.</Text>
         )}
-        {!isLoading && isContractor && approvedGenerated.map((c) => (
-          <TouchableOpacity
-            key={c.id}
-            style={styles.card}
-            onPress={() =>
-              navigation.navigate('ProjectOverview', {
-                project: { id: c.projectId },
-                role: 'contractor',
-                openContractId: c.id,
-              })
-            }
-          >
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>{c.description || 'Contract'}</Text>
-              <View style={[styles.badge, { backgroundColor: statusStyles.signed.backgroundColor }]}>
-                <Text style={[styles.badgeText, { color: statusStyles.signed.color }]}>Approved</Text>
+        {!isLoading &&
+          approvedGenerated.map((c) => (
+            <TouchableOpacity
+              key={c.id}
+              style={styles.card}
+              onPress={() =>
+                navigation.navigate('ProjectOverview', {
+                  project: { id: c.projectId },
+                  role: isContractor ? 'contractor' : 'homeowner',
+                  openContractId: c.id,
+                })
+              }
+            >
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{c.description || 'Contract'}</Text>
+                <View style={[styles.badge, { backgroundColor: statusStyles.signed.backgroundColor }]}>
+                  <Text style={[styles.badgeText, { color: statusStyles.signed.color }]}>Approved</Text>
+                </View>
               </View>
-            </View>
-            <Text style={styles.cardMeta}>Project: {c.projectId}</Text>
-            <Text style={styles.cardMeta}>
-              Total: {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
-            </Text>
-          </TouchableOpacity>
-        ))}
-        {!isLoading && !isContractor && contracts.length === 0 && (
-          <Text style={styles.muted}>No contracts yet.</Text>
-        )}
-        {!isLoading && !isContractor && contracts.map(renderContractCard)}
+              <Text style={styles.cardMeta}>Project: {c.projectId}</Text>
+              <Text style={styles.cardMeta}>
+                Total: {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+              </Text>
+            </TouchableOpacity>
+          ))}
       </ScrollView>
     </SafeAreaView>
   );
