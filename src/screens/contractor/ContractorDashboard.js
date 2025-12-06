@@ -128,10 +128,17 @@ const ContractorDashboard = ({ navigation }) => {
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
-              onPress={() => navigation.navigate('SubmitMilestone', {
-                project: projects[0],
-                milestone: { name: projects[0].nextMilestone, amount: projects[0].amount }
-            })}
+              onPress={() => {
+                if (contractorProjects && contractorProjects.length > 0) {
+                  navigation.navigate('SubmitMilestone', {
+                    project: contractorProjects[0],
+                    milestone: {
+                      name: contractorProjects[0].nextMilestone,
+                      amount: contractorProjects[0].amount,
+                    },
+                  });
+                }
+              }}
             >
               <Text style={styles.actionIcon}>📸</Text>
               <Text style={styles.actionTitle}>Submit Work</Text>
@@ -160,6 +167,30 @@ const ContractorDashboard = ({ navigation }) => {
               <Text style={styles.actionIcon}>➕</Text>
               <Text style={styles.actionTitle}>Register Worker</Text>
               <Text style={styles.actionText}>Add employees to your team</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionCard, shadowCard]}
+              onPress={() => navigation.navigate('ExpenseTracking')}
+            >
+              <Text style={styles.actionIcon}>💰</Text>
+              <Text style={styles.actionTitle}>Expenses</Text>
+              <Text style={styles.actionText}>Track project costs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionCard, shadowCard]}
+              onPress={() => navigation.navigate('PayrollTracking')}
+            >
+              <Text style={styles.actionIcon}>⏱️</Text>
+              <Text style={styles.actionTitle}>Work Hours</Text>
+              <Text style={styles.actionText}>Log time & earnings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionCard, shadowCard]}
+              onPress={() => navigation.navigate('Contracts')}
+            >
+              <Text style={styles.actionIcon}>📝</Text>
+              <Text style={styles.actionTitle}>Contracts</Text>
+              <Text style={styles.actionText}>View & sign docs</Text>
             </TouchableOpacity>
           </View>
         </View>

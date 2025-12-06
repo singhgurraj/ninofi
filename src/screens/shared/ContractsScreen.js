@@ -52,8 +52,7 @@ const ContractsScreen = ({ navigation }) => {
         setIsLoading(true);
       }
       try {
-        // For now, grab all contracts; backend filtering will be added later.
-        const res = await contractAPI.getProjectContracts('all');
+        const res = await contractAPI.getUserContracts(user.id);
         setContracts(res.data || []);
       } catch (error) {
         Alert.alert('Error', error.response?.data?.message || 'Failed to load contracts');

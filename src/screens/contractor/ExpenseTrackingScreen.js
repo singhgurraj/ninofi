@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -9,6 +12,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { useSelector } from 'react-redux';
@@ -193,9 +197,18 @@ const ExpenseTrackingScreen = () => {
       </ScrollView>
 
       <Modal visible={isModalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Log Expense</Text>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.modalKeyboardContainer}
+            >
+              <ScrollView
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.modalTitle}>Log Expense</Text>
 
             <Text style={styles.label}>Category</Text>
             <View style={styles.categoryRow}>
@@ -227,6 +240,7 @@ const ExpenseTrackingScreen = () => {
               onChangeText={(text) => updateField('amount', text)}
               placeholder="Enter amount"
               keyboardType="decimal-pad"
+              selectionColor={palette.primary}
             />
 
             <Text style={styles.label}>Description</Text>
@@ -236,6 +250,7 @@ const ExpenseTrackingScreen = () => {
               onChangeText={(text) => updateField('description', text)}
               placeholder="What was this expense for?"
               multiline
+              selectionColor={palette.primary}
             />
 
             <Text style={styles.label}>Date</Text>
@@ -244,6 +259,7 @@ const ExpenseTrackingScreen = () => {
               value={formData.date}
               onChangeText={(text) => updateField('date', text)}
               placeholder="YYYY-MM-DD"
+              selectionColor={palette.primary}
             />
 
             <Text style={styles.label}>Project ID</Text>
@@ -253,6 +269,7 @@ const ExpenseTrackingScreen = () => {
               onChangeText={(text) => updateField('projectId', text)}
               placeholder="Enter project ID"
               autoCapitalize="none"
+              selectionColor={palette.primary}
             />
 
             <View style={styles.modalActions}>
@@ -274,8 +291,10 @@ const ExpenseTrackingScreen = () => {
                 <Text style={styles.submitText}>{isSubmitting ? 'Saving...' : 'Save'}</Text>
               </TouchableOpacity>
             </View>
+              </ScrollView>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
   );
@@ -330,6 +349,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     padding: 20,
+  },
+  modalKeyboardContainer: {
+    flex: 1,
+  },
+  modalScrollContent: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   modalContent: {
     backgroundColor: palette.surface,

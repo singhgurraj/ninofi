@@ -29,6 +29,8 @@ import ProfileScreen from '../screens/shared/ProfileScreen';
 import WalletScreen from '../screens/shared/WalletScreen';
 import ContractsScreen from '../screens/shared/ContractsScreen';
 import ContractDetailsScreen from '../screens/shared/ContractDetailsScreen';
+import FeatureFlagsScreen from '../screens/shared/FeatureFlagsScreen';
+import SystemMonitoringScreen from '../screens/shared/SystemMonitoringScreen';
 import ProjectsListScreen from '../screens/homeowner/ProjectsListScreen';
 import FindJobsScreen from '../screens/contractor/FindJobsScreen';
 import ContractorProjectDetailsScreen from '../screens/contractor/ContractorProjectDetailsScreen';
@@ -201,6 +203,16 @@ const MainAppStack = () => (
         name="ContractDetails"
         component={ContractDetailsScreen}
         options={{ title: 'Contract Details' }}
+      />
+      <MainStack.Screen
+        name="FeatureFlags"
+        component={FeatureFlagsScreen}
+        options={{ title: 'Feature Flags' }}
+      />
+      <MainStack.Screen
+        name="SystemMonitoring"
+        component={SystemMonitoringScreen}
+        options={{ title: 'System Monitoring' }}
       />
     </MainStack.Navigator>
   );

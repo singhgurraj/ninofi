@@ -228,6 +228,27 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
 
         {/* Account Actions */}
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Admin Tools</Text>
+          <TouchableOpacity
+            style={styles.adminButton}
+            onPress={() => navigation.navigate('FeatureFlags')}
+          >
+            <Text style={styles.adminButtonIcon}>🧭</Text>
+            <Text style={styles.adminButtonText}>Feature Flags</Text>
+            <Text style={styles.actionArrow}>→</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.adminButton}
+            onPress={() => navigation.navigate('SystemMonitoring')}
+          >
+            <Text style={styles.adminButtonIcon}>📈</Text>
+            <Text style={styles.adminButtonText}>System Monitoring</Text>
+            <Text style={styles.actionArrow}>→</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Account Actions */}
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
           
           <TouchableOpacity style={styles.actionButton}>
@@ -385,6 +406,22 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     marginBottom: 15,
+  },
+  adminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEE',
+  },
+  adminButtonIcon: {
+    fontSize: 20,
+    marginRight: 12,
+  },
+  adminButtonText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
   },
   inputGroup: {
     marginBottom: 15,

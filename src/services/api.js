@@ -169,4 +169,12 @@ export const userAPI = {
   listWorkers: async () => api.get('/users/worker'),
 };
 
+// Feature Flags API
+export const featureFlagsAPI = {
+  getAllFlags: async () => api.get('/feature-flags'),
+  getFlag: async (featureName) => api.get(`/feature-flags/${featureName}`),
+  toggleFlag: async (featureName, enabled, description) =>
+    api.put(`/feature-flags/${featureName}`, { enabled, description }),
+};
+
 export default api;

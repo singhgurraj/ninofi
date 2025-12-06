@@ -3,6 +3,7 @@ import api from './api';
 export const contractAPI = {
   createContract: async (contractData) => api.post('/contracts', contractData),
   getProjectContracts: async (projectId) => api.get(`/contracts/project/${projectId}`),
+  getUserContracts: async (userId) => api.get(`/contracts/user/${userId}`),
   getContractDetails: async (contractId) => api.get(`/contracts/${contractId}`),
   updateContractStatus: async (contractId, payload) => {
     const body =

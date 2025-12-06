@@ -2575,6 +2575,19 @@ app.post('/api/expenses', async (req, res) => {
       return res.status(403).json({ message: 'Only contractors can log expenses' });
     }
 
+    const applicationCheck = await pool.query(
+      `
+        SELECT id
+        FROM project_applications
+        WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted'
+        LIMIT 1
+      `,
+      [projectId, contractorId]
+    );
+    if (!applicationCheck.rows.length) {
+      return res.status(403).json({ message: 'You must be hired on this project to log expenses' });
+    }
+
     const normalizedCategory = String(category || '').toLowerCase();
     if (!EXPENSE_CATEGORIES.has(normalizedCategory)) {
       return res.status(400).json({ message: 'Invalid expense category' });
@@ -2741,6 +2754,19 @@ app.post('/api/work-hours', async (req, res) => {
     }
     if (normalizeRole(contractor.role) !== 'contractor') {
       return res.status(403).json({ message: 'Only contractors can log work hours' });
+    }
+
+    const applicationCheck = await pool.query(
+      `
+        SELECT id
+        FROM project_applications
+        WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted'
+        LIMIT 1
+      `,
+      [projectId, contractorId]
+    );
+    if (!applicationCheck.rows.length) {
+      return res.status(403).json({ message: 'You must be hired on this project to log work hours' });
     }
 
     const hoursNumber = isPositiveNumber(hours);
@@ -3351,6 +3377,45 @@ app.get('/api/contracts/project/:projectId', async (req, res) => {
     return res.json(result.rows.map((row) => mapContractRow(row)));
   } catch (error) {
     logError('contracts:list:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contracts/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT
+          c.*,
+          p.user_id AS owner_id,
+          COUNT(cs.id) AS signature_count
+        FROM contracts c
+        JOIN projects p ON p.id = c.project_id
+        LEFT JOIN contract_signatures cs ON cs.contract_id = c.id
+        WHERE c.created_by = $1
+           OR EXISTS (
+              SELECT 1
+              FROM contract_signatures cs_inner
+              WHERE cs_inner.contract_id = c.id AND cs_inner.user_id = $1
+            )
+        GROUP BY c.id, p.user_id
+        ORDER BY c.created_at DESC
+      `,
+      [userId]
+    );
+
+    return res.json(result.rows.map((row) => mapContractRow(row)));
+  } catch (error) {
+    logError('contracts:list-user:error', { userId: req.params?.userId }, error);
     const message = pool
       ? 'Failed to fetch contracts'
       : 'Database is not configured (set DATABASE_URL)';
