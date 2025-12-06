@@ -3742,6 +3742,18 @@ app.delete('/api/projects/:projectId', async (req, res) => {
     );
     personnelRes.rows.forEach((r) => r.user_id && participants.add(r.user_id));
 
+    // Include any contract signers
+    const contractSignerRes = await client.query(
+      `
+        SELECT DISTINCT gcs.user_id
+        FROM generated_contract_signatures gcs
+        JOIN generated_contracts gc ON gc.id = gcs.contract_id
+        WHERE gc.project_id = $1
+      `,
+      [projectId]
+    );
+    contractSignerRes.rows.forEach((r) => r.user_id && participants.add(r.user_id));
+
     const gigApplicantsRes = await client.query(
       `
         SELECT contractor_id
@@ -7698,6 +7710,15 @@ app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res)
       return res.status(403).json({ message: 'Not authorized to sign this contract' });
     }
 
+    // Snapshot roles before signing
+    const beforeRes = await pool.query(
+      'SELECT signer_role FROM generated_contract_signatures WHERE contract_id = $1',
+      [contractId]
+    );
+    const rolesBefore = new Set(
+      beforeRes.rows.map((r) => normalizeRole(r.signer_role || '')).filter(Boolean)
+    );
+
     const signerUser = await getUserById(userId);
 
     const sigId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
@@ -7732,8 +7753,34 @@ app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res)
       if (!role) continue;
       const fullName = row.full_name || '';
       if (!fullName) continue;
-      signatureState = applySignature(signatureState, role === 'homeowner' ? 'homeowner' : 'contractor', fullName);
+      signatureState = applySignature(
+        signatureState,
+        role === 'homeowner' ? 'homeowner' : 'contractor',
+        fullName
+      );
     }
+    if (signerUser?.full_name) {
+      signatureState = applySignature(
+        signatureState,
+        signerRoleValue === 'homeowner' ? 'homeowner' : 'contractor',
+        signerUser.full_name
+      );
+    }
+
+    const homeownerSigned = !!signatureState.homeownerName;
+    const contractorSigned = !!signatureState.contractorName;
+    const isFullySigned = homeownerSigned && contractorSigned;
+    const wasFullySigned = rolesBefore.has('homeowner') && rolesBefore.has('contractor');
+
+    // Update contract flags
+    await pool.query(
+      `
+        UPDATE generated_contracts
+        SET homeowner_signed = $1, contractor_signed = $2
+        WHERE id = $3
+      `,
+      [homeownerSigned, contractorSigned, contractId]
+    );
 
     // Update contract text to reflect signature lines
     const baseText = stripExistingSignaturesSection(contractResult.rows[0].contract_text || '');
@@ -7743,6 +7790,33 @@ app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res)
       updatedText,
       contractId,
     ]);
+
+    // Notify all signers when fully signed
+    if (!wasFullySigned && isFullySigned) {
+      const signerIds = new Set(sigRows.rows.map((r) => r.user_id).filter(Boolean));
+      signerIds.add(userId);
+      for (const uid of signerIds) {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            uid,
+            'Contract fully signed',
+            `${contractResult.rows[0].description || 'Contract'} is fully signed.`,
+            JSON.stringify({
+              type: 'contract-fully-signed',
+              projectId,
+              contractId,
+              contractTitle: contractResult.rows[0].description || 'Contract',
+            }),
+          ]
+        );
+      }
+    }
 
     return res.status(201).json({
       signature: {
