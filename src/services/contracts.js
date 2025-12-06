@@ -14,6 +14,48 @@ export const createContractDraft = async ({ projectId, createdBy, title, terms }
   }
 };
 
+export const proposeContract = async ({ projectId, description, totalBudget, currency, userId }) => {
+  if (!projectId || !description || !totalBudget || !currency) {
+    return { success: false, error: 'projectId, description, totalBudget, and currency are required' };
+  }
+  try {
+    const res = await projectAPI.proposeGeneratedContract(projectId, {
+      description,
+      totalBudget,
+      currency,
+      userId,
+    });
+    return { success: true, data: res.data };
+  } catch (error) {
+    const msg = error.response?.data?.message || error.response?.data?.error || 'Failed to propose contract';
+    return { success: false, error: msg };
+  }
+};
+
+export const fetchGeneratedContracts = async (projectId) => {
+  if (!projectId) return { success: false, error: 'projectId is required' };
+  try {
+    const res = await projectAPI.listGeneratedContracts(projectId);
+    return { success: true, data: res.data || [] };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to load contracts';
+    return { success: false, error: msg };
+  }
+};
+
+export const fetchGeneratedContract = async (projectId, contractId) => {
+  if (!projectId || !contractId) {
+    return { success: false, error: 'projectId and contractId are required' };
+  }
+  try {
+    const res = await projectAPI.getGeneratedContract(projectId, contractId);
+    return { success: true, data: res.data };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to load contract';
+    return { success: false, error: msg };
+  }
+};
+
 export const fetchContractsForProject = async (projectId) => {
   if (!projectId) return { success: false, error: 'projectId is required' };
   try {

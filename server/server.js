@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
+const { runGeminiPrompt } = require('./geminiClient');
 require('dotenv').config();
 const asyncHandler = require('./utils/asyncHandler');
 const { ensureUuid } = require('./utils/validation');
@@ -868,6 +869,22 @@ const initDb = async () => {
   await pool.query("ALTER TABLE disputes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'");
   await pool.query("ALTER TABLE disputes ALTER COLUMN status SET DEFAULT 'open'");
   await pool.query('CREATE INDEX IF NOT EXISTS disputes_status_idx ON disputes (status, priority)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS generated_contracts (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      description TEXT NOT NULL,
+      total_budget NUMERIC NOT NULL,
+      currency TEXT NOT NULL,
+      contract_text TEXT NOT NULL,
+      created_by_user_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS generated_contracts_project_idx ON generated_contracts (project_id, created_at DESC)'
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS flags (
@@ -1769,6 +1786,18 @@ const mapComplianceRow = (row = {}) => ({
   expiresAt: row.expires_at,
   status: row.status || 'active',
   notes: row.notes || '',
+  createdAt: row.created_at,
+});
+
+const mapGeneratedContractRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  description: row.description || '',
+  totalBudget:
+    row.total_budget !== null && row.total_budget !== undefined ? Number(row.total_budget) : null,
+  currency: row.currency || '',
+  contractText: row.contract_text || '',
+  createdByUserId: row.created_by_user_id || null,
   createdAt: row.created_at,
 });
 
@@ -7109,6 +7138,180 @@ app.post('/api/admin/flags/:id/resolve', async (req, res) => {
   } catch (error) {
     logError('admin:flags:resolve:error', { id }, error);
     const message = pool ? 'Failed to resolve flag' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/projects/:projectId/contracts/propose', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { description, totalBudget, currency, userId } = req.body || {};
+    const budgetNum = Number(totalBudget);
+    if (
+      !projectId ||
+      typeof description !== 'string' ||
+      !description.trim() ||
+      !Number.isFinite(budgetNum) ||
+      budgetNum <= 0 ||
+      typeof currency !== 'string' ||
+      !currency.trim()
+    ) {
+      return res
+        .status(400)
+        .json({ error: 'BAD_REQUEST', message: 'Invalid contract proposal input' });
+    }
+
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    // If a userId is provided, ensure they are owner or assigned contractor
+    if (userId) {
+      const contractorId = await getAssignedContractorId(projectId);
+      if (project.user_id !== userId && contractorId !== userId) {
+        return res.status(403).json({ message: 'Not authorized to propose for this project' });
+      }
+    }
+
+    const prompt = `
+You are drafting a residential construction contract for a home renovation escrow platform.
+Use the following data:
+
+Project title: ${project.title || ''}
+Project address: ${project.address || 'N/A'}
+Jurisdiction: ${project.timeline || 'N/A'}
+Total budget: ${budgetNum} ${currency}
+Short description of the work: ${description}
+
+Write a clear, professional contract between the homeowner and contractor.
+Include sections like:
+- Parties
+- Scope of Work
+- Milestones & Payment Schedule (break the total budget into 3–6 logical milestones)
+- Change Orders
+- Warranties
+- Dispute Resolution
+- Termination
+- Signatures
+
+Output the contract as clean markdown text only.
+`.trim();
+
+    let draft1;
+    try {
+      draft1 = await runGeminiPrompt(prompt);
+    } catch (err) {
+      logError('gemini:contract:prompt1', { projectId }, err);
+      return res
+        .status(502)
+        .json({ error: 'GEMINI_ERROR', message: 'Failed to generate contract' });
+    }
+
+    let contractText = draft1 || '';
+    const tooShort = !contractText || contractText.length < 800;
+    const missingKeywords =
+      !/scope of work/i.test(contractText) || !/payment/i.test(contractText);
+    if (tooShort || missingKeywords) {
+      try {
+        const prompt2 = `
+Improve and reformat the following contract draft into a professional, readable residential construction contract.
+Keep the same meaning and legal intent, but fix awkward wording and formatting.
+Return only markdown text.
+${contractText}
+`.trim();
+        const draft2 = await runGeminiPrompt(prompt2);
+        if (draft2 && draft2.length > 100) {
+          contractText = draft2;
+        }
+      } catch (err) {
+        logError('gemini:contract:prompt2', { projectId }, err);
+      }
+    }
+
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const insert = await pool.query(
+      `
+        INSERT INTO generated_contracts (id, project_id, description, total_budget, currency, contract_text, created_by_user_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        RETURNING *
+      `,
+      [id, projectId, description.trim(), budgetNum, currency.trim(), contractText, userId || null]
+    );
+
+    const row = insert.rows[0];
+    return res.status(201).json({
+      id: row.id,
+      projectId,
+      description: row.description,
+      totalBudget: Number(row.total_budget),
+      currency: row.currency,
+      contractText,
+      createdAt: row.created_at,
+    });
+  } catch (error) {
+    logError('contracts:propose:error', { projectId: req.params?.projectId }, error);
+    return res
+      .status(500)
+      .json({ error: 'GEMINI_ERROR', message: 'Failed to generate contract' });
+  }
+});
+
+app.get('/api/projects/:projectId/contracts', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) {
+      return res.status(400).json({ message: 'projectId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT id, project_id, description, total_budget, currency, created_at
+        FROM generated_contracts
+        WHERE project_id = $1
+        ORDER BY created_at DESC
+      `,
+      [projectId]
+    );
+    const mapped = result.rows.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      description: row.description,
+      totalBudget: Number(row.total_budget),
+      currency: row.currency,
+      createdAt: row.created_at,
+    }));
+    return res.json(mapped);
+  } catch (error) {
+    logError('contracts:list-generated:error', { projectId: req.params?.projectId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    if (!projectId || !contractId) {
+      return res.status(400).json({ message: 'projectId and contractId are required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    return res.json(mapGeneratedContractRow(result.rows[0]));
+  } catch (error) {
+    logError('contracts:get-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to fetch contract'
+      : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
 });
