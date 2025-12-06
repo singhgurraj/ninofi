@@ -38,6 +38,7 @@ function renderSignaturesSection(state) {
     ].join('\n');
 }
 exports.renderSignaturesSection = renderSignaturesSection;
+exports.SIGNATURE_SECTION_LINE_COUNT = renderSignaturesSection({}).split('\n').length;
 function attachSignaturesToContract(contractMarkdown, state) {
     return contractMarkdown.trimEnd() + '\n\n**Signatures**\n\n' + renderSignaturesSection(state);
 }

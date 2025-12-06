@@ -11,7 +11,12 @@ const { runGeminiPrompt } = require('./geminiClient');
 require('dotenv').config();
 const asyncHandler = require('./utils/asyncHandler');
 const { ensureUuid } = require('./utils/validation');
-const { buildCenteredNameLine, applySignature, renderSignaturesSection } = require('./utils/signatures');
+const {
+  buildCenteredNameLine,
+  applySignature,
+  renderSignaturesSection,
+  SIGNATURE_SECTION_LINE_COUNT,
+} = require('./utils/signatures');
 
 const app = express();
 console.log('[server] Starting server...');
@@ -1951,11 +1956,15 @@ const extractBase64Payload = (raw = '') => {
 const stripExistingSignaturesSection = (text = '') => {
   if (!text) return '';
   const lines = text.split('\n');
-  const headerIndex = lines.findIndex((line) => /\*\*Signatures\*\*/i.test(line));
+  const headerIndex = lines.findIndex((line) => /\*\*Signatures\*\*:?/i.test(line));
   if (headerIndex === -1) {
     return text.trimEnd();
   }
-  const endIndex = Math.min(lines.length, headerIndex + 1 + 8); // header + 8 lines (4 fields + blank lines)
+  // Remove until the next markdown header (another **Section**) or end of text
+  const nextHeaderIndex = lines.findIndex(
+    (line, idx) => idx > headerIndex && /^\s*\*\*.+\*\*/.test(line)
+  );
+  const endIndex = nextHeaderIndex !== -1 ? nextHeaderIndex : lines.length;
   const before = lines.slice(0, headerIndex).join('\n').trimEnd();
   const after = lines.slice(endIndex).join('\n').trimStart();
   if (before && after) return `${before}\n\n${after}`.trimEnd();

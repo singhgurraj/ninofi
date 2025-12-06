@@ -61,6 +61,8 @@ export function renderSignaturesSection(state: SignatureState): string {
   ].join('\n');
 }
 
+export const SIGNATURE_SECTION_LINE_COUNT = renderSignaturesSection({}).split('\n').length;
+
 /**
  * Optional helper to attach signatures to an existing contract body.
  */
