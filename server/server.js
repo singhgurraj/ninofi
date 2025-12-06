@@ -7388,6 +7388,188 @@ app.get('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
   }
 });
 
+// Approved generated contracts for a contractor (fully signed)
+app.get('/api/contracts/approved/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+
+    const result = await pool.query(
+      `
+        SELECT gc.*
+        FROM generated_contracts gc
+        JOIN generated_contract_signatures gcs ON gcs.contract_id = gc.id
+        WHERE gcs.user_id = $1
+          AND EXISTS (
+            SELECT 1 FROM generated_contract_signatures s
+            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'homeowner'
+          )
+          AND EXISTS (
+            SELECT 1 FROM generated_contract_signatures s
+            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'contractor'
+          )
+      `,
+      [contractorId]
+    );
+
+    const ids = result.rows.map((r) => r.id);
+    let signatures = [];
+    if (ids.length) {
+      const sigs = await pool.query(
+        `
+          SELECT gcs.*, u.full_name, u.role AS signer_role
+          FROM generated_contract_signatures gcs
+          LEFT JOIN users u ON u.id = gcs.user_id
+          WHERE gcs.contract_id = ANY($1::uuid[])
+        `,
+        [ids]
+      );
+      signatures = sigs.rows;
+    }
+
+    const groupedSigs = signatures.reduce((acc, row) => {
+      acc[row.contract_id] = acc[row.contract_id] || [];
+      acc[row.contract_id].push(row);
+      return acc;
+    }, {});
+
+    const payload = result.rows.map((row) => mapGeneratedContractRow(row, groupedSigs[row.id] || []));
+    return res.json(payload);
+  } catch (error) {
+    logError('contracts:list-approved-contractor:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Update a generated contract (either party)
+app.put('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const { userId, description, contractText, totalBudget, currency } = req.body || {};
+    if (!projectId || !contractId || !userId) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, contractId, and userId are required' });
+    }
+    await assertDbReady();
+
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    const allowed =
+      project.user_id === userId ||
+      contractorId === userId ||
+      contractResult.rows[0].created_by_user_id === userId;
+    if (!allowed) {
+      return res.status(403).json({ message: 'Not authorized to update this contract' });
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (description !== undefined) {
+      fields.push(`description = $${idx++}`);
+      values.push(description);
+    }
+    if (contractText !== undefined) {
+      fields.push(`contract_text = $${idx++}`);
+      values.push(contractText);
+    }
+    if (totalBudget !== undefined) {
+      fields.push(`total_budget = $${idx++}`);
+      values.push(totalBudget);
+    }
+    if (currency !== undefined) {
+      fields.push(`currency = $${idx++}`);
+      values.push(currency);
+    }
+    fields.push(`updated_at = NOW()`);
+
+    if (fields.length === 1) {
+      return res.status(400).json({ message: 'No update fields provided' });
+    }
+
+    values.push(contractId);
+    const updated = await pool.query(
+      `
+        UPDATE generated_contracts
+        SET ${fields.join(', ')}
+        WHERE id = $${idx}
+        RETURNING *
+      `,
+      values
+    );
+
+    const signatureResult = await pool.query(
+      `
+        SELECT gcs.*, u.full_name, u.role AS signer_role
+        FROM generated_contract_signatures gcs
+        LEFT JOIN users u ON u.id = gcs.user_id
+        WHERE gcs.contract_id = $1
+        ORDER BY gcs.signed_at ASC
+      `,
+      [contractId]
+    );
+
+    // Notify involved parties
+    try {
+      const actor = await getUserById(userId);
+      const targets = new Set();
+      if (participants?.ownerId && participants.ownerId !== userId) targets.add(participants.ownerId);
+      if (contractorId && contractorId !== userId) targets.add(contractorId);
+      const title = 'Contract updated';
+      const body = `${actor?.full_name || 'A user'} has updated ${description || updated.rows[0].description || 'a contract'}.`;
+      for (const targetId of targets) {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            targetId,
+            title,
+            body,
+            JSON.stringify({
+              type: 'contract-updated',
+              projectId,
+              contractId,
+              contractTitle: description || updated.rows[0].description || 'Contract',
+            }),
+          ]
+        );
+      }
+    } catch (notifErr) {
+      logError('contracts:update:notify:error', { contractId, projectId }, notifErr);
+    }
+
+    return res.json(mapGeneratedContractRow(updated.rows[0], signatureResult.rows));
+  } catch (error) {
+    logError('contracts:update:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to update contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 // Delete a generated contract
 app.delete('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
   try {

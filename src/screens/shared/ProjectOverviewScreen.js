@@ -1,5 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSelector } from 'react-redux';
 import {
@@ -8,13 +8,14 @@ import {
   proposeContract,
   deleteGeneratedContract,
   signGeneratedContract,
+  updateGeneratedContract,
 } from '../../services/contracts';
 import palette from '../../styles/palette';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
   const { user } = useSelector((state) => state.auth);
-  const [generatedContracts, setGeneratedContracts] = useState([]);
+  const [contracts, setContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractsError, setContractsError] = useState(null);
   const [proposeOpen, setProposeOpen] = useState(false);
@@ -27,6 +28,9 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const [viewing, setViewing] = useState(null);
   const [loadingContractText, setLoadingContractText] = useState(false);
   const [isSigning, setIsSigning] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
+  const [editFields, setEditFields] = useState({ description: '', contractText: '' });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   if (!project) {
     return (
@@ -55,13 +59,41 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     navigation.navigate('ProjectPersonnel', { project, role });
   };
 
+  const isFullySigned = useCallback((contract) => {
+    const roles = new Set(
+      (contract?.signatures || []).map((s) => (s.signerRole || '').toLowerCase())
+    );
+    return roles.has('homeowner') && roles.has('contractor');
+  }, []);
+
+  const proposedContracts = useMemo(
+    () => contracts.filter((c) => !isFullySigned(c)),
+    [contracts, isFullySigned]
+  );
+  const approvedContracts = useMemo(
+    () => contracts.filter((c) => isFullySigned(c)),
+    [contracts, isFullySigned]
+  );
+
   const loadContracts = useCallback(async () => {
     if (!project?.id) return;
     setContractsLoading(true);
     setContractsError(null);
     const res = await fetchGeneratedContracts(project.id);
     if (res.success) {
-      setGeneratedContracts(res.data || []);
+      const list = res.data || [];
+      // Fetch details (with signatures) for each generated contract
+      const detailed = await Promise.all(
+        list.map(async (c) => {
+          const detail = await fetchGeneratedContract(project.id, c.id);
+          return detail.success ? detail.data : c;
+        })
+      );
+      const withSignatures = detailed.map((c) => ({
+        ...c,
+        signatures: c.signatures || [],
+      }));
+      setContracts(withSignatures);
     } else {
       setContractsError(res.error || 'Failed to load contracts');
     }
@@ -94,7 +126,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     }
     setProposeOpen(false);
     setProposal({ description: '', totalBudget: '', currency: 'USD' });
-    setGeneratedContracts((prev) => [res.data, ...prev]);
+    setContracts((prev) => [res.data, ...prev]);
   };
 
   const openContract = async (contract) => {
@@ -125,7 +157,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
             Alert.alert('Error', res.error || 'Failed to delete contract');
             return;
           }
-          setGeneratedContracts((prev) => prev.filter((c) => c.id !== contractId));
+          setContracts((prev) => prev.filter((c) => c.id !== contractId));
           if (viewing?.id === contractId) {
             setViewing(null);
           }
@@ -159,6 +191,69 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
         signatures: newSignature ? [...withoutExisting, newSignature] : existing,
       };
     });
+    if (viewing) {
+      const updatedContract = {
+        ...viewing,
+        contractText: res.data?.contractText || viewing.contractText,
+        signatures: viewing?.signatures
+          ? [
+              ...viewing.signatures.filter((s) => s.userId !== newSignature?.userId),
+              ...(newSignature ? [newSignature] : []),
+            ]
+          : newSignature
+          ? [newSignature]
+          : [],
+      };
+      setContracts((prev) => {
+        const others = prev.filter((c) => c.id !== viewing.id);
+        return [...others, updatedContract];
+      });
+    }
+  };
+
+  const startEditContract = async (contract) => {
+    let contractToEdit = contract;
+    if (!contract.contractText) {
+      setLoadingContractText(true);
+      const res = await fetchGeneratedContract(project.id, contract.id);
+      setLoadingContractText(false);
+      if (res.success) {
+        contractToEdit = res.data;
+      }
+    }
+    setEditingContract(contractToEdit);
+    setEditFields({
+      description: contractToEdit.description || '',
+      contractText: contractToEdit.contractText || '',
+    });
+  };
+
+  const saveEditContract = async () => {
+    if (!project?.id || !editingContract?.id || !user?.id) return;
+    setIsSavingEdit(true);
+    const res = await updateGeneratedContract({
+      projectId: project.id,
+      contractId: editingContract.id,
+      userId: user.id,
+      payload: {
+        description: editFields.description,
+        contractText: editFields.contractText,
+      },
+    });
+    setIsSavingEdit(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to update contract');
+      return;
+    }
+    const updated = res.data;
+    setContracts((prev) => {
+      const others = prev.filter((c) => c.id !== updated.id);
+      return [...others, updated];
+    });
+    if (viewing?.id === updated.id) {
+      setViewing(updated);
+    }
+    setEditingContract(null);
   };
 
   const isContractor = role === 'contractor';
@@ -226,14 +321,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
         {role !== 'worker' && (
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Generated Contracts</Text>
+              <Text style={styles.sectionTitle}>Proposed Contracts</Text>
               {contractsLoading ? <Text style={styles.muted}>Loading…</Text> : null}
             </View>
             {contractsError ? <Text style={styles.errorText}>{contractsError}</Text> : null}
-            {!contractsLoading && !contractsError && generatedContracts.length === 0 ? (
-              <Text style={styles.muted}>No generated contracts yet.</Text>
+            {!contractsLoading && !contractsError && proposedContracts.length === 0 ? (
+              <Text style={styles.muted}>No proposed contracts yet.</Text>
             ) : null}
-            {generatedContracts.map((c) => (
+            {proposedContracts.map((c) => (
               <View key={c.id} style={styles.contractCard}>
                 <View style={styles.contractHeader}>
                   <Text style={styles.contractTitle}>{c.description || 'Contract'}</Text>
@@ -251,12 +346,41 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                   <TouchableOpacity onPress={() => handleDeleteGeneratedContract(c.id)}>
                     <Text style={styles.deleteLink}>Delete</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity onPress={() => startEditContract(c)}>
+                    <Text style={styles.actionLink}>Edit</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             ))}
             <TouchableOpacity style={[styles.button, styles.refreshButton]} onPress={loadContracts}>
               <Text style={styles.personnelText}>Refresh</Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {role !== 'worker' && approvedContracts.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Approved Contracts</Text>
+            </View>
+            {approvedContracts.map((c) => (
+              <View key={c.id} style={styles.contractCard}>
+                <View style={styles.contractHeader}>
+                  <Text style={styles.contractTitle}>{c.description || 'Contract'}</Text>
+                  <Text style={styles.contractMeta}>
+                    {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+                  </Text>
+                  <Text style={styles.contractMeta}>
+                    {new Date(c.createdAt).toLocaleDateString()}
+                  </Text>
+                </View>
+                <View style={styles.contractActions}>
+                  <TouchableOpacity onPress={() => openContract(c)}>
+                    <Text style={styles.actionLink}>View</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 
@@ -358,6 +482,12 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 <View style={styles.contractBody}>
                   <Text style={styles.contractTextBody}>{viewing?.contractText || ''}</Text>
                 </View>
+                {!isContractor && role === 'homeowner' ? null : null}
+                {proposedContracts.find((c) => c.id === viewing?.id) ? (
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => startEditContract(viewing)}>
+                    <Text style={styles.secondaryText}>Edit</Text>
+                  </TouchableOpacity>
+                ) : null}
                 <View style={styles.signatureBlock}>
                   <Text style={styles.sectionTitle}>Signatures</Text>
                   {(viewing?.signatures || []).map((sig) => (
@@ -406,13 +536,53 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                     );
                   })()}
                 </View>
-                <TouchableOpacity style={styles.secondaryButton}>
-                  <Text style={styles.secondaryText}>Download as PDF (coming soon)</Text>
-                </TouchableOpacity>
-              </>
-            )}
+        <TouchableOpacity style={styles.secondaryButton}>
+          <Text style={styles.secondaryText}>Download as PDF (coming soon)</Text>
+        </TouchableOpacity>
+      </>
+    )}
           </ScrollView>
         </SafeAreaView>
+      </Modal>
+
+      <Modal visible={Boolean(editingContract)} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Contract</Text>
+            <Text style={styles.label}>Title / Description</Text>
+            <TextInput
+              style={styles.input}
+              value={editFields.description}
+              onChangeText={(text) => setEditFields((prev) => ({ ...prev, description: text }))}
+              placeholder="Contract title"
+            />
+            <Text style={styles.label}>Contract Text</Text>
+            <TextInput
+              style={[styles.input, styles.multiline, { minHeight: 180 }]}
+              multiline
+              value={editFields.contractText}
+              onChangeText={(text) => setEditFields((prev) => ({ ...prev, contractText: text }))}
+              placeholder="Contract markdown"
+              placeholderTextColor={palette.muted}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => setEditingContract(null)}
+                disabled={isSavingEdit}
+              >
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.primaryButton, styles.flex1, isSavingEdit && styles.disabled]}
+                onPress={saveEditContract}
+                disabled={isSavingEdit}
+              >
+                <Text style={styles.primaryText}>{isSavingEdit ? 'Saving…' : 'Save'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );

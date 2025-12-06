@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { contractAPI } from '../../services/contracts';
+import { contractAPI, fetchApprovedContractsForContractor } from '../../services/contracts';
 
 const statusStyles = {
   pending: { label: 'Pending', backgroundColor: '#FEF3C7', color: '#D97706' },
@@ -37,6 +37,7 @@ const formatDate = (value) => {
 const ContractsScreen = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const [contracts, setContracts] = useState([]);
+  const [approvedGenerated, setApprovedGenerated] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [isModalVisible, setModalVisible] = useState(false);
@@ -54,6 +55,16 @@ const ContractsScreen = ({ navigation }) => {
       try {
         const res = await contractAPI.getUserContracts(user.id);
         setContracts(res.data || []);
+        if ((user.role || '').toLowerCase() === 'contractor') {
+          const approved = await fetchApprovedContractsForContractor(user.id);
+          if (approved.success) {
+            setApprovedGenerated(approved.data || []);
+          } else {
+            setApprovedGenerated([]);
+          }
+        } else {
+          setApprovedGenerated([]);
+        }
       } catch (error) {
         Alert.alert('Error', error.response?.data?.message || 'Failed to load contracts');
       } finally {
@@ -61,7 +72,7 @@ const ContractsScreen = ({ navigation }) => {
         setRefreshing(false);
       }
     },
-    [user?.id]
+    [user?.id, user?.role]
   );
 
   useEffect(() => {
@@ -157,6 +168,35 @@ const ContractsScreen = ({ navigation }) => {
           <Text style={styles.muted}>No contracts yet.</Text>
         )}
         {!isLoading && contracts.map(renderContractCard)}
+        {approvedGenerated.length > 0 && (
+          <View style={{ marginTop: 16 }}>
+            <Text style={styles.sectionTitle}>Approved Contracts</Text>
+            {approvedGenerated.map((c) => (
+              <TouchableOpacity
+                key={c.id}
+                style={styles.card}
+                onPress={() =>
+                  navigation.navigate('ProjectOverview', {
+                    project: { id: c.projectId },
+                    role: 'contractor',
+                    openContractId: c.id,
+                  })
+                }
+              >
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitle}>{c.description || 'Contract'}</Text>
+                  <View style={[styles.badge, { backgroundColor: statusStyles.signed.backgroundColor }]}>
+                    <Text style={[styles.badgeText, { color: statusStyles.signed.color }]}>Approved</Text>
+                  </View>
+                </View>
+                <Text style={styles.cardMeta}>Project: {c.projectId}</Text>
+                <Text style={styles.cardMeta}>
+                  Total: {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={isModalVisible} animationType='slide' transparent>

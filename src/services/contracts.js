@@ -32,6 +32,30 @@ export const proposeContract = async ({ projectId, description, totalBudget, cur
   }
 };
 
+export const createContract = async ({ title, terms, projectId, createdBy }) => {
+  if (!title || !terms || !projectId || !createdBy) {
+    return { success: false, error: 'title, terms, projectId, and createdBy are required' };
+  }
+  try {
+    const res = await projectAPI.createContract({ title, terms, projectId, createdBy });
+    return { success: true, data: res.data };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to create contract';
+    return { success: false, error: msg };
+  }
+};
+
+export const fetchUserContracts = async (userId) => {
+  if (!userId) return { success: false, error: 'userId is required' };
+  try {
+    const res = await projectAPI.getUserContracts(userId);
+    return { success: true, data: res.data || [] };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to load contracts';
+    return { success: false, error: msg };
+  }
+};
+
 export const fetchGeneratedContracts = async (projectId) => {
   if (!projectId) return { success: false, error: 'projectId is required' };
   try {
@@ -98,6 +122,30 @@ export const fetchContractsForProject = async (projectId) => {
   }
 };
 
+export const updateGeneratedContract = async ({ projectId, contractId, userId, payload }) => {
+  if (!projectId || !contractId || !userId) {
+    return { success: false, error: 'projectId, contractId, and userId are required' };
+  }
+  try {
+    const res = await projectAPI.updateGeneratedContract(projectId, contractId, { userId, ...payload });
+    return { success: true, data: res.data };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to update contract';
+    return { success: false, error: msg };
+  }
+};
+
+export const fetchApprovedContractsForContractor = async (contractorId) => {
+  if (!contractorId) return { success: false, error: 'contractorId is required' };
+  try {
+    const res = await projectAPI.listApprovedContractsForContractor(contractorId);
+    return { success: true, data: res.data || [] };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to load approved contracts';
+    return { success: false, error: msg };
+  }
+};
+
 export const signContract = async ({ contractId, userId, signatureData }) => {
   if (!contractId || !userId || !signatureData) {
     return { success: false, error: 'contractId, userId, and signatureData are required' };
@@ -144,4 +192,11 @@ export const deleteContract = async ({ contractId, userId }) => {
     const msg = error.response?.data?.message || 'Failed to delete contract';
     return { success: false, error: msg };
   }
+};
+
+export const contractAPI = {
+  getUserContracts: fetchUserContracts,
+  createContract,
+  deleteContract,
+  fetchApprovedContractsForContractor,
 };
