@@ -1949,8 +1949,11 @@ const extractBase64Payload = (raw = '') => {
 
 const stripExistingSignaturesSection = (text = '') => {
   if (!text) return '';
-  const match = text.match(/(^|\n)\*\*Signatures\*\*/);
-  if (!match) return text.trimEnd();
+  const regex = /(^|\n)\*\*Signatures\*\*/i;
+  const match = text.match(regex);
+  if (!match || match.index === undefined) {
+    return text.trimEnd();
+  }
   return text.slice(0, match.index).trimEnd();
 };
 
