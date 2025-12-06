@@ -95,7 +95,14 @@ const HomeownerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('CreateProject')}
             >
               <Text style={styles.actionIcon}>➕</Text>
-              <Text style={styles.actionText}>New Project</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                New Project
+              </Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -103,14 +110,28 @@ const HomeownerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('ContractorSearch')}
             >
               <Text style={styles.actionIconOutline}>🔍</Text>
-              <Text style={styles.actionTextOutline}>Find Contractors</Text>
+              <Text
+                style={styles.actionTextOutline}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Find Contractors
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => navigation.navigate('Contracts')}
             >
               <Text style={styles.actionIcon}>📝</Text>
-              <Text style={styles.actionText}>Contracts</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Contracts
+              </Text>
             </TouchableOpacity>
           </View>
         </View>

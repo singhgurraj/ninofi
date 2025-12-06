@@ -359,19 +359,47 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 </View>
                 <View style={styles.contractActions}>
                   <TouchableOpacity onPress={() => openContract(c)}>
-                    <Text style={styles.actionLink}>View</Text>
+                    <Text
+                      style={styles.actionLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      View
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => startEditContract(c)}>
-                    <Text style={styles.actionLink}>Edit</Text>
+                    <Text
+                      style={styles.actionLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      Edit
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => handleDeleteGeneratedContract(c.id)}>
-                    <Text style={styles.deleteLink}>Delete</Text>
+                    <Text
+                      style={styles.deleteLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      Delete
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             ))}
             <TouchableOpacity style={[styles.button, styles.refreshButton]} onPress={loadContracts}>
-              <Text style={styles.personnelText}>Refresh</Text>
+              <Text
+                style={styles.personnelText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Refresh
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -394,7 +422,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 </View>
                 <View style={styles.contractActions}>
                   <TouchableOpacity onPress={() => openContract(c)}>
-                    <Text style={styles.actionLink}>View</Text>
+                    <Text
+                      style={styles.actionLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      View
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -404,11 +439,25 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
 
         <View style={styles.buttonRow}>
           <TouchableOpacity style={[styles.button, styles.personnelButton]} onPress={goPersonnel}>
-            <Text style={styles.personnelText}>People</Text>
+            <Text
+              style={styles.personnelText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.9}
+            >
+              People
+            </Text>
           </TouchableOpacity>
           {showEdit ? (
             <TouchableOpacity style={[styles.button, styles.editButton]} onPress={handleEdit}>
-              <Text style={styles.buttonText}>Edit</Text>
+              <Text
+                style={styles.buttonText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Edit
+              </Text>
             </TouchableOpacity>
           ) : null}
           {isContractor ? (
@@ -416,7 +465,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               style={[styles.button, styles.contractButton]}
               onPress={() => navigation.navigate('PostWork', { project, role })}
             >
-              <Text style={styles.contractText}>Post Work</Text>
+              <Text
+                style={styles.contractText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Post Work
+              </Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -427,7 +483,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               style={[styles.button, styles.contractButton]}
               onPress={() => setProposeOpen(true)}
             >
-              <Text style={styles.contractText}>Propose Contract</Text>
+              <Text
+                style={styles.contractText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Propose Contract
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -465,14 +528,28 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.secondaryButton} onPress={() => setProposeOpen(false)}>
-                <Text style={styles.secondaryText}>Cancel</Text>
+                <Text
+                  style={styles.secondaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.9}
+                >
+                  Cancel
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.secondaryButton, styles.flex1, isSubmitting && styles.disabled]}
                 onPress={handleProposeContract}
                 disabled={isSubmitting}
               >
-                <Text style={styles.secondaryText}>{isSubmitting ? 'Submitting…' : 'Submit'}</Text>
+                <Text
+                  style={styles.secondaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {isSubmitting ? 'Submitting…' : 'Submit'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -533,6 +610,9 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                           <Text
                             key={idx}
                             style={styles.signatureText}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.9}
                             onPress={() =>
                               label.includes('Homeowner')
                                 ? handleSignGenerated('homeowner')
@@ -547,7 +627,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                   })()}
                 </View>
                 <TouchableOpacity style={styles.secondaryButton}>
-                  <Text style={styles.secondaryText}>Download as PDF (coming soon)</Text>
+                  <Text
+                    style={styles.secondaryText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >
+                    Download as PDF (coming soon)
+                  </Text>
                 </TouchableOpacity>
               </>
     )}
@@ -592,14 +679,28 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 onPress={() => setEditingContract(null)}
                 disabled={isSavingEdit}
               >
-                <Text style={styles.secondaryText}>Cancel</Text>
+                <Text
+                  style={styles.secondaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.9}
+                >
+                  Cancel
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.primaryButton, styles.flex1, isSavingEdit && styles.disabled]}
                 onPress={saveEditContract}
                 disabled={isSavingEdit}
               >
-                <Text style={styles.primaryText}>{isSavingEdit ? 'Saving…' : 'Save'}</Text>
+                <Text
+                  style={styles.primaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {isSavingEdit ? 'Saving…' : 'Save'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -722,8 +823,6 @@ const styles = StyleSheet.create({
 
   errorText: { color: '#c1121f', fontSize: 13 },
   actionLink: { color: palette.primary, fontWeight: '700', fontSize: 14, letterSpacing: 0.2 },
-  errorText: { color: '#c1121f' },
-  actionLink: { color: palette.primary, fontWeight: '700' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',

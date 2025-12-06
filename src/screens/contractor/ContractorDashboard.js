@@ -115,7 +115,14 @@ const ContractorDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('FindJobs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
-              <Text style={styles.actionTitle}>Find Jobs</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Find Jobs
+              </Text>
               <Text style={styles.actionText}>Browse nearby gigs</Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -123,7 +130,14 @@ const ContractorDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('Applications')}
             >
               <Text style={styles.actionIcon}>📄</Text>
-              <Text style={styles.actionTitle}>My Applications</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Applications
+              </Text>
               <Text style={styles.actionText}>Manage/withdraw</Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -131,7 +145,14 @@ const ContractorDashboard = ({ navigation }) => {
 onPress={() => navigation.navigate('Portfolio')}
             >
               <Text style={styles.actionIcon}>🖼️</Text>
-              <Text style={styles.actionTitle}>Portfolio</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Portfolio
+              </Text>
               <Text style={styles.actionText}>Showcase work</Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -142,7 +163,14 @@ onPress={() => navigation.navigate('Portfolio')}
             })}
             >
               <Text style={styles.actionIcon}>📸</Text>
-              <Text style={styles.actionTitle}>Submit Work</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Submit Work
+              </Text>
               <Text style={styles.actionText}>Send milestone evidence</Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -150,7 +178,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('Wallet')}
             >
               <Text style={styles.actionIcon}>💰</Text>
-              <Text style={styles.actionTitle}>My Wallet</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Wallet
+              </Text>
               <Text style={styles.actionText}>Balance & transfers</Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -158,7 +193,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('Compliance')}
             >
               <Text style={styles.actionIcon}>📑</Text>
-              <Text style={styles.actionTitle}>Compliance</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Compliance
+              </Text>
               <Text style={styles.actionText}>Licenses & insurance</Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -166,7 +208,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('AuditLog')}
             >
               <Text style={styles.actionIcon}>🕑</Text>
-              <Text style={styles.actionTitle}>Activity</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Activity
+              </Text>
               <Text style={styles.actionText}>Recent actions</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -174,7 +223,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('RegisterWorker')}
             >
               <Text style={styles.actionIcon}>➕</Text>
-              <Text style={styles.actionTitle}>Register Worker</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Register Worker
+              </Text>
               <Text style={styles.actionText}>Add employees to your team</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -182,7 +238,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('ExpenseTracking')}
             >
               <Text style={styles.actionIcon}>💰</Text>
-              <Text style={styles.actionTitle}>Expenses</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Expenses
+              </Text>
               <Text style={styles.actionText}>Track project costs</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -190,7 +253,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('PayrollTracking')}
             >
               <Text style={styles.actionIcon}>⏱️</Text>
-              <Text style={styles.actionTitle}>Work Hours</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Work Hours
+              </Text>
               <Text style={styles.actionText}>Log time & earnings</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -198,7 +268,14 @@ onPress={() => navigation.navigate('Portfolio')}
               onPress={() => navigation.navigate('Contracts')}
             >
               <Text style={styles.actionIcon}>📝</Text>
-              <Text style={styles.actionTitle}>Contracts</Text>
+              <Text
+                style={styles.actionTitle}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Contracts
+              </Text>
               <Text style={styles.actionText}>View & sign docs</Text>
             </TouchableOpacity>
           </View>

@@ -94,7 +94,14 @@ const WorkerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('BrowseGigs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
-              <Text style={styles.actionText}>Browse Gigs</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Browse Gigs
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -102,14 +109,28 @@ const WorkerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('WorkerGigs')}
             >
               <Text style={styles.actionIcon}>📋</Text>
-              <Text style={styles.actionText}>My Gigs</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Gigs
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => navigation.navigate('WorkerGigApplications')}
             >
               <Text style={styles.actionIcon}>✅</Text>
-              <Text style={styles.actionText}>My Applications</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Applications
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -117,7 +138,14 @@ const WorkerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('Wallet')}
             >
               <Text style={styles.actionIcon}>💰</Text>
-              <Text style={styles.actionText}>My Wallet</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Wallet
+              </Text>
             </TouchableOpacity>
           </View>
         </View>

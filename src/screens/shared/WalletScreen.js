@@ -86,7 +86,14 @@ const WalletScreen = ({ navigation }) => {
               onPress={handleWithdraw}
             >
               <Text style={styles.withdrawIcon}>↓</Text>
-              <Text style={styles.withdrawText}>Withdraw</Text>
+              <Text
+                style={styles.withdrawText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Withdraw
+              </Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -94,7 +101,14 @@ const WalletScreen = ({ navigation }) => {
               onPress={() => Alert.alert('Analytics', 'Detailed analytics coming soon')}
             >
               <Text style={styles.analyticsIcon}>📊</Text>
-              <Text style={styles.analyticsText}>Analytics</Text>
+              <Text
+                style={styles.analyticsText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Analytics
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -106,7 +120,14 @@ const WalletScreen = ({ navigation }) => {
             onPress={() => Alert.alert('Bank Account', 'Manage bank accounts - Coming soon')}
           >
             <Text style={styles.quickActionIcon}>🏦</Text>
-            <Text style={styles.quickActionLabel}>Bank Account</Text>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+            >
+              Bank Account
+            </Text>
             <Text style={styles.quickActionDesc}>2-3 business days</Text>
           </TouchableOpacity>
 
@@ -115,7 +136,14 @@ const WalletScreen = ({ navigation }) => {
             onPress={() => Alert.alert('Instant Transfer', 'Instant transfer - Coming soon')}
           >
             <Text style={styles.quickActionIcon}>⚡</Text>
-            <Text style={styles.quickActionLabel}>Instant Transfer</Text>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+            >
+              Instant Transfer
+            </Text>
             <Text style={styles.quickActionDesc}>$2.50 fee</Text>
           </TouchableOpacity>
 
@@ -124,7 +152,14 @@ const WalletScreen = ({ navigation }) => {
             onPress={() => Alert.alert('Tax Documents', 'Tax documents - Coming soon')}
           >
             <Text style={styles.quickActionIcon}>📋</Text>
-            <Text style={styles.quickActionLabel}>Tax Documents</Text>
+            <Text
+              style={styles.quickActionLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+            >
+              Tax Documents
+            </Text>
             <Text style={styles.quickActionDesc}>1099s & receipts</Text>
           </TouchableOpacity>
         </View>

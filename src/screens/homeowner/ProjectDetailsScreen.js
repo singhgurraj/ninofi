@@ -119,7 +119,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       }}
     >
       <Text style={styles.actionIcon}>✓</Text>
-      <Text style={styles.actionText}>Review Milestone</Text>
+      <Text
+        style={styles.actionText}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        Review Milestone
+      </Text>
     </TouchableOpacity>
     
     <TouchableOpacity 
@@ -127,7 +134,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       onPress={() => navigation.navigate('Chat', { project })}
     >
       <Text style={styles.actionIconOutline}>💬</Text>
-      <Text style={styles.actionTextOutline}>Contact</Text>
+      <Text
+        style={styles.actionTextOutline}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        Contact
+      </Text>
     </TouchableOpacity>
     
     <TouchableOpacity 
@@ -135,7 +149,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       onPress={() => console.log('Call - Coming soon')}
     >
       <Text style={styles.actionIconOutline}>📞</Text>
-      <Text style={styles.actionTextOutline}>Call</Text>
+      <Text
+        style={styles.actionTextOutline}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        Call
+      </Text>
     </TouchableOpacity>
     {project?.assignedContractor?.id ? (
       <TouchableOpacity
@@ -148,7 +169,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
         }
       >
         <Text style={styles.actionIconOutline}>⭐</Text>
-        <Text style={styles.actionTextOutline}>Leave Review</Text>
+        <Text
+          style={styles.actionTextOutline}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.85}
+        >
+          Leave Review
+        </Text>
       </TouchableOpacity>
     ) : null}
   </View>
