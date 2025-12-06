@@ -1952,19 +1952,23 @@ const extractBase64Payload = (raw = '') => {
   return data || '';
 };
 
-// Remove only the existing signatures block (header + 8 following lines). Leaves content after it intact.
+// Remove only the existing signatures block (header until next markdown header), preserving surrounding content.
 const stripExistingSignaturesSection = (text = '') => {
   if (!text) return '';
   const lines = text.split('\n');
-  const headerIndex = lines.findIndex((line) => /\*\*Signatures\*\*:?/i.test(line));
-  if (headerIndex === -1) {
-    return text.trimEnd();
+  const isSignatureHeader = (line = '') => /\*\*[^*]*signatures[^*]*\*\*:*/i.test(line);
+  const headerIndex = lines.findIndex((line) => isSignatureHeader(line));
+  if (headerIndex === -1) return text.trimEnd();
+
+  // Find the next markdown header after the signatures header
+  let endIndex = lines.length;
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    if (/^\s*\*\*.+\*\*/.test(lines[i])) {
+      endIndex = i;
+      break;
+    }
   }
-  // Remove until the next markdown header (another **Section**) or end of text
-  const nextHeaderIndex = lines.findIndex(
-    (line, idx) => idx > headerIndex && /^\s*\*\*.+\*\*/.test(line)
-  );
-  const endIndex = nextHeaderIndex !== -1 ? nextHeaderIndex : lines.length;
+
   const before = lines.slice(0, headerIndex).join('\n').trimEnd();
   const after = lines.slice(endIndex).join('\n').trimStart();
   if (before && after) return `${before}\n\n${after}`.trimEnd();
