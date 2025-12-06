@@ -1,16 +1,16 @@
 const palette = {
-  background: '#F5F0FF',
+  background: '#F4F6FB',
   surface: '#FFFFFF',
-  primary: '#7E4DFF',
-  primaryDark: '#5D2EDB',
-  accent: '#D9C6FF',
-  text: '#1C1C1C',
-  muted: '#6E6A7C',
-  border: '#E2D4FF',
-  success: '#41C87A',
-  warning: '#F4A640',
-  error: '#E45858',
-  textSecondary: '#6E6A7C',
+  primary: '#4F46E5',
+  primaryDark: '#3730A3',
+  accent: '#E0E7FF',
+  text: '#0B1224',
+  muted: '#6B7280',
+  border: '#E5E7EB',
+  success: '#22C55E',
+  warning: '#F59E0B',
+  error: '#EF4444',
+  textSecondary: '#94A3B8',
 };
 
 export default palette;
