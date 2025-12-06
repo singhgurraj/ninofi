@@ -6,10 +6,18 @@ import invoiceReducer from './invoiceSlice';
 import projectReducer from './projectSlice';
 import notificationReducer from './notificationSlice';
 
+const createNoopStorage = () => ({
+  getItem: async () => null,
+  setItem: async () => {},
+  removeItem: async () => {},
+});
+
+const storage = typeof window === 'undefined' ? createNoopStorage() : AsyncStorage;
+
 // Persist config for auth (so user stays logged in)
 const authPersistConfig = {
   key: 'auth',
-  storage: AsyncStorage,
+  storage,
   whitelist: ['user', 'token', 'isAuthenticated', 'role'],
 };
 

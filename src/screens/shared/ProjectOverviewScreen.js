@@ -1,16 +1,29 @@
 import React, { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { deleteContract, fetchContractsForProject } from '../../services/contracts';
+import {
+  fetchGeneratedContracts,
+  fetchGeneratedContract,
+  proposeContract,
+} from '../../services/contracts';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
   const { user } = useSelector((state) => state.auth);
-  const [contracts, setContracts] = useState([]);
+  const [generatedContracts, setGeneratedContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractsError, setContractsError] = useState(null);
+  const [proposeOpen, setProposeOpen] = useState(false);
+  const [proposal, setProposal] = useState({
+    description: '',
+    totalBudget: '',
+    currency: 'USD',
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const [loadingContractText, setLoadingContractText] = useState(false);
 
   if (!project) {
     return (
@@ -39,17 +52,13 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     navigation.navigate('ProjectPersonnel', { project, role });
   };
 
-  const handleProposeContract = () => {
-    navigation.navigate('ContractWizard', { project, role });
-  };
-
   const loadContracts = useCallback(async () => {
     if (!project?.id) return;
     setContractsLoading(true);
     setContractsError(null);
-    const res = await fetchContractsForProject(project.id);
+    const res = await fetchGeneratedContracts(project.id);
     if (res.success) {
-      setContracts(res.data || []);
+      setGeneratedContracts(res.data || []);
     } else {
       setContractsError(res.error || 'Failed to load contracts');
     }
@@ -62,30 +71,42 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     }, [loadContracts])
   );
 
-  const handleDelete = async (contract) => {
-    if (!user?.id) {
-      Alert.alert('Not signed in', 'Please log in.');
+  const handleProposeContract = async () => {
+    if (!proposal.description.trim() || !proposal.totalBudget || !proposal.currency.trim()) {
+      Alert.alert('Required', 'Add description, budget, and currency.');
       return;
     }
-    Alert.alert(
-      'Delete contract?',
-      `This will delete "${contract.title || 'Contract'}" if it is pending.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const res = await deleteContract({ contractId: contract.id, userId: user.id });
-            if (!res.success) {
-              Alert.alert('Error', res.error);
-              return;
-            }
-            await loadContracts();
-          },
-        },
-      ]
-    );
+    setIsSubmitting(true);
+    const res = await proposeContract({
+      projectId: project.id,
+      description: proposal.description.trim(),
+      totalBudget: Number(proposal.totalBudget),
+      currency: proposal.currency.trim(),
+      userId: user?.id,
+    });
+    setIsSubmitting(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to propose contract');
+      return;
+    }
+    setProposeOpen(false);
+    setProposal({ description: '', totalBudget: '', currency: 'USD' });
+    setGeneratedContracts((prev) => [res.data, ...prev]);
+  };
+
+  const openContract = async (contract) => {
+    if (contract.contractText) {
+      setViewing(contract);
+      return;
+    }
+    setLoadingContractText(true);
+    const res = await fetchGeneratedContract(project.id, contract.id);
+    setLoadingContractText(false);
+    if (res.success) {
+      setViewing(res.data);
+    } else {
+      Alert.alert('Error', res.error || 'Failed to load contract');
+    }
   };
 
   const isContractor = role === 'contractor';
@@ -153,40 +174,31 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
         {role !== 'worker' && (
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Proposed Contracts</Text>
+              <Text style={styles.sectionTitle}>Generated Contracts</Text>
               {contractsLoading ? <Text style={styles.muted}>Loading…</Text> : null}
             </View>
             {contractsError ? <Text style={styles.errorText}>{contractsError}</Text> : null}
-            {!contractsLoading && !contractsError && (!contracts || contracts.length === 0) ? (
-              <Text style={styles.muted}>No contracts yet.</Text>
+            {!contractsLoading && !contractsError && generatedContracts.length === 0 ? (
+              <Text style={styles.muted}>No generated contracts yet.</Text>
             ) : null}
-            {contracts?.map((c) => {
-              const statusLabel = (c.status || 'pending').toUpperCase();
-              return (
-                <View key={c.id} style={styles.contractCard}>
-                  <View style={styles.contractHeader}>
-                    <Text style={styles.contractTitle}>{c.title || 'Contract'}</Text>
-                    <Text style={styles.contractMeta}>Status: {statusLabel}</Text>
-                    {typeof c.signatureCount === 'number' ? (
-                      <Text style={styles.contractMeta}>Signatures: {c.signatureCount}</Text>
-                    ) : null}
-                  </View>
-                  <View style={styles.contractActions}>
-                    <TouchableOpacity onPress={() => navigation.navigate('ContractView', { contract: c })}>
-                      <Text style={styles.actionLink}>View</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => navigation.navigate('ContractSignature', { contract: c })}>
-                      <Text style={styles.actionLink}>{statusLabel === 'SIGNED' ? 'View' : 'Sign'}</Text>
-                    </TouchableOpacity>
-                    {statusLabel === 'PENDING' ? (
-                      <TouchableOpacity onPress={() => handleDelete(c)}>
-                        <Text style={styles.actionLink}>Delete</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
+            {generatedContracts.map((c) => (
+              <View key={c.id} style={styles.contractCard}>
+                <View style={styles.contractHeader}>
+                  <Text style={styles.contractTitle}>{c.description || 'Contract'}</Text>
+                  <Text style={styles.contractMeta}>
+                    {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+                  </Text>
+                  <Text style={styles.contractMeta}>
+                    {new Date(c.createdAt).toLocaleDateString()}
+                  </Text>
                 </View>
-              );
-            })}
+                <View style={styles.contractActions}>
+                  <TouchableOpacity onPress={() => openContract(c)}>
+                    <Text style={styles.actionLink}>View</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
             <TouchableOpacity style={[styles.button, styles.refreshButton]} onPress={loadContracts}>
               <Text style={styles.personnelText}>Refresh</Text>
             </TouchableOpacity>
@@ -216,13 +228,89 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={[styles.button, styles.contractButton]}
-              onPress={handleProposeContract}
+              onPress={() => setProposeOpen(true)}
             >
               <Text style={styles.contractText}>Propose Contract</Text>
             </TouchableOpacity>
           </View>
         )}
       </ScrollView>
+
+      <Modal visible={proposeOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Propose Contract</Text>
+            <Text style={styles.label}>Description</Text>
+            <TextInput
+              style={[styles.input, styles.multiline]}
+              multiline
+              value={proposal.description}
+              onChangeText={(description) => setProposal((s) => ({ ...s, description }))}
+              placeholder="Describe scope, materials, deliverables"
+              placeholderTextColor={palette.muted}
+            />
+            <Text style={styles.label}>Total Budget</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={String(proposal.totalBudget)}
+              onChangeText={(totalBudget) => setProposal((s) => ({ ...s, totalBudget }))}
+              placeholder="50000"
+              placeholderTextColor={palette.muted}
+            />
+            <Text style={styles.label}>Currency</Text>
+            <TextInput
+              style={styles.input}
+              value={proposal.currency}
+              onChangeText={(currency) => setProposal((s) => ({ ...s, currency }))}
+              placeholder="USD"
+              placeholderTextColor={palette.muted}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => setProposeOpen(false)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.primaryButton, styles.flex1, isSubmitting && styles.disabled]}
+                onPress={handleProposeContract}
+                disabled={isSubmitting}
+              >
+                <Text style={styles.primaryText}>{isSubmitting ? 'Submitting…' : 'Submit'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={Boolean(viewing)} animationType="slide">
+        <SafeAreaView style={styles.container}>
+          <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <View style={styles.headerRow}>
+              <TouchableOpacity onPress={() => setViewing(null)}>
+                <Text style={styles.back}>←</Text>
+              </TouchableOpacity>
+              <Text style={styles.title}>Contract</Text>
+              <View style={{ width: 24 }} />
+            </View>
+            {loadingContractText ? (
+              <Text style={styles.muted}>Loading…</Text>
+            ) : (
+              <>
+                <Text style={styles.sectionTitle}>{viewing?.description}</Text>
+                <Text style={styles.meta}>
+                  {viewing?.currency} {Number(viewing?.totalBudget || 0).toLocaleString()}
+                </Text>
+                <View style={styles.contractBody}>
+                  <Text style={styles.contractTextBody}>{viewing?.contractText || ''}</Text>
+                </View>
+                <TouchableOpacity style={styles.secondaryButton}>
+                  <Text style={styles.secondaryText}>Download as PDF (coming soon)</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -309,6 +397,42 @@ const styles = StyleSheet.create({
   },
   errorText: { color: '#c1121f' },
   actionLink: { color: palette.primary, fontWeight: '700' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: palette.text },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 6 },
+  secondaryButton: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  secondaryText: { color: palette.text, fontWeight: '700' },
+  flex1: { flex: 1 },
+  disabled: { opacity: 0.6 },
+  contractBody: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: '#F8F8FB',
+  },
+  contractTextBody: { color: palette.text, lineHeight: 20 },
+  back: { fontSize: 20, color: palette.text },
 });
 
 export default ProjectOverviewScreen;
