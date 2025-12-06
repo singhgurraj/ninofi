@@ -538,7 +538,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.secondaryButton, styles.flex1, isSubmitting && styles.disabled]}
+                style={[styles.secondaryButton, isSubmitting && styles.disabled]}
                 onPress={handleProposeContract}
                 disabled={isSubmitting}
               >
