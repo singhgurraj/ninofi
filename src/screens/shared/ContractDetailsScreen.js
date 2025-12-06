@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
 import { contractAPI } from '../../services/contracts';
@@ -28,6 +29,7 @@ const formatDate = (value) => {
 };
 
 const ContractDetailsScreen = ({ route }) => {
+  const navigation = useNavigation();
   const { contractId } = route.params || {};
   const { user } = useSelector((state) => state.auth);
 
@@ -119,6 +121,13 @@ const ContractDetailsScreen = ({ route }) => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.backIcon}>←</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Contract Details</Text>
+        <View style={styles.headerSpacer} />
+      </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
           <View style={styles.cardHeader}>
@@ -204,6 +213,24 @@ const ContractDetailsScreen = ({ route }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backIcon: { fontSize: 24, color: '#333' },
+  headerTitle: { fontSize: 18, fontWeight: '600', flex: 1, textAlign: 'center' },
+  headerSpacer: { width: 40 },
   center: { justifyContent: 'center', alignItems: 'center' },
   content: { padding: 20, gap: 12 },
   card: {

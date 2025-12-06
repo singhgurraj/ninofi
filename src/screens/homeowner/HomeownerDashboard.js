@@ -105,6 +105,13 @@ const HomeownerDashboard = ({ navigation }) => {
               <Text style={styles.actionIconOutline}>🔍</Text>
               <Text style={styles.actionTextOutline}>Find Contractors</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('Contracts')}
+            >
+              <Text style={styles.actionIcon}>📝</Text>
+              <Text style={styles.actionText}>Contracts</Text>
+            </TouchableOpacity>
           </View>
         </View>
 

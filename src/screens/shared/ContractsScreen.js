@@ -131,6 +131,13 @@ const ContractsScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.backIcon}>←</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Contracts</Text>
+        <View style={styles.headerSpacer} />
+      </View>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
@@ -211,6 +218,34 @@ const ContractsScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backIcon: {
+    fontSize: 24,
+    color: '#333',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+  },
+  headerSpacer: {
+    width: 40,
+  },
   content: { padding: 20, gap: 12 },
   headerRow: {
     flexDirection: 'row',
