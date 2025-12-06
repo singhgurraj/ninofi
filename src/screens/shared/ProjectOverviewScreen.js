@@ -228,7 +228,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     });
   };
 
-  const saveEditContract = async () => {
+  const saveEditContract = async (options = { closeView: false }) => {
     if (!project?.id || !editingContract?.id || !user?.id) return;
     setIsSavingEdit(true);
     const res = await updateGeneratedContract({
@@ -251,10 +251,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
       return [...others, updated];
     });
     if (viewing?.id === updated.id) {
-      setViewing(updated);
+      setViewing(options.closeView ? null : updated);
     }
     setEditingContract(null);
   };
+
+  const handleReturnSave = useCallback(() => {
+    saveEditContract({ closeView: true });
+  }, [saveEditContract]);
 
   const isContractor = role === 'contractor';
   const showEdit = role === 'homeowner';
@@ -342,9 +346,6 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 <View style={styles.contractActions}>
                   <TouchableOpacity onPress={() => openContract(c)}>
                     <Text style={styles.actionLink}>View</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDeleteGeneratedContract(c.id)}>
-                    <Text style={styles.deleteLink}>Delete</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => startEditContract(c)}>
                     <Text style={styles.actionLink}>Edit</Text>
@@ -450,11 +451,11 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 <Text style={styles.secondaryText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.primaryButton, styles.flex1, isSubmitting && styles.disabled]}
+                style={[styles.secondaryButton, styles.flex1, isSubmitting && styles.disabled]}
                 onPress={handleProposeContract}
                 disabled={isSubmitting}
               >
-                <Text style={styles.primaryText}>{isSubmitting ? 'Submitting…' : 'Submit'}</Text>
+                <Text style={styles.secondaryText}>{isSubmitting ? 'Submitting…' : 'Submit'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -555,6 +556,9 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               value={editFields.description}
               onChangeText={(text) => setEditFields((prev) => ({ ...prev, description: text }))}
               placeholder="Contract title"
+              returnKeyType="done"
+              blurOnSubmit
+              onSubmitEditing={handleReturnSave}
             />
             <Text style={styles.label}>Contract Text</Text>
             <TextInput
@@ -564,6 +568,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               onChangeText={(text) => setEditFields((prev) => ({ ...prev, contractText: text }))}
               placeholder="Contract markdown"
               placeholderTextColor={palette.muted}
+              returnKeyType="done"
+              blurOnSubmit
+              onSubmitEditing={handleReturnSave}
+              onKeyPress={(e) => {
+                if (e.nativeEvent.key === 'Enter') {
+                  handleReturnSave();
+                }
+              }}
             />
             <View style={styles.modalActions}>
               <TouchableOpacity
