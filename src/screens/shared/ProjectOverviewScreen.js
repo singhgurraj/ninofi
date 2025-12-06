@@ -6,6 +6,8 @@ import {
   fetchGeneratedContract,
   fetchGeneratedContracts,
   proposeContract,
+  deleteGeneratedContract,
+  signGeneratedContract,
 } from '../../services/contracts';
 import palette from '../../styles/palette';
 
@@ -24,6 +26,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [loadingContractText, setLoadingContractText] = useState(false);
+  const [isSigning, setIsSigning] = useState(false);
 
   if (!project) {
     return (
@@ -106,6 +109,52 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
       setViewing(res.data);
     } else {
       Alert.alert('Error', res.error || 'Failed to load contract');
+    }
+  };
+
+  const handleDeleteGeneratedContract = async (contractId) => {
+    if (!project?.id || !user?.id) return;
+    Alert.alert('Delete contract', 'Are you sure you want to delete this generated contract?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const res = await deleteGeneratedContract({ projectId: project.id, contractId, userId: user.id });
+          if (!res.success) {
+            Alert.alert('Error', res.error || 'Failed to delete contract');
+            return;
+          }
+          setGeneratedContracts((prev) => prev.filter((c) => c.id !== contractId));
+          if (viewing?.id === contractId) {
+            setViewing(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleSignGenerated = async (signerRole) => {
+    if (!project?.id || !viewing?.id || !user?.id) return;
+    setIsSigning(true);
+    const res = await signGeneratedContract({
+      projectId: project.id,
+      contractId: viewing.id,
+      userId: user.id,
+      signerRole,
+    });
+    setIsSigning(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to sign');
+      return;
+    }
+    const newSignature = res.data?.signature;
+    if (newSignature) {
+      setViewing((prev) =>
+        prev
+          ? { ...prev, signatures: [...(prev.signatures || []), newSignature] }
+          : prev
+      );
     }
   };
 
@@ -195,6 +244,9 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 <View style={styles.contractActions}>
                   <TouchableOpacity onPress={() => openContract(c)}>
                     <Text style={styles.actionLink}>View</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteGeneratedContract(c.id)}>
+                    <Text style={styles.deleteLink}>Delete</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -303,6 +355,54 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 <View style={styles.contractBody}>
                   <Text style={styles.contractTextBody}>{viewing?.contractText || ''}</Text>
                 </View>
+                <View style={styles.signatureBlock}>
+                  <Text style={styles.sectionTitle}>Signatures</Text>
+                  {(viewing?.signatures || []).map((sig) => (
+                    <Text key={sig.id} style={styles.signatureText}>
+                      {sig.signerRole ? `${sig.signerRole}: ` : ''}Signed at{' '}
+                      {new Date(sig.signedAt || '').toLocaleString()}
+                    </Text>
+                  ))}
+                  {(() => {
+                    const hasSignatureSection = /signature/i.test(
+                      (viewing?.contractText || '').slice(-600) || viewing?.contractText || ''
+                    );
+                    const isOwnerUser = user?.id && project?.owner?.id === user.id;
+                    const isContractorUser = user?.id && project?.assignedContractor?.id === user.id;
+                    const alreadySigned = (viewing?.signatures || []).some(
+                      (s) => s.userId === user?.id
+                    );
+                    if (!user?.id || !hasSignatureSection || alreadySigned) {
+                      return null;
+                    }
+                    return (
+                      <View style={styles.signatureButtons}>
+                        {isOwnerUser ? (
+                          <TouchableOpacity
+                            style={[styles.primaryButton, styles.flex1, isSigning && styles.disabled]}
+                            disabled={isSigning}
+                            onPress={() => handleSignGenerated('homeowner')}
+                          >
+                            <Text style={styles.primaryText}>
+                              {isSigning ? 'Signing…' : 'Sign as Homeowner'}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        {isContractorUser ? (
+                          <TouchableOpacity
+                            style={[styles.secondaryButton, styles.flex1, isSigning && styles.disabled]}
+                            disabled={isSigning}
+                            onPress={() => handleSignGenerated('contractor')}
+                          >
+                            <Text style={styles.secondaryText}>
+                              {isSigning ? 'Signing…' : 'Sign as Contractor'}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
+                </View>
                 <TouchableOpacity style={styles.secondaryButton}>
                   <Text style={styles.secondaryText}>Download as PDF (coming soon)</Text>
                 </TouchableOpacity>
@@ -355,6 +455,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 20, fontWeight: '700', color: palette.text, letterSpacing: 0.2 },
   body: { color: palette.text, lineHeight: 22, fontSize: 15 },
   detailText: { color: palette.text, lineHeight: 22, fontSize: 15 },
+  meta: { color: palette.muted, marginTop: 4 },
   progressBar: {
     height: 10,
     backgroundColor: '#E7E9FB',
@@ -464,7 +565,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F8FB',
   },
   contractTextBody: { color: palette.text, lineHeight: 20 },
+  signatureBlock: { marginTop: 14, gap: 6 },
+  signatureText: { color: palette.text, fontSize: 13 },
+  signatureButtons: { flexDirection: 'row', gap: 10, marginTop: 8 },
   back: { fontSize: 20, color: palette.text },
+  deleteLink: { color: '#dc2626', fontWeight: '700' },
 });
 
 export default ProjectOverviewScreen;

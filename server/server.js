@@ -887,6 +887,20 @@ const initDb = async () => {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS generated_contract_signatures (
+      id UUID PRIMARY KEY,
+      contract_id UUID NOT NULL REFERENCES generated_contracts(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      signature_data TEXT NOT NULL,
+      signer_role TEXT,
+      signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS gen_contract_signatures_unique ON generated_contract_signatures (contract_id, user_id)'
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS flags (
       id UUID PRIMARY KEY,
       entity_type TEXT NOT NULL,
@@ -1789,7 +1803,7 @@ const mapComplianceRow = (row = {}) => ({
   createdAt: row.created_at,
 });
 
-const mapGeneratedContractRow = (row = {}) => ({
+const mapGeneratedContractRow = (row = {}, signatures = []) => ({
   id: row.id,
   projectId: row.project_id,
   description: row.description || '',
@@ -1799,6 +1813,13 @@ const mapGeneratedContractRow = (row = {}) => ({
   contractText: row.contract_text || '',
   createdByUserId: row.created_by_user_id || null,
   createdAt: row.created_at,
+  signatures: signatures.map((sig) => ({
+    id: sig.id,
+    userId: sig.user_id,
+    signerRole: sig.signer_role || null,
+    signatureData: sig.signature_data,
+    signedAt: sig.signed_at instanceof Date ? sig.signed_at.toISOString() : sig.signed_at,
+  })),
 });
 
 const fetchContractWithProject = async (contractId) => {
@@ -7311,18 +7332,140 @@ app.get('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
       return res.status(400).json({ message: 'projectId and contractId are required' });
     }
     await assertDbReady();
-    const result = await pool.query(
+    const contractResult = await pool.query(
       'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
       [contractId, projectId]
     );
-    if (!result.rows.length) {
+    if (!contractResult.rows.length) {
       return res.status(404).json({ message: 'Contract not found' });
     }
-    return res.json(mapGeneratedContractRow(result.rows[0]));
+    const signatureResult = await pool.query(
+      `
+        SELECT gcs.*, u.full_name AS signer_name, u.role AS signer_role_db
+        FROM generated_contract_signatures gcs
+        LEFT JOIN users u ON u.id = gcs.user_id
+        WHERE gcs.contract_id = $1
+        ORDER BY gcs.signed_at ASC
+      `,
+      [contractId]
+    );
+    return res.json(mapGeneratedContractRow(contractResult.rows[0], signatureResult.rows));
   } catch (error) {
     logError('contracts:get-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
     const message = pool
       ? 'Failed to fetch contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Delete a generated contract
+app.delete('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const { userId } = req.body || {};
+    if (!projectId || !contractId || !userId) {
+      return res.status(400).json({ message: 'projectId, contractId, and userId are required' });
+    }
+    await assertDbReady();
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const project = await getProjectById(projectId);
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    const allowed =
+      project?.user_id === userId ||
+      contractorId === userId ||
+      contractResult.rows[0].created_by_user_id === userId;
+    if (!allowed) {
+      return res.status(403).json({ message: 'Not authorized to delete this contract' });
+    }
+    await pool.query('DELETE FROM generated_contracts WHERE id = $1', [contractId]);
+    return res.status(204).send();
+  } catch (error) {
+    logError('contracts:delete-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to delete contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Sign a generated contract (store signature data)
+app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const { userId, signatureData, signerRole } = req.body || {};
+    if (!projectId || !contractId || !userId || !signatureData) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, contractId, userId, and signatureData are required' });
+    }
+
+    await assertDbReady();
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    let allowed = contractResult.rows[0].created_by_user_id === userId;
+    if (!allowed) {
+      allowed = projectId && (participants?.ownerId === userId || contractorId === userId);
+    }
+    if (!allowed) {
+      // allow project personnel with elevated role
+      const personnelRow = await pool.query(
+        'SELECT personnel_role FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+        [projectId, userId]
+      );
+      if (personnelRow.rows.length) {
+        const role = normalizeRole(personnelRow.rows[0].personnel_role || '');
+        allowed = ['contractor', 'owner', 'foreman', 'manager'].includes(role);
+      }
+    }
+    if (!allowed) {
+      return res.status(403).json({ message: 'Not authorized to sign this contract' });
+    }
+
+    const sigId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const signerRoleValue = signerRole || null;
+    const result = await pool.query(
+      `
+        INSERT INTO generated_contract_signatures (id, contract_id, user_id, signature_data, signer_role)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (contract_id, user_id)
+        DO UPDATE SET signature_data = EXCLUDED.signature_data, signer_role = EXCLUDED.signer_role, signed_at = NOW()
+        RETURNING *
+      `,
+      [sigId, contractId, userId, signatureData, signerRoleValue]
+    );
+
+    return res.status(201).json({
+      signature: {
+        id: result.rows[0].id,
+        userId: result.rows[0].user_id,
+        signerRole: result.rows[0].signer_role,
+        signatureData: result.rows[0].signature_data,
+        signedAt:
+          result.rows[0].signed_at instanceof Date
+            ? result.rows[0].signed_at.toISOString()
+            : result.rows[0].signed_at,
+      },
+    });
+  } catch (error) {
+    logError('contracts:sign-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to sign contract'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }

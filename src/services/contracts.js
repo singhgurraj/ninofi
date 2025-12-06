@@ -56,6 +56,37 @@ export const fetchGeneratedContract = async (projectId, contractId) => {
   }
 };
 
+export const deleteGeneratedContract = async ({ projectId, contractId, userId }) => {
+  if (!projectId || !contractId || !userId) {
+    return { success: false, error: 'projectId, contractId, and userId are required' };
+  }
+  try {
+    await projectAPI.deleteGeneratedContract(projectId, contractId, { userId });
+    return { success: true };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to delete contract';
+    return { success: false, error: msg };
+  }
+};
+
+export const signGeneratedContract = async ({ projectId, contractId, userId, signerRole }) => {
+  if (!projectId || !contractId || !userId) {
+    return { success: false, error: 'projectId, contractId, and userId are required' };
+  }
+  const signatureData = `Signed by ${userId} at ${new Date().toISOString()}`;
+  try {
+    const res = await projectAPI.signGeneratedContract(projectId, contractId, {
+      userId,
+      signatureData,
+      signerRole,
+    });
+    return { success: true, data: res.data };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to sign contract';
+    return { success: false, error: msg };
+  }
+};
+
 export const fetchContractsForProject = async (projectId) => {
   if (!projectId) return { success: false, error: 'projectId is required' };
   try {

@@ -132,6 +132,10 @@ export const projectAPI = {
   listGeneratedContracts: async (projectId) => api.get(`/projects/${projectId}/contracts`),
   getGeneratedContract: async (projectId, contractId) =>
     api.get(`/projects/${projectId}/contracts/${contractId}`),
+  deleteGeneratedContract: async (projectId, contractId, payload) =>
+    api.delete(`/projects/${projectId}/contracts/${contractId}`, { data: payload }),
+  signGeneratedContract: async (projectId, contractId, payload) =>
+    api.post(`/projects/${projectId}/contracts/${contractId}/sign`, payload),
   createContract: async (payload) => api.post('/contracts', payload),
   deleteContract: async (contractId, payload) =>
     api.delete(`/contracts/${contractId}`, { data: payload }),
