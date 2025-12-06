@@ -891,6 +891,8 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS generated_contracts_project_idx ON generated_contracts (project_id, created_at DESC)'
   );
+  await pool.query("ALTER TABLE generated_contracts ADD COLUMN IF NOT EXISTS homeowner_signed BOOLEAN NOT NULL DEFAULT false");
+  await pool.query("ALTER TABLE generated_contracts ADD COLUMN IF NOT EXISTS contractor_signed BOOLEAN NOT NULL DEFAULT false");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS generated_contract_signatures (
@@ -7406,14 +7408,8 @@ app.get('/api/contracts/approved/:contractorId', async (req, res) => {
         FROM generated_contracts gc
         JOIN generated_contract_signatures gcs ON gcs.contract_id = gc.id
         WHERE gcs.user_id = $1
-          AND EXISTS (
-            SELECT 1 FROM generated_contract_signatures s
-            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'homeowner'
-          )
-          AND EXISTS (
-            SELECT 1 FROM generated_contract_signatures s
-            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'contractor'
-          )
+          AND gc.homeowner_signed = true
+          AND gc.contractor_signed = true
       `,
       [contractorId]
     );
@@ -7465,14 +7461,8 @@ app.get('/api/contracts/approved/user/:userId', async (req, res) => {
         FROM generated_contracts gc
         JOIN generated_contract_signatures gcs ON gcs.contract_id = gc.id
         WHERE gcs.user_id = $1
-          AND EXISTS (
-            SELECT 1 FROM generated_contract_signatures s
-            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'homeowner'
-          )
-          AND EXISTS (
-            SELECT 1 FROM generated_contract_signatures s
-            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'contractor'
-          )
+          AND gc.homeowner_signed = true
+          AND gc.contractor_signed = true
       `,
       [userId]
     );
