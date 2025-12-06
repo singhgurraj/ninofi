@@ -94,14 +94,26 @@ const getStripeClient = () => {
   return stripeClient;
 };
 
+const defaultStripeHost =
+  (process.env.STRIPE_ONBOARDING_RETURN_URL &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL.startsWith('http') &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL.split('/').slice(0, 3).join('/')) ||
+  (process.env.RAILWAY_STATIC_URL && process.env.RAILWAY_STATIC_URL.startsWith('http')
+    ? process.env.RAILWAY_STATIC_URL
+    : process.env.EXPO_PUBLIC_API_URL?.startsWith('http')
+    ? process.env.EXPO_PUBLIC_API_URL
+    : 'https://ninofi-production.up.railway.app');
+
 const STRIPE_RETURN_URL =
-  process.env.STRIPE_ONBOARDING_RETURN_URL ||
-  process.env.RAILWAY_STATIC_URL ||
-  'https://example.com/stripe/return';
+  (process.env.STRIPE_ONBOARDING_RETURN_URL &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL.startsWith('http') &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL) ||
+  `${defaultStripeHost.replace(/\/$/, '')}/stripe/return`;
 const STRIPE_REFRESH_URL =
-  process.env.STRIPE_ONBOARDING_REFRESH_URL ||
-  process.env.RAILWAY_STATIC_URL ||
-  'https://example.com/stripe/refresh';
+  (process.env.STRIPE_ONBOARDING_REFRESH_URL &&
+    process.env.STRIPE_ONBOARDING_REFRESH_URL.startsWith('http') &&
+    process.env.STRIPE_ONBOARDING_REFRESH_URL) ||
+  `${defaultStripeHost.replace(/\/$/, '')}/stripe/refresh`;
 
 app.use(cors());
 

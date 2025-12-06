@@ -219,12 +219,20 @@ onPress={() => navigation.navigate('Portfolio')}
               </Text>
               <Text style={styles.actionText}>Showcase work</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
-              onPress={() => navigation.navigate('SubmitMilestone', {
-                project: projects[0],
-                milestone: { name: projects[0].nextMilestone, amount: projects[0].amount }
-            })}
+              disabled={!contractorProjects || contractorProjects.length === 0}
+              onPress={() => {
+                if (!contractorProjects || contractorProjects.length === 0) {
+                  Alert.alert('No projects', 'You have no active projects to submit work for yet.');
+                  return;
+                }
+                const project = contractorProjects[0];
+                const milestone =
+                  (project.milestones && project.milestones[0]) ||
+                  { name: project.nextMilestone || 'Milestone', amount: project.amount || 0 };
+                navigation.navigate('SubmitMilestone', { project, milestone });
+              }}
             >
               <Text style={styles.actionIcon}>📸</Text>
               <Text
