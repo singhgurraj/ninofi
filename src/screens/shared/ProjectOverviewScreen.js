@@ -149,13 +149,16 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
       return;
     }
     const newSignature = res.data?.signature;
-    if (newSignature) {
-      setViewing((prev) =>
-        prev
-          ? { ...prev, signatures: [...(prev.signatures || []), newSignature] }
-          : prev
-      );
-    }
+    setViewing((prev) => {
+      if (!prev) return prev;
+      const existing = prev.signatures || [];
+      const withoutExisting = existing.filter((s) => s.userId !== newSignature?.userId);
+      return {
+        ...prev,
+        contractText: res.data?.contractText || prev.contractText,
+        signatures: newSignature ? [...withoutExisting, newSignature] : existing,
+      };
+    });
   };
 
   const isContractor = role === 'contractor';

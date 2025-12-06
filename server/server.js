@@ -1946,6 +1946,30 @@ const extractBase64Payload = (raw = '') => {
   return data || '';
 };
 
+const escapeRegExp = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const replaceLineValue = (text = '', label = '', value = '') => {
+  if (!text || !label || !value) return text;
+  const pattern = new RegExp(`(${escapeRegExp(label)}\\s*:?)\\s*(.*)`, 'i');
+  if (!pattern.test(text)) return text;
+  return text.replace(pattern, (_, prefix) => `${prefix} ${value}`);
+};
+
+const fillSignatureLines = (text = '', role = '', { fullName = '' } = {}) => {
+  if (!text || !fullName) return text;
+  const firstName = fullName.trim().split(/\s+/)[0] || fullName.trim();
+  let updated = text;
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole === 'contractor') {
+    updated = replaceLineValue(updated, 'Contractor Signature', firstName);
+    updated = replaceLineValue(updated, 'Printed Name of Contractor', fullName);
+  } else if (normalizedRole === 'homeowner') {
+    updated = replaceLineValue(updated, 'Homeowner Signature', firstName);
+    updated = replaceLineValue(updated, 'Printed Name of Homeowner', fullName);
+  }
+  return updated;
+};
+
 const persistMedia = async (projectId, mediaItems = []) => {
   const saved = [];
   for (const item of mediaItems) {
@@ -7437,8 +7461,12 @@ app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res)
       return res.status(403).json({ message: 'Not authorized to sign this contract' });
     }
 
+    const signerUser = await getUserById(userId);
+
     const sigId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
-    const signerRoleValue = signerRole || null;
+    const signerRoleValue =
+      normalizeRole(signerRole) ||
+      (participants?.ownerId === userId ? 'homeowner' : 'contractor');
     const result = await pool.query(
       `
         INSERT INTO generated_contract_signatures (id, contract_id, user_id, signature_data, signer_role)
@@ -7449,6 +7477,16 @@ app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res)
       `,
       [sigId, contractId, userId, signatureData, signerRoleValue]
     );
+
+    // Update contract text to reflect signature lines
+    let updatedText = contractResult.rows[0].contract_text || '';
+    if (signerUser?.full_name) {
+      updatedText = fillSignatureLines(updatedText, signerRoleValue, { fullName: signerUser.full_name });
+      await pool.query('UPDATE generated_contracts SET contract_text = $1 WHERE id = $2', [
+        updatedText,
+        contractId,
+      ]);
+    }
 
     return res.status(201).json({
       signature: {
@@ -7461,6 +7499,7 @@ app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res)
             ? result.rows[0].signed_at.toISOString()
             : result.rows[0].signed_at,
       },
+      contractText: updatedText,
     });
   } catch (error) {
     logError('contracts:sign-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
