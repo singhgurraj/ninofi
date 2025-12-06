@@ -7167,10 +7167,22 @@ app.post('/api/projects/:projectId/contracts/propose', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // If a userId is provided, ensure they are owner or assigned contractor
+    // If a userId is provided, ensure they are owner, assigned contractor, or in personnel
     if (userId) {
-      const contractorId = await getAssignedContractorId(projectId);
-      if (project.user_id !== userId && contractorId !== userId) {
+      const participants = await getProjectParticipants(projectId);
+      const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+      let allowed = project.user_id === userId || contractorId === userId;
+      if (!allowed) {
+        const personnelRow = await pool.query(
+          'SELECT personnel_role FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+          [projectId, userId]
+        );
+        if (personnelRow.rows.length) {
+          const role = normalizeRole(personnelRow.rows[0].personnel_role || '');
+          allowed = role ? ['contractor', 'owner', 'foreman', 'manager'].includes(role) : true;
+        }
+      }
+      if (!allowed) {
         return res.status(403).json({ message: 'Not authorized to propose for this project' });
       }
     }
