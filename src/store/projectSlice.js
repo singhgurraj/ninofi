@@ -1,7 +1,34 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+const defaultProjects = [
+  {
+    id: '1',
+    title: 'Kitchen Renovation',
+    contractor: 'BuildCorp Contractors',
+    status: 'In Progress',
+    progress: 65,
+    budget: 8500,
+    milestones: [
+      { id: 'm1', name: 'Demo & Prep Work', amount: 2500, status: 'approved' },
+      { id: 'm2', name: 'Plumbing Installation', amount: 3000, status: 'submitted' },
+    ],
+  },
+  {
+    id: '2',
+    title: 'Bathroom Remodel',
+    contractor: 'ProTile Solutions',
+    status: 'Pending Approval',
+    progress: 90,
+    budget: 4000,
+    milestones: [
+      { id: 'm3', name: 'Tile Installation', amount: 1800, status: 'approved' },
+      { id: 'm4', name: 'Final Inspection', amount: 2200, status: 'pending' },
+    ],
+  },
+];
+
 const initialState = {
-  projects: [],
+  projects: defaultProjects,
   currentProject: null,
   isLoading: false,
   error: null,
@@ -12,6 +39,8 @@ const initialState = {
   contractorProjects: [],
   isLoadingContractor: false,
   contractorError: null,
+  workerAssignments: [],
+  workerProjects: [],
 };
 
 const projectSlice = createSlice({
@@ -86,6 +115,32 @@ const projectSlice = createSlice({
       state.isLoadingContractor = false;
       state.contractorError = action.payload;
     },
+    addWorkerAssignment: (state, action) => {
+      state.workerAssignments.push({
+        id: action.payload.id,
+        projectId: action.payload.projectId,
+        workerId: action.payload.workerId,
+        description: action.payload.description,
+        dueDate: action.payload.dueDate,
+        pay: action.payload.pay,
+        createdAt: new Date().toISOString(),
+      });
+    },
+    addWorkerProject: (state, action) => {
+      if (!action.payload?.id) return;
+      const exists = state.workerProjects.find((p) => p.id === action.payload.id);
+      if (exists) {
+        Object.assign(exists, action.payload);
+      } else {
+        state.workerProjects.push(action.payload);
+      }
+    },
+    removeWorkerProject: (state, action) => {
+      const projectId = action.payload;
+      if (!projectId) return;
+      state.workerProjects = state.workerProjects.filter((p) => p.id !== projectId);
+      state.workerAssignments = state.workerAssignments.filter((a) => a.projectId !== projectId);
+    },
   },
 });
 
@@ -106,6 +161,9 @@ export const {
   fetchContractorProjectsStart,
   fetchContractorProjectsSuccess,
   fetchContractorProjectsFailure,
+  addWorkerAssignment,
+  addWorkerProject,
+  removeWorkerProject,
 } = projectSlice.actions;
 
 export default projectSlice.reducer;

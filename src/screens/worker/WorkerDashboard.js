@@ -11,7 +11,6 @@ import { useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
 import { loadNotifications } from '../../services/notifications';
-import { markAllRead } from '../../store/notificationSlice';
 
 const WorkerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -19,39 +18,16 @@ const WorkerDashboard = ({ navigation }) => {
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  // Mock data
   const stats = {
-    earnings: 1250,
-    completedGigs: 8,
-    rating: 4.6,
+    earnings: 0,
+    completedGigs: 0,
+    rating: 0,
   };
-
-  const availableGigs = [
-    {
-      id: '1',
-      title: 'Help with Demolition',
-      contractor: 'Mike Johnson',
-      location: 'Downtown',
-      duration: '1 day',
-      pay: 150,
-      distance: '1.2 miles',
-    },
-    {
-      id: '2',
-      title: 'Painting Assistant',
-      contractor: 'Sarah Chen',
-      location: 'Westside',
-      duration: '2 days',
-      pay: 280,
-      distance: '3.5 miles',
-    },
-  ];
 
   const fetchNotifs = useCallback(async () => {
     if (!user?.id) return;
     try {
       await loadNotifications(user.id)(dispatch);
-      dispatch(markAllRead());
     } catch {
       // no-op
     }
@@ -110,97 +86,45 @@ const WorkerDashboard = ({ navigation }) => {
         </View>
 
         {/* Quick Actions */}
-<View style={styles.section}>
-  <Text style={styles.sectionTitle}>Quick Actions</Text>
-  <View style={styles.quickActions}>
-    <TouchableOpacity 
-      style={styles.actionButton}
-      onPress={() => console.log('Browse Gigs - Coming soon')}
-    >
-      <Text style={styles.actionIcon}>🔍</Text>
-      <Text style={styles.actionText}>Browse Gigs</Text>
-    </TouchableOpacity>
-    
-    <TouchableOpacity 
-      style={styles.actionButtonOutline}
-      onPress={() => console.log('My Gigs - Coming soon')}
-    >
-      <Text style={styles.actionIconOutline}>📋</Text>
-      <Text style={styles.actionTextOutline}>My Gigs</Text>
-    </TouchableOpacity>
-  </View>
-  
-  <View style={styles.quickActions}>
-    <TouchableOpacity 
-      style={styles.actionButtonOutline}
-      onPress={() => navigation.navigate('Wallet')}
-    >
-      <Text style={styles.actionIconOutline}>💰</Text>
-      <Text style={styles.actionTextOutline}>My Wallet</Text>
-    </TouchableOpacity>
-    
-    <TouchableOpacity 
-      style={styles.actionButtonOutline}
-      onPress={() => navigation.navigate('Profile')}
-    >
-      <Text style={styles.actionIconOutline}>👤</Text>
-      <Text style={styles.actionTextOutline}>My Profile</Text>
-    </TouchableOpacity>
-  </View>
-</View>
-
-        {/* Available Gigs Nearby */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Available Gigs Nearby</Text>
-            <TouchableOpacity onPress={() => console.log('View All - Coming soon')}>
-              <Text style={styles.viewAll}>View All</Text>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <View style={styles.quickActions}>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('BrowseGigs')}
+            >
+              <Text style={styles.actionIcon}>🔍</Text>
+              <Text style={styles.actionText}>Browse Gigs</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('WorkerGigs')}
+            >
+              <Text style={styles.actionIcon}>📋</Text>
+              <Text style={styles.actionText}>My Gigs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('WorkerGigApplications')}
+            >
+              <Text style={styles.actionIcon}>✅</Text>
+              <Text style={styles.actionText}>My Applications</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('Wallet')}
+            >
+              <Text style={styles.actionIcon}>💰</Text>
+              <Text style={styles.actionText}>My Wallet</Text>
             </TouchableOpacity>
           </View>
-
-          {availableGigs.map((gig) => (
-            <TouchableOpacity 
-              key={gig.id}
-              style={styles.gigCard}
-              onPress={() => console.log('Gig Details - Coming soon', gig.title)}
-            >
-              <View style={styles.gigHeader}>
-                <Text style={styles.gigTitle}>{gig.title}</Text>
-                <Text style={styles.gigPay}>${gig.pay}</Text>
-              </View>
-              
-              <Text style={styles.gigContractor}>
-                Posted by {gig.contractor}
-              </Text>
-              
-              <View style={styles.gigDetails}>
-                <View style={styles.gigDetail}>
-                  <Text style={styles.gigDetailIcon}>📍</Text>
-                  <Text style={styles.gigDetailText}>
-                    {gig.location} • {gig.distance}
-                  </Text>
-                </View>
-                
-                <View style={styles.gigDetail}>
-                  <Text style={styles.gigDetailIcon}>⏱️</Text>
-                  <Text style={styles.gigDetailText}>{gig.duration}</Text>
-                </View>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.applyButton}
-                onPress={() => console.log('Apply to gig - Coming soon')}
-              >
-                <Text style={styles.applyButtonText}>Apply Now</Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          ))}
         </View>
 
         {/* Current Gigs */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Your Current Gigs</Text>
-          
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateIcon}>📦</Text>
             <Text style={styles.emptyStateText}>No active gigs</Text>
@@ -311,40 +235,25 @@ const styles = StyleSheet.create({
   },
   quickActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   actionButton: {
-    flex: 1,
-    backgroundColor: palette.primary,
-    padding: 20,
-    borderRadius: 16,
+    flexBasis: '48%',
+    backgroundColor: palette.surface,
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   actionIcon: {
-    fontSize: 24,
-    marginBottom: 8,
+    fontSize: 20,
+    marginBottom: 6,
   },
   actionText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  actionButtonOutline: {
-    flex: 1,
-    backgroundColor: palette.surface,
-    padding: 20,
-    borderRadius: 16,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: palette.primary,
-  },
-  actionIconOutline: {
-    fontSize: 24,
-    marginBottom: 8,
-  },
-  actionTextOutline: {
-    color: palette.primary,
-    fontSize: 16,
+    color: palette.text,
+    fontSize: 14,
     fontWeight: '600',
   },
   gigCard: {

@@ -1,9 +1,17 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
+import { deleteContract, fetchContractsForProject } from '../../services/contracts';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
+  const { user } = useSelector((state) => state.auth);
+  const [contracts, setContracts] = useState([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractsError, setContractsError] = useState(null);
+
   if (!project) {
     return (
       <SafeAreaView style={styles.container}>
@@ -32,7 +40,52 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   };
 
   const handleProposeContract = () => {
-    Alert.alert('Propose Contract', 'Contract proposal flow coming soon.');
+    navigation.navigate('ContractWizard', { project, role });
+  };
+
+  const loadContracts = useCallback(async () => {
+    if (!project?.id) return;
+    setContractsLoading(true);
+    setContractsError(null);
+    const res = await fetchContractsForProject(project.id);
+    if (res.success) {
+      setContracts(res.data || []);
+    } else {
+      setContractsError(res.error || 'Failed to load contracts');
+    }
+    setContractsLoading(false);
+  }, [project?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadContracts();
+    }, [loadContracts])
+  );
+
+  const handleDelete = async (contract) => {
+    if (!user?.id) {
+      Alert.alert('Not signed in', 'Please log in.');
+      return;
+    }
+    Alert.alert(
+      'Delete contract?',
+      `This will delete "${contract.title || 'Contract'}" if it is pending.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await deleteContract({ contractId: contract.id, userId: user.id });
+            if (!res.success) {
+              Alert.alert('Error', res.error);
+              return;
+            }
+            await loadContracts();
+          },
+        },
+      ]
+    );
   };
 
   const isContractor = role === 'contractor';
@@ -84,7 +137,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
             <Text style={styles.muted}>No milestones yet.</Text>
           ) : (
             milestones.map((m, idx) => (
-              <View key={m.id || idx} style={styles.milestoneRow}>
+              <View key={`${m.id || 'milestone'}-${idx}`} style={styles.milestoneRow}>
                 <View style={styles.milestoneBullet} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.milestoneName}>{m.name}</Text>
@@ -97,6 +150,49 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
           )}
         </View>
 
+        {role !== 'worker' && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Proposed Contracts</Text>
+              {contractsLoading ? <Text style={styles.muted}>Loading…</Text> : null}
+            </View>
+            {contractsError ? <Text style={styles.errorText}>{contractsError}</Text> : null}
+            {!contractsLoading && !contractsError && (!contracts || contracts.length === 0) ? (
+              <Text style={styles.muted}>No contracts yet.</Text>
+            ) : null}
+            {contracts?.map((c) => {
+              const statusLabel = (c.status || 'pending').toUpperCase();
+              return (
+                <View key={c.id} style={styles.contractCard}>
+                  <View style={styles.contractHeader}>
+                    <Text style={styles.contractTitle}>{c.title || 'Contract'}</Text>
+                    <Text style={styles.contractMeta}>Status: {statusLabel}</Text>
+                    {typeof c.signatureCount === 'number' ? (
+                      <Text style={styles.contractMeta}>Signatures: {c.signatureCount}</Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.contractActions}>
+                    <TouchableOpacity onPress={() => navigation.navigate('ContractView', { contract: c })}>
+                      <Text style={styles.actionLink}>View</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => navigation.navigate('ContractSignature', { contract: c })}>
+                      <Text style={styles.actionLink}>{statusLabel === 'SIGNED' ? 'View' : 'Sign'}</Text>
+                    </TouchableOpacity>
+                    {statusLabel === 'PENDING' ? (
+                      <TouchableOpacity onPress={() => handleDelete(c)}>
+                        <Text style={styles.actionLink}>Delete</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
+              );
+            })}
+            <TouchableOpacity style={[styles.button, styles.refreshButton]} onPress={loadContracts}>
+              <Text style={styles.personnelText}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.buttonRow}>
           <TouchableOpacity style={[styles.button, styles.personnelButton]} onPress={goPersonnel}>
             <Text style={styles.personnelText}>People</Text>
@@ -106,16 +202,26 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               <Text style={styles.buttonText}>Edit</Text>
             </TouchableOpacity>
           ) : null}
+          {isContractor ? (
+            <TouchableOpacity
+              style={[styles.button, styles.contractButton]}
+              onPress={() => navigation.navigate('PostWork', { project, role })}
+            >
+              <Text style={styles.contractText}>Post Work</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
-        <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={[styles.button, styles.contractButton]}
-            onPress={handleProposeContract}
-          >
-            <Text style={styles.contractText}>Propose Contract</Text>
-          </TouchableOpacity>
-        </View>
+        {role !== 'worker' && (
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.button, styles.contractButton]}
+              onPress={handleProposeContract}
+            >
+              <Text style={styles.contractText}>Propose Contract</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -181,6 +287,28 @@ const styles = StyleSheet.create({
   muted: { color: palette.muted },
   contractButton: { backgroundColor: palette.primary },
   contractText: { color: '#fff', fontWeight: '700' },
+  contractCard: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+    marginBottom: 10,
+    backgroundColor: palette.surface,
+  },
+  contractHeader: { flex: 1, gap: 2 },
+  contractTitle: { fontWeight: '700', color: palette.text, fontSize: 15 },
+  contractMeta: { color: palette.muted, fontSize: 12 },
+  contractActions: { flexDirection: 'row', gap: 16, alignItems: 'center' },
+  signButton: { backgroundColor: palette.primary, paddingHorizontal: 14, paddingVertical: 10 },
+  refreshButton: {
+    marginTop: 10,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  errorText: { color: '#c1121f' },
+  actionLink: { color: palette.primary, fontWeight: '700' },
 });
 
 export default ProjectOverviewScreen;

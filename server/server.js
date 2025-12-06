@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const PDFDocument = require('pdfkit');
 require('dotenv').config();
 const asyncHandler = require('./utils/asyncHandler');
 const { ensureUuid } = require('./utils/validation');
@@ -158,6 +159,175 @@ const DEFAULT_FEATURE_FLAGS = [
   },
 ];
 
+// Simple payment provider abstraction; replace StubPaymentProvider with a real adapter when available.
+class PaymentProvider {
+  async createCustomer(_user) {
+    throw new Error('Not implemented');
+  }
+  async createEscrowDeposit(_projectId, _amount, _currency) {
+    throw new Error('Not implemented');
+  }
+  async createPayout(_contractorId, _amount, _currency) {
+    throw new Error('Not implemented');
+  }
+  async refundDeposit(_transactionId) {
+    throw new Error('Not implemented');
+  }
+}
+
+class StubPaymentProvider extends PaymentProvider {
+  constructor() {
+    super();
+    this.provider = 'stub';
+  }
+
+  async createCustomer(user) {
+    return { id: `stub_cust_${user?.id || crypto.randomUUID?.() || Date.now()}`, status: 'succeeded' };
+  }
+
+  async createEscrowDeposit(projectId, amount, currency = 'USD') {
+    return {
+      id: `stub_dep_${projectId}_${Date.now()}`,
+      status: 'succeeded',
+      currency,
+      amount,
+    };
+  }
+
+  async createPayout(contractorId, amount, currency = 'USD') {
+    return {
+      id: `stub_payout_${contractorId}_${Date.now()}`,
+      status: 'succeeded',
+      currency,
+      amount,
+    };
+  }
+
+  async refundDeposit(transactionId) {
+    return { id: `stub_ref_${transactionId}`, status: 'succeeded' };
+  }
+}
+
+const paymentProvider = new StubPaymentProvider();
+
+// Simple storage abstraction (stub) to be replaced with S3/GCS adapter if available.
+class StorageService {
+  async uploadFile(_key, _base64, _mimeType) {
+    throw new Error('Not implemented');
+  }
+  async getSignedUrl(_key, _expiresInSeconds = 900) {
+    throw new Error('Not implemented');
+  }
+  async deleteFile(_key) {
+    throw new Error('Not implemented');
+  }
+}
+
+class StubStorageService extends StorageService {
+  constructor() {
+    super();
+    this.provider = 'stub-storage';
+  }
+
+  async uploadFile(key, base64, mimeType = 'application/octet-stream') {
+    if (!key || !base64) {
+      throw new Error('Missing key or file data');
+    }
+    return {
+      key,
+      url: `https://example.com/${encodeURIComponent(key)}`,
+      mimeType,
+    };
+  }
+
+  async getSignedUrl(key, expiresInSeconds = 900) {
+    return {
+      key,
+      url: `https://example.com/${encodeURIComponent(key)}?expires_in=${expiresInSeconds}`,
+      expiresIn: expiresInSeconds,
+    };
+  }
+
+  async deleteFile(_key) {
+    return { success: true };
+  }
+}
+
+const storageService = new StubStorageService();
+
+// Accounting integration (stub for QuickBooks/Xero)
+class AccountingIntegration {
+  async connectProvider(_contractorId, provider, _authCode) {
+    if (!provider) throw new Error('provider required');
+    return { provider, status: 'connected', expiresAt: new Date(Date.now() + 3600 * 1000).toISOString() };
+  }
+
+  async syncPayoutTransaction(_transactionId, provider) {
+    return { provider, synced: true };
+  }
+
+  buildAuthUrl(provider, contractorId) {
+    const base = provider === 'XERO' ? 'https://login.xero.com/identity/connect/authorize' : 'https://appcenter.intuit.com/connect/oauth2';
+    // Stub query params; replace with real client/redirect scopes when wiring provider SDK
+    return `${base}?state=${encodeURIComponent(contractorId || '')}`;
+  }
+}
+
+const accountingIntegration = new AccountingIntegration();
+
+// ID verification provider (stub)
+class IdVerificationProvider {
+  constructor() {
+    this.provider = 'stub-idp';
+  }
+
+  async startSession(user) {
+    const sessionId = `verify_${user?.id || crypto.randomUUID?.() || Date.now()}`;
+    return {
+      externalSessionId: sessionId,
+      clientToken: `token_${sessionId}`,
+      url: `https://verify.example.com/start?session=${sessionId}`,
+    };
+  }
+
+  async parseWebhook(payload) {
+    // Expect payload: { externalSessionId, status }
+    return {
+      externalSessionId: payload.externalSessionId || payload.id,
+      status: (payload.status || '').toUpperCase(),
+    };
+  }
+}
+
+const idVerificationProvider = new IdVerificationProvider();
+
+// E-signature provider (stub)
+class ESignatureProvider {
+  constructor() {
+    this.provider = 'stub-esign';
+  }
+
+  async createSignatureRequest(contract, participants = []) {
+    const externalId = `esign_${contract.id}_${Date.now()}`;
+    return {
+      externalId,
+      signingUrls: participants.reduce((acc, p) => ({ ...acc, [p.role]: `https://esign.example.com/sign/${externalId}?user=${p.id}` }), {}),
+    };
+  }
+
+  async parseWebhook(payload) {
+    return {
+      externalId: payload.externalId || payload.id,
+      status: (payload.status || '').toLowerCase(),
+      fileBase64: payload.fileBase64,
+      fileName: payload.fileName || 'contract.pdf',
+      mimeType: payload.mimeType || 'application/pdf',
+    };
+  }
+}
+
+const eSignatureProvider = new ESignatureProvider();
+
 const ensureDefaultFeatureFlags = async () => {
   if (!pool) return;
   for (const flag of DEFAULT_FEATURE_FLAGS) {
@@ -186,6 +356,7 @@ const initDb = async () => {
       phone TEXT,
       role TEXT NOT NULL,
       password_hash TEXT,
+      is_verified BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -233,6 +404,12 @@ const initDb = async () => {
       ) THEN
         ALTER TABLE users ADD COLUMN rating NUMERIC;
       END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'is_verified'
+      ) THEN
+        ALTER TABLE users ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT false;
+      END IF;
     END
     $$;
   `);
@@ -259,12 +436,137 @@ const initDb = async () => {
       amount NUMERIC,
       description TEXT,
       position INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending_funding',
+      submitted_at TIMESTAMPTZ,
+      approved_at TIMESTAMPTZ,
+      paid_at TIMESTAMPTZ,
+      submitted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      notes TEXT,
+      evidence JSONB DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(
+    "ALTER TABLE milestones ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_funding'"
+  );
+  await pool.query("ALTER TABLE milestones ALTER COLUMN status SET DEFAULT 'pending_funding'");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS evidence JSONB DEFAULT '[]'::jsonb");
+  await pool.query("ALTER TABLE milestones ALTER COLUMN evidence SET DEFAULT '[]'::jsonb");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS notes TEXT");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS submitted_by UUID");
+  await pool.query("ALTER TABLE milestones ADD COLUMN IF NOT EXISTS approved_by UUID");
 
   await pool.query('CREATE INDEX IF NOT EXISTS projects_user_id_idx ON projects (user_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS milestones_project_id_idx ON milestones (project_id, position)');
+  await pool.query('CREATE INDEX IF NOT EXISTS milestones_status_idx ON milestones (status)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS escrow_accounts (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      total_deposited NUMERIC NOT NULL DEFAULT 0,
+      total_released NUMERIC NOT NULL DEFAULT 0,
+      available_balance NUMERIC NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS escrow_accounts_project_idx ON escrow_accounts (project_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_transactions (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      milestone_id UUID REFERENCES milestones(id) ON DELETE SET NULL,
+      payer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      payee_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      type TEXT NOT NULL CHECK (type IN (\'DEPOSIT\', \'PAYOUT\', \'REFUND\')),
+      amount NUMERIC NOT NULL CHECK (amount > 0),
+      status TEXT NOT NULL DEFAULT 'completed',
+      reference TEXT,
+      provider TEXT,
+      external_id TEXT,
+      failure_reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS payment_transactions_project_idx ON payment_transactions (project_id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS payment_transactions_milestone_idx ON payment_transactions (milestone_id)');
+  await pool.query("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS provider TEXT");
+  await pool.query("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS external_id TEXT");
+  await pool.query("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS failure_reason TEXT");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS invoices (
+      id UUID PRIMARY KEY,
+      invoice_number TEXT NOT NULL,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      milestone_id UUID REFERENCES milestones(id) ON DELETE SET NULL,
+      contractor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      homeowner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      amount NUMERIC NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      issue_date TIMESTAMPTZ NOT NULL,
+      due_date TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'DRAFT',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'DRAFT'");
+  await pool.query("ALTER TABLE invoices ALTER COLUMN status SET DEFAULT 'DRAFT'");
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS invoices_milestone_idx ON invoices (milestone_id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS invoices_project_idx ON invoices (project_id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices (status)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contractor_accounting_connections (
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN ('QUICKBOOKS', 'XERO')),
+      access_token TEXT,
+      refresh_token TEXT,
+      expires_at TIMESTAMPTZ,
+      last_synced_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (contractor_id, provider)
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS accounting_connections_contractor_idx ON contractor_accounting_connections (contractor_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS milestone_attachments (
+      id UUID PRIMARY KEY,
+      milestone_id UUID NOT NULL REFERENCES milestones(id) ON DELETE CASCADE,
+      uploader_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      storage_key TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS milestone_attachments_milestone_idx ON milestone_attachments (milestone_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS verification_sessions (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      external_session_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS verification_sessions_user_idx ON verification_sessions (user_id)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_media (
@@ -292,13 +594,54 @@ const initDb = async () => {
   `);
 
   await pool.query(
-    'CREATE UNIQUE INDEX IF NOT EXISTS project_applications_unique ON project_applications (project_id, contractor_id)'
+    "ALTER TABLE project_applications ADD COLUMN IF NOT EXISTS is_worker_post BOOLEAN NOT NULL DEFAULT false"
+  );
+  await pool.query('ALTER TABLE project_applications ADD COLUMN IF NOT EXISTS work_date DATE');
+  await pool.query('ALTER TABLE project_applications ADD COLUMN IF NOT EXISTS pay NUMERIC');
+  await pool.query('ALTER TABLE project_applications ADD COLUMN IF NOT EXISTS tags TEXT[]');
+  await pool.query('ALTER TABLE project_applications ADD COLUMN IF NOT EXISTS worker_post_id UUID');
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS project_applications_worker_post_idx ON project_applications (worker_post_id)'
   );
   await pool.query(
     'CREATE INDEX IF NOT EXISTS project_applications_project_id_idx ON project_applications (project_id)'
   );
   await pool.query(
     'CREATE INDEX IF NOT EXISTS project_applications_contractor_id_idx ON project_applications (contractor_id)'
+  );
+  // Drop old global unique index if present
+  await pool.query('DROP INDEX IF EXISTS project_applications_unique');
+  // Clean duplicate non-worker applications before creating partial unique index
+  await pool.query(`
+    DELETE FROM project_applications pa
+    WHERE pa.is_worker_post IS NOT TRUE
+      AND pa.ctid NOT IN (
+        SELECT ctid FROM (
+          SELECT ctid, ROW_NUMBER() OVER (PARTITION BY project_id, contractor_id ORDER BY created_at DESC) AS rn
+          FROM project_applications
+          WHERE is_worker_post IS NOT TRUE
+        ) d
+        WHERE d.rn = 1
+      )
+  `);
+  // Clean duplicate worker applications per gig
+  await pool.query(`
+    DELETE FROM project_applications pa
+    WHERE pa.worker_post_id IS NOT NULL
+      AND pa.ctid NOT IN (
+        SELECT ctid FROM (
+          SELECT ctid, ROW_NUMBER() OVER (PARTITION BY worker_post_id, contractor_id ORDER BY created_at DESC) AS rn
+          FROM project_applications
+          WHERE worker_post_id IS NOT NULL
+        ) d
+        WHERE d.rn = 1
+      )
+  `);
+  await pool.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS project_apps_unique_nonworker ON project_applications (project_id, contractor_id) WHERE is_worker_post = false"
+  );
+  await pool.query(
+    "CREATE UNIQUE INDEX IF NOT EXISTS project_apps_worker_apply_idx ON project_applications (worker_post_id, contractor_id) WHERE worker_post_id IS NOT NULL"
   );
 
   await pool.query(`
@@ -367,6 +710,12 @@ const initDb = async () => {
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS contracts_project_id_idx ON contracts (project_id)');
   await pool.query('CREATE INDEX IF NOT EXISTS contracts_created_by_idx ON contracts (created_by)');
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS pdf_url TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS provider TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS external_id TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signed_file_key TEXT");
+  await pool.query("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contract_signatures (
@@ -415,6 +764,123 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS project_messages_sender_idx ON project_messages (sender_id)'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS portfolios (
+      id UUID PRIMARY KEY,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT,
+      bio TEXT,
+      specialties TEXT[],
+      hourly_rate NUMERIC,
+      service_area TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS portfolios_contractor_id_idx ON portfolios (contractor_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS portfolio_media (
+      id UUID PRIMARY KEY,
+      portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+      type TEXT,
+      url TEXT NOT NULL,
+      caption TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS portfolio_media_portfolio_idx ON portfolio_media (portfolio_id)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id UUID PRIMARY KEY,
+      contractor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      project_id UUID,
+      reviewer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      rating_overall INTEGER,
+      rating_quality INTEGER,
+      rating_timeliness INTEGER,
+      rating_communication INTEGER,
+      rating_budget INTEGER,
+      comment TEXT,
+      photos JSONB DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending',
+      response_text TEXT,
+      response_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS reviews_contractor_idx ON reviews (contractor_id, created_at DESC)'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id UUID PRIMARY KEY,
+      actor_id UUID,
+      actor_role TEXT,
+      action TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS audit_actor_idx ON audit_logs (actor_id, created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS audit_entity_idx ON audit_logs (entity_type, entity_id, created_at DESC)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS compliance_documents (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      url TEXT NOT NULL,
+      expires_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query("ALTER TABLE compliance_documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'");
+  await pool.query("ALTER TABLE compliance_documents ALTER COLUMN status SET DEFAULT 'active'");
+  await pool.query('CREATE INDEX IF NOT EXISTS compliance_user_idx ON compliance_documents (user_id, status, expires_at)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS disputes (
+      id UUID PRIMARY KEY,
+      project_id UUID,
+      milestone_id UUID,
+      raised_by UUID,
+      against_user_id UUID,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      priority TEXT,
+      resolution_notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query("ALTER TABLE disputes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'");
+  await pool.query("ALTER TABLE disputes ALTER COLUMN status SET DEFAULT 'open'");
+  await pool.query('CREATE INDEX IF NOT EXISTS disputes_status_idx ON disputes (status, priority)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS flags (
+      id UUID PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      moderator_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS feature_flags (
@@ -480,6 +946,16 @@ const mapMilestoneRow = (row = {}) => ({
   amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : null,
   description: row.description || '',
   position: typeof row.position === 'number' ? row.position : 0,
+  status: (row.status || 'pending_funding').toLowerCase(),
+  submittedAt:
+    row.submitted_at instanceof Date ? row.submitted_at.toISOString() : row.submitted_at || null,
+  approvedAt:
+    row.approved_at instanceof Date ? row.approved_at.toISOString() : row.approved_at || null,
+  paidAt: row.paid_at instanceof Date ? row.paid_at.toISOString() : row.paid_at || null,
+  submittedBy: row.submitted_by || null,
+  approvedBy: row.approved_by || null,
+  notes: row.notes || '',
+  evidence: Array.isArray(row.evidence) ? row.evidence : [],
 });
 
 const mapProjectRow = (row = {}, milestones = [], media = []) => ({
@@ -530,6 +1006,128 @@ const mapMediaRow = (row = {}) => ({
   id: row.id,
   url: row.url,
   label: row.label || '',
+});
+
+const mapInvoiceRow = (row = {}) => ({
+  id: row.id,
+  invoiceNumber: row.invoice_number,
+  projectId: row.project_id,
+  milestoneId: row.milestone_id,
+  contractorId: row.contractor_id,
+  homeownerId: row.homeowner_id,
+  amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : 0,
+  currency: row.currency || 'USD',
+  issueDate: row.issue_date instanceof Date ? row.issue_date.toISOString() : row.issue_date,
+  dueDate: row.due_date instanceof Date ? row.due_date.toISOString() : row.due_date,
+  status: (row.status || 'DRAFT').toUpperCase(),
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+});
+
+const mapTransactionWithContext = (row = {}) => {
+  const invoice = row.invoice_id
+    ? {
+        id: row.invoice_id,
+        invoiceNumber: row.invoice_number,
+        status: (row.invoice_status || 'DRAFT').toUpperCase(),
+        amount: row.invoice_amount !== null && row.invoice_amount !== undefined ? Number(row.invoice_amount) : null,
+        currency: row.invoice_currency || 'USD',
+        issueDate: row.invoice_issue_date instanceof Date
+          ? row.invoice_issue_date.toISOString()
+          : row.invoice_issue_date,
+        dueDate: row.invoice_due_date instanceof Date
+          ? row.invoice_due_date.toISOString()
+          : row.invoice_due_date,
+      }
+    : null;
+
+  const milestone = row.milestone_id
+    ? {
+        id: row.milestone_id,
+        name: row.milestone_name,
+        status: (row.milestone_status || '').toLowerCase(),
+        amount: row.milestone_amount !== null && row.milestone_amount !== undefined ? Number(row.milestone_amount) : null,
+      }
+    : null;
+
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    milestoneId: row.milestone_id || null,
+    type: row.type,
+    status: row.status,
+    amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : null,
+    currency: invoice?.currency || 'USD',
+    reference: row.reference || null,
+    provider: row.provider || null,
+    externalId: row.external_id || null,
+    failureReason: row.failure_reason || null,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    milestone,
+    invoice,
+  };
+};
+
+const mapAttachmentRow = (row = {}) => ({
+  id: row.id,
+  milestoneId: row.milestone_id,
+  uploaderId: row.uploader_id,
+  storageKey: row.storage_key,
+  fileName: row.file_name,
+  mimeType: row.mime_type,
+  fileSize: row.file_size !== null && row.file_size !== undefined ? Number(row.file_size) : null,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+});
+
+const mapVerificationSessionRow = (row = {}) => ({
+  id: row.id,
+  userId: row.user_id,
+  provider: row.provider,
+  externalSessionId: row.external_session_id,
+  status: (row.status || 'PENDING').toUpperCase(),
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+});
+
+const mapContractRow = (row = {}, signatures = []) => ({
+  id: row.id,
+  projectId: row.project_id,
+  createdBy: row.created_by,
+  ownerId: row.owner_id,
+  title: row.title || '',
+  terms: row.terms || '',
+  status: row.status || 'pending',
+  provider: row.provider || null,
+  externalId: row.external_id || null,
+  signedFileKey: row.signed_file_key || null,
+  signedAt: row.signed_at instanceof Date ? row.signed_at.toISOString() : row.signed_at,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+  version: typeof row.version === 'number' ? row.version : row.version ? Number(row.version) : 1,
+  pdfUrl: row.pdf_url || '',
+  signatureCount: Number(row.signature_count ?? row.signatures_count ?? signatures.length ?? 0),
+  signatures,
+});
+
+const mapEscrowRow = (row = {}) => ({
+  id: row.id,
+  projectId: row.project_id,
+  ownerId: row.owner_id,
+  totalDeposited:
+    row.total_deposited !== null && row.total_deposited !== undefined
+      ? Number(row.total_deposited)
+      : 0,
+  totalReleased:
+    row.total_released !== null && row.total_released !== undefined
+      ? Number(row.total_released)
+      : 0,
+  availableBalance:
+    row.available_balance !== null && row.available_balance !== undefined
+      ? Number(row.available_balance)
+      : 0,
+  currency: row.currency || 'USD',
+  status: row.status || 'open',
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
 });
 
 const validateMilestones = (milestones = []) => {
@@ -621,6 +1219,151 @@ const getProjectById = async (projectId) => {
   return result.rows[0] || null;
 };
 
+const getAssignedContractorId = async (projectId, client = pool) => {
+  const result = await client.query(
+    "SELECT contractor_id FROM project_applications WHERE project_id = $1 AND status = 'accepted' ORDER BY created_at DESC LIMIT 1",
+    [projectId]
+  );
+  return result.rows[0]?.contractor_id || null;
+};
+
+const ensureEscrowAccount = async (client, projectRow) => {
+  const escrowExisting = await client.query(
+    'SELECT * FROM escrow_accounts WHERE project_id = $1 FOR UPDATE',
+    [projectRow.id]
+  );
+  if (escrowExisting.rows.length) {
+    return escrowExisting.rows[0];
+  }
+  const escrowId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+  const inserted = await client.query(
+    `
+      INSERT INTO escrow_accounts (id, project_id, owner_id)
+      VALUES ($1, $2, $3)
+      RETURNING *
+    `,
+    [escrowId, projectRow.id, projectRow.user_id]
+  );
+  return inserted.rows[0];
+};
+
+const refreshFundedMilestones = async (client, projectId, totalDeposited) => {
+  const milestoneRows = await client.query(
+    'SELECT id, amount, status, position FROM milestones WHERE project_id = $1 ORDER BY position ASC',
+    [projectId]
+  );
+
+  let runningTotal = 0;
+  const fundableIds = [];
+  for (const row of milestoneRows.rows) {
+    const amountNum = row.amount !== null && row.amount !== undefined ? Number(row.amount) : 0;
+    runningTotal += amountNum;
+    if (row.status === 'pending_funding' && amountNum && runningTotal <= totalDeposited) {
+      fundableIds.push(row.id);
+    }
+  }
+
+  if (fundableIds.length) {
+    await client.query(
+      `UPDATE milestones SET status = 'funded' WHERE id = ANY($1::uuid[])`,
+      [fundableIds]
+    );
+  }
+};
+
+const buildInvoiceNumber = (projectId) => {
+  const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const rand = Math.floor(Math.random() * 9000) + 1000;
+  return `INV-${datePart}-${projectId?.slice(0, 6) || 'PROJ'}-${rand}`;
+};
+
+const buildContractTerms = (projectRow, milestones = []) => {
+  const milestoneLines = milestones
+    .map((m, idx) => `  ${idx + 1}. ${m.name} - $${Number(m.amount || 0).toFixed(2)}`)
+    .join('\n');
+  return `Project: ${projectRow.title}\nAddress: ${projectRow.address || 'N/A'}\n\nScope & Milestones:\n${milestoneLines}\n\nPayment Terms: Funds held in escrow and released per approved milestone.`;
+};
+
+const ensureProjectContract = async (client, projectRow, milestones = []) => {
+  const existing = await client.query('SELECT * FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1', [projectRow.id]);
+  if (existing.rows.length) return existing.rows[0];
+  const contractId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+  const terms = buildContractTerms(projectRow, milestones);
+  const inserted = await client.query(
+    `
+      INSERT INTO contracts (id, project_id, created_by, title, terms, status)
+      VALUES ($1, $2, $3, $4, $5, 'pending')
+      RETURNING *
+    `,
+    [contractId, projectRow.id, projectRow.user_id, 'Milestone Agreement', terms]
+  );
+  return inserted.rows[0];
+};
+
+const generateInvoiceForMilestone = async (client, milestoneId, { createStatus = 'SENT', markPaid = false } = {}) => {
+  if (!milestoneId) return null;
+  const milestoneRes = await client.query(
+    `
+      SELECT m.*, p.user_id AS homeowner_id
+      FROM milestones m
+      JOIN projects p ON p.id = m.project_id
+      WHERE m.id = $1
+      LIMIT 1
+    `,
+    [milestoneId]
+  );
+  if (!milestoneRes.rows.length) return null;
+
+  const milestoneRow = milestoneRes.rows[0];
+  const contractorId = await getAssignedContractorId(milestoneRow.project_id, client);
+  const amountNum = milestoneRow.amount !== null && milestoneRow.amount !== undefined ? Number(milestoneRow.amount) : 0;
+  const issueDate = new Date();
+  const dueDate = new Date(issueDate.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+  const existing = await client.query('SELECT * FROM invoices WHERE milestone_id = $1 LIMIT 1', [milestoneId]);
+
+  if (!existing.rows.length) {
+    const invoiceId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const status = markPaid ? 'PAID' : (createStatus || 'SENT').toUpperCase();
+    const inserted = await client.query(
+      `
+        INSERT INTO invoices (id, invoice_number, project_id, milestone_id, contractor_id, homeowner_id, amount, currency, issue_date, due_date, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING *
+      `,
+      [
+        invoiceId,
+        buildInvoiceNumber(milestoneRow.project_id),
+        milestoneRow.project_id,
+        milestoneId,
+        contractorId,
+        milestoneRow.homeowner_id,
+        amountNum,
+        'USD',
+        issueDate.toISOString(),
+        dueDate.toISOString(),
+        status,
+      ]
+    );
+    return inserted.rows[0];
+  }
+
+  if (markPaid && (existing.rows[0].status || '').toUpperCase() !== 'PAID') {
+    const updated = await client.query(
+      `
+        UPDATE invoices
+        SET status = 'PAID', updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [existing.rows[0].id]
+    );
+    return updated.rows[0];
+  }
+
+  return existing.rows[0];
+};
+
 const getProjectParticipants = async (projectId) => {
   if (!projectId) return null;
   await assertDbReady();
@@ -658,9 +1401,83 @@ const getProjectParticipants = async (projectId) => {
   };
 };
 
+const getProjectIdForMilestone = async (milestoneId) => {
+  if (!milestoneId) return null;
+  await assertDbReady();
+  const res = await pool.query('SELECT project_id FROM milestones WHERE id = $1 LIMIT 1', [milestoneId]);
+  return res.rows[0]?.project_id || null;
+};
+
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'video/mp4',
+  'application/pdf',
+];
+
+const isAllowedMime = (mime) => ALLOWED_MIME_TYPES.includes((mime || '').toLowerCase());
+
+const webhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || 'stub-secret';
+const esignWebhookSecret = process.env.ESIGN_WEBHOOK_SECRET || 'stub-esign';
+
+const validatePaymentSignature = (headers, payloadString = '') => {
+  // Stub: replace with provider HMAC validation. For now, compare header to secret.
+  const signature = headers['x-provider-signature'] || headers['x-signature'] || '';
+  return signature === webhookSecret || webhookSecret === 'stub-secret';
+};
+
+const validateEsignSignature = (headers) => {
+  const signature = headers['x-esign-signature'] || headers['x-signature'] || '';
+  return signature === esignWebhookSecret || esignWebhookSecret === 'stub-esign';
+};
+
+const markInvoicePaid = async (client, milestoneId) => {
+  if (!milestoneId) return null;
+  const invoiceRes = await client.query('SELECT * FROM invoices WHERE milestone_id = $1 LIMIT 1', [milestoneId]);
+  if (!invoiceRes.rows.length) return null;
+  if ((invoiceRes.rows[0].status || '').toUpperCase() === 'PAID') return invoiceRes.rows[0];
+  const updated = await client.query(
+    `
+      UPDATE invoices
+      SET status = 'PAID', updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [invoiceRes.rows[0].id]
+  );
+  return updated.rows[0];
+};
+
+const getAccountingConnection = async (contractorId, provider) => {
+  if (!contractorId) return null;
+  await assertDbReady();
+  const params = [contractorId];
+  let where = 'contractor_id = $1';
+  if (provider) {
+    params.push(provider);
+    where += ` AND provider = $${params.length}`;
+  }
+  const res = await pool.query(
+    `SELECT * FROM contractor_accounting_connections WHERE ${where} ORDER BY updated_at DESC LIMIT 1`,
+    params
+  );
+  return res.rows[0] || null;
+};
+
+const isUserVerified = async (userId) => {
+  if (!userId) return false;
+  await assertDbReady();
+  const res = await pool.query('SELECT is_verified FROM users WHERE id = $1 LIMIT 1', [userId]);
+  return !!res.rows[0]?.is_verified;
+};
+
 const isProjectParticipant = (participants, userId) => {
   if (!participants || !userId) return false;
-  return participants.ownerId === userId || (!!participants.contractorId && participants.contractorId === userId);
+  return (
+    participants.ownerId === userId ||
+    (!!participants.contractorId && participants.contractorId === userId)
+  );
 };
 
 const fetchMessageWithUsers = async (messageId) => {
@@ -708,6 +1525,18 @@ const fetchProjectPersonnel = async (projectId) => {
   return result.rows;
 };
 
+const upsertPersonnel = async (client, projectId, userId, role = null) => {
+  if (!projectId || !userId) return;
+  await client.query(
+    `
+      INSERT INTO project_personnel (project_id, user_id, personnel_role)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (project_id, user_id) DO NOTHING
+    `,
+    [projectId, userId, role]
+  );
+};
+
 const buildProjectMemberSet = async (projectId) => {
   const participants = await getProjectParticipants(projectId);
   const personnelRows = await fetchProjectPersonnel(projectId);
@@ -718,6 +1547,33 @@ const buildProjectMemberSet = async (projectId) => {
     if (row.user_id) memberIds.add(row.user_id);
   }
   return { participants, memberIds };
+};
+
+const getProjectContractorIds = async (projectId) => {
+  const participants = await getProjectParticipants(projectId);
+  const personnelRows = await fetchProjectPersonnel(projectId);
+  const contractorIds = new Set();
+  if (participants?.contractorId) contractorIds.add(participants.contractorId);
+  for (const row of personnelRows) {
+    const role = normalizeRole(row.personnel_role || row.role || '');
+    if (role.includes('contractor')) {
+      contractorIds.add(row.user_id);
+    }
+  }
+  return contractorIds;
+};
+
+const isNonLaborContractorRole = (role = '') => {
+  const r = normalizeRole(role);
+  if (!r || r === 'laborer' || r === 'worker') return false;
+  return (
+    r.includes('contractor') ||
+    r.includes('subcontractor') ||
+    r.includes('foreman') ||
+    r.includes('manager') ||
+    r.includes('supervisor') ||
+    r.includes('lead')
+  );
 };
 
 const resolveMessageReceiver = (participants, memberIds, senderId, requestedReceiverId) => {
@@ -845,19 +1701,6 @@ const parseDateValue = (value, { fallbackToNow = true, asDateOnly = false } = {}
 
 const CONTRACT_STATUSES = new Set(['pending', 'signed', 'rejected']);
 
-const mapContractRow = (row = {}, signatures = []) => ({
-  id: row.id,
-  projectId: row.project_id,
-  createdBy: row.created_by,
-  ownerId: row.owner_id,
-  title: row.title || '',
-  terms: row.terms || '',
-  status: row.status || 'pending',
-  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
-  signatureCount: Number(row.signature_count ?? row.signatures_count ?? signatures.length ?? 0),
-  signatures,
-});
-
 const mapSignatureRow = (row = {}) => ({
   id: row.id,
   contractId: row.contract_id,
@@ -873,6 +1716,60 @@ const mapSignatureRow = (row = {}) => ({
         role: row.user_role,
       }
     : undefined,
+});
+
+const mapPortfolioRow = (row = {}, media = []) => ({
+  id: row.id,
+  contractorId: row.contractor_id,
+  title: row.title || '',
+  bio: row.bio || '',
+  specialties: row.specialties || [],
+  hourlyRate:
+    row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : null,
+  serviceArea: row.service_area || '',
+  media,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapReviewRow = (row = {}) => ({
+  id: row.id,
+  contractorId: row.contractor_id,
+  projectId: row.project_id,
+  reviewerId: row.reviewer_id,
+  ratingOverall: row.rating_overall,
+  ratingQuality: row.rating_quality,
+  ratingTimeliness: row.rating_timeliness,
+  ratingCommunication: row.rating_communication,
+  ratingBudget: row.rating_budget,
+  comment: row.comment || '',
+  photos: Array.isArray(row.photos) ? row.photos : [],
+  status: row.status,
+  responseText: row.response_text || '',
+  responseAt: row.response_at,
+  createdAt: row.created_at,
+});
+
+const mapAuditRow = (row = {}) => ({
+  id: row.id,
+  actorId: row.actor_id,
+  actorRole: row.actor_role,
+  action: row.action,
+  entityType: row.entity_type,
+  entityId: row.entity_id,
+  metadata: row.metadata || {},
+  createdAt: row.created_at,
+});
+
+const mapComplianceRow = (row = {}) => ({
+  id: row.id,
+  userId: row.user_id,
+  type: row.type,
+  url: row.url,
+  expiresAt: row.expires_at,
+  status: row.status || 'active',
+  notes: row.notes || '',
+  createdAt: row.created_at,
 });
 
 const fetchContractWithProject = async (contractId) => {
@@ -981,6 +1878,24 @@ const escapeAttribute = (value = '') =>
 
 const isDataUri = (value = '') => /^data:/i.test(value);
 
+const sanitizeFileName = (value = '') => value.replace(/[^\w.-]/g, '_');
+
+const inferExtension = (fileName = '', mimeType = '') => {
+  const ext = path.extname(fileName || '').replace('.', '');
+  if (ext) return ext;
+  if (mimeType && mimeType.includes('/')) {
+    return mimeType.split('/')[1] || 'bin';
+  }
+  return 'bin';
+};
+
+const extractBase64Payload = (raw = '') => {
+  if (!raw) return '';
+  if (!isDataUri(raw)) return raw;
+  const [, data] = raw.split(',');
+  return data || '';
+};
+
 const persistMedia = async (projectId, mediaItems = []) => {
   const saved = [];
   for (const item of mediaItems) {
@@ -1007,6 +1922,127 @@ const persistMedia = async (projectId, mediaItems = []) => {
     }
   }
   return saved;
+};
+
+const persistPortfolioMedia = async (portfolioId, mediaItems = []) => {
+  const saved = [];
+  for (const item of mediaItems) {
+    if (!item.url) continue;
+    if (!isDataUri(item.url)) {
+      saved.push({ url: item.url, caption: item.caption || '', type: item.type || 'general' });
+      continue;
+    }
+    try {
+      const [meta, base64Data] = item.url.split(',');
+      const mimeMatch = /data:(.*?);base64/.exec(meta || '');
+      const mimeType = mimeMatch?.[1] || 'image/jpeg';
+      const extension = mimeType.split('/')[1] || 'jpg';
+      const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
+      const dir = path.join(UPLOAD_DIR, 'portfolio', portfolioId);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const filePath = path.join(dir, filename);
+      await fs.promises.writeFile(filePath, base64Data || '', 'base64');
+      const relativePath = path.relative(__dirname, filePath);
+      saved.push({ url: `/${relativePath}`, caption: item.caption || '', type: item.type || 'general' });
+    } catch (err) {
+      console.error('Error saving portfolio media:', err);
+    }
+  }
+  return saved;
+};
+
+const persistComplianceFile = async (userId, type, fileName, mimeType, base64Data) => {
+  const extension = inferExtension(fileName, mimeType);
+  const safeName = sanitizeFileName(fileName || `${type}-${Date.now()}.${extension}`);
+  const finalName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
+  const dir = path.join(UPLOAD_DIR, 'compliance', userId || 'misc');
+  await fs.promises.mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, finalName);
+  await fs.promises.writeFile(filePath, extractBase64Payload(base64Data || ''), 'base64');
+  const relativePath = path.relative(__dirname, filePath);
+  return { url: `/${relativePath}`, fileName: safeName, mimeType: mimeType || 'application/octet-stream' };
+};
+
+const generateContractPdf = async ({ contract, project, signatures = [] }) => {
+  if (!contract?.id) return null;
+  const dir = path.join(UPLOAD_DIR, 'contracts', contract.id);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const filename = `${contract.id}-v${contract.version || 1}.pdf`;
+  const filePath = path.join(dir, filename);
+
+  const doc = new PDFDocument({ margin: 50 });
+  const stream = fs.createWriteStream(filePath);
+  doc.pipe(stream);
+
+  doc.fontSize(20).text(contract.title || 'Contract', { align: 'center' }).moveDown(1);
+  doc.fontSize(12).text(`Project: ${project?.title || ''}`);
+  doc.text(`Address: ${project?.address || ''}`);
+  doc.text(`Timeline: ${project?.timeline || ''}`);
+  doc.text(`Budget: $${Number(project?.estimated_budget || 0).toLocaleString()}`);
+  doc.moveDown();
+  doc.fontSize(14).text('Terms & Deliverables', { underline: true }).moveDown(0.5);
+  doc.fontSize(12).text(contract.terms || '', { align: 'left' });
+  doc.moveDown();
+  doc.fontSize(14).text('Signatures', { underline: true }).moveDown(0.5);
+  signatures.forEach((sig, idx) => {
+    doc.fontSize(12).text(
+      `${idx + 1}. ${sig.user?.fullName || sig.userId} (${sig.user?.role || ''}) at ${
+        sig.signedAt || ''
+      }`
+    );
+  });
+
+  doc.end();
+
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+
+  const relativePath = path.relative(__dirname, filePath);
+  return {
+    pdfUrl: `/${relativePath}`,
+    fileName: filename,
+    mimeType: 'application/pdf',
+  };
+};
+
+const appendAudit = async ({
+  actorId = null,
+  actorRole = null,
+  action = '',
+  entityType = null,
+  entityId = null,
+  metadata = {},
+}) => {
+  if (!action) return;
+  if (!pool) return;
+  try {
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO audit_logs (id, actor_id, actor_role, action, entity_type, entity_id, metadata)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `,
+      [id, actorId, actorRole, action, entityType, entityId, metadata ? metadata : {}]
+    );
+  } catch (err) {
+    console.error('appendAudit error', err);
+  }
+};
+
+const isAdminRequest = (req) => {
+  const key = req.headers['x-admin-key'] || req.body?.adminKey || req.query?.adminKey;
+  if (process.env.ADMIN_KEY && key && key === process.env.ADMIN_KEY) return true;
+  return false;
+};
+
+const requireAdmin = (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(403).json({ message: 'Admin access required' });
+    return false;
+  }
+  return true;
 };
 
 app.get('/', (req, res) => {
@@ -1256,7 +2292,7 @@ app.post('/api/projects/:projectId/apply', async (req, res) => {
   const client = await pool.connect();
   try {
     const { projectId } = req.params;
-    const { contractorId, message } = req.body || {};
+    const { contractorId, message, workDate, pay, workerPostId } = req.body || {};
     if (!isUuid(projectId) || !isUuid(contractorId)) {
       return res.status(400).json({ message: 'Invalid projectId or contractorId' });
     }
@@ -1295,11 +2331,11 @@ app.post('/api/projects/:projectId/apply', async (req, res) => {
     const appId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
     const application = await client.query(
       `
-        INSERT INTO project_applications (id, project_id, contractor_id, status, message)
-        VALUES ($1, $2, $3, 'pending', $4)
+        INSERT INTO project_applications (id, project_id, contractor_id, status, message, work_date, pay, worker_post_id)
+        VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
         RETURNING *
       `,
-      [appId, projectId, contractorId, message || '']
+      [appId, projectId, contractorId, message || '', workDate || null, pay || null, workerPostId || null]
     );
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
@@ -1347,6 +2383,241 @@ app.post('/api/projects/:projectId/apply', async (req, res) => {
     return res.status(500).json({ message });
   } finally {
     client.release();
+  }
+});
+
+// Contractor posts work for workers to apply
+app.post('/api/projects/:projectId/gigs', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { contractorId, title, description, workDate, pay, tags = [] } = req.body || {};
+    logInfo('gigs:create:request', {
+      projectId,
+      contractorId,
+      hasTitle: !!title,
+      hasDescription: !!description,
+      workDate,
+      pay,
+      tags,
+    });
+    if (!isUuid(projectId) || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    }
+    await assertDbReady();
+    const project = await getProjectById(projectId);
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+    const participants = await getProjectParticipants(projectId);
+    const allowed =
+      !!participants &&
+      (participants.contractorId === contractorId || participants.ownerId === contractorId);
+    if (!allowed) {
+      logInfo('gigs:create:forbidden', { projectId, contractorId, participants });
+      return res
+        .status(403)
+        .json({ message: 'Only the contractor on this project can post work' });
+    }
+    await client.query('BEGIN');
+    const gigId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const inserted = await client.query(
+      `
+        INSERT INTO project_applications (id, project_id, contractor_id, status, message, is_worker_post, work_date, pay, tags)
+        VALUES ($1, $2, $3, 'pending', $4, true, $5, $6, $7)
+        RETURNING *
+      `,
+      [gigId, projectId, contractorId, description || title || '', workDate || null, pay || null, tags]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json(inserted.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('gigs:create:error', error);
+    const message = pool ? 'Failed to post work' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Worker applies to a posted gig
+app.post('/api/gigs/:gigId/apply', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { gigId } = req.params;
+    const { workerId, message } = req.body || {};
+    if (!isUuid(gigId) || !isUuid(workerId)) {
+      return res.status(400).json({ message: 'Invalid ids' });
+    }
+    await assertDbReady();
+    const gigRes = await client.query(
+      'SELECT * FROM project_applications WHERE id = $1 AND is_worker_post = true AND status = $2',
+      [gigId, 'pending']
+    );
+    if (!gigRes.rows.length) {
+      return res.status(404).json({ message: 'Gig not found or unavailable' });
+    }
+    const gigRow = gigRes.rows[0];
+
+    // Simple date conflict check
+    if (gigRow.work_date) {
+      const conflict = await client.query(
+        `SELECT 1 FROM project_applications
+         WHERE contractor_id = $1 AND status = 'accepted' AND work_date = $2
+         LIMIT 1`,
+        [workerId, gigRow.work_date]
+      );
+      if (conflict.rows.length) {
+        return res.status(409).json({ message: 'Date conflicts with another gig' });
+      }
+    }
+
+    const existing = await client.query(
+      `
+        SELECT 1 FROM project_applications
+        WHERE worker_post_id = $1 AND contractor_id = $2
+          AND status IN ('pending','accepted')
+        LIMIT 1
+      `,
+      [gigId, workerId]
+    );
+    if (existing.rows.length) {
+      return res.status(409).json({ message: 'You already applied to this gig' });
+    }
+
+    const appId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const inserted = await client.query(
+      `
+        INSERT INTO project_applications (id, project_id, contractor_id, status, message, work_date, pay, worker_post_id)
+        VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [appId, gigRow.project_id, workerId, message || '', gigRow.work_date || null, gigRow.pay || null, gigId]
+    );
+
+    const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO notifications (id, user_id, title, body, data)
+        VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        notifId,
+        gigRow.contractor_id,
+        'New worker application',
+        'A worker applied to your posted work',
+        JSON.stringify({
+          applicationId: appId,
+          projectId: gigRow.project_id,
+          gigId,
+        }),
+      ]
+    );
+
+    return res.status(201).json(inserted.rows[0]);
+  } catch (error) {
+    console.error('gigs:apply:error', error);
+    const message = pool ? 'Failed to apply to gig' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Worker-facing gigs list
+app.get('/api/gigs/open', async (_req, res) => {
+  try {
+    const workerId = _req.query?.workerId;
+    const params = [];
+    let extraFilter = '';
+    if (workerId && isUuid(workerId)) {
+      params.push(workerId);
+      extraFilter = `
+        AND NOT EXISTS (
+          SELECT 1 FROM project_applications pa2
+          WHERE pa2.worker_post_id = pa.id
+            AND pa2.contractor_id = $1
+            AND pa2.status IN ('pending','accepted')
+        )
+      `;
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT pa.*, p.title AS project_title, p.description AS project_description
+        FROM project_applications pa
+        JOIN projects p ON p.id = pa.project_id
+        WHERE pa.is_worker_post = true
+          AND pa.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM project_applications pa2
+            WHERE pa2.worker_post_id = pa.id AND pa2.status = 'accepted'
+          )
+          ${extraFilter}
+        ORDER BY pa.created_at DESC
+      `,
+      params
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('gigs:list:error', error);
+    const message = pool ? 'Failed to load gigs' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Worker gig applications list
+app.get('/api/gigs/applications', async (req, res) => {
+  try {
+    const { workerId } = req.query || {};
+    if (!workerId || !isUuid(workerId)) {
+      return res.status(400).json({ message: 'workerId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT pa.*, p.title AS project_title
+        FROM project_applications pa
+        JOIN projects p ON p.id = pa.project_id
+        WHERE pa.contractor_id = $1
+          AND pa.worker_post_id IS NOT NULL
+        ORDER BY pa.created_at DESC
+      `,
+      [workerId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('gigs:applications:list:error', error);
+    const message = pool ? 'Failed to load applications' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Worker withdraws gig application
+app.delete('/api/gigs/applications/:applicationId', async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+    const { workerId } = req.body || {};
+    if (!isUuid(applicationId) || !isUuid(workerId)) {
+      return res.status(400).json({ message: 'applicationId and workerId are required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        UPDATE project_applications
+        SET status = 'withdrawn'
+        WHERE id::text = $1 AND contractor_id = $2 AND worker_post_id IS NOT NULL AND status = 'pending'
+        RETURNING *
+      `,
+      [applicationId, workerId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Application not found or not withdrawable' });
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('gigs:applications:withdraw:error', error);
+    const message = pool ? 'Failed to withdraw application' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
   }
 });
 
@@ -1464,11 +2735,13 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
           u.full_name AS contractor_name,
           u.email AS contractor_email,
           u.phone AS contractor_phone,
-          owner.full_name AS owner_full_name
+          owner.full_name AS owner_full_name,
+          gig.contractor_id AS gig_contractor_id
         FROM project_applications pa
         JOIN projects p ON p.id = pa.project_id
         JOIN users u ON u.id = pa.contractor_id
         LEFT JOIN users owner ON owner.id = p.user_id
+        LEFT JOIN project_applications gig ON gig.id = pa.worker_post_id
         WHERE pa.id::text = $1
       `,
       [applicationId]
@@ -1478,8 +2751,13 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
     }
 
     const appRow = appResult.rows[0];
-    if (ownerId && ownerId !== appRow.owner_id) {
-      return res.status(403).json({ message: 'Not authorized to modify this application' });
+    const isWorkerApplication = !!appRow.worker_post_id;
+    if (ownerId) {
+      const ownerAllowed =
+        ownerId === appRow.owner_id || (isWorkerApplication && ownerId === appRow.gig_contractor_id);
+      if (!ownerAllowed) {
+        return res.status(403).json({ message: 'Not authorized to modify this application' });
+      }
     }
 
     if (appRow.status && appRow.status !== 'pending') {
@@ -1514,14 +2792,17 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
     }
 
     const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
-    const ownerName = appRow.owner_full_name || 'Homeowner';
+    const ownerName = appRow.owner_full_name || 'Owner';
+    const senderName = isWorkerApplication
+      ? (ownerId && ownerId === appRow.gig_contractor_id ? 'Contractor' : ownerName)
+      : ownerName;
     const notifTitle =
       newStatus === 'accepted'
-        ? `${ownerName} accepted your application`
-        : `${ownerName} responded to your application`;
+        ? `${senderName} accepted your application`
+        : `${senderName} responded to your application`;
     const notifBody =
       newStatus === 'accepted'
-        ? `${ownerName} accepted your application for ${appRow.project_title}`
+        ? `${senderName} accepted your application for ${appRow.project_title}`
         : `${appRow.project_title} has been ${newStatus}`;
     await client.query(
       `
@@ -1538,10 +2819,51 @@ app.post('/api/applications/:applicationId/:action', async (req, res) => {
           projectTitle: appRow.project_title,
           applicationId,
           status: newStatus,
-          ownerName,
+          ownerName: senderName,
         }),
       ]
     );
+
+    if (newStatus === 'accepted' && appRow.worker_post_id) {
+      await client.query('UPDATE project_applications SET status = $1 WHERE id = $2', [
+        'accepted',
+        appRow.worker_post_id,
+      ]);
+      await client.query(
+        `
+          INSERT INTO project_personnel (project_id, user_id, personnel_role)
+          VALUES ($1, $2, 'worker')
+          ON CONFLICT (project_id, user_id) DO NOTHING
+        `,
+        [appRow.project_id, appRow.contractor_id]
+      );
+      const workerNotifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          workerNotifId,
+          appRow.contractor_id,
+          'Added to project',
+          `${ownerName} accepted you for ${appRow.project_title}`,
+          JSON.stringify({
+            type: 'worker-added',
+            projectId: appRow.project_id,
+            projectTitle: appRow.project_title,
+          }),
+        ]
+      );
+    }
+
+    // Add accepted contractor/worker to personnel for visibility
+    try {
+      const role = appRow.worker_post_id ? 'worker' : 'contractor';
+      await upsertPersonnel(client, appRow.project_id, appRow.contractor_id, role);
+    } catch (err) {
+      logError('applications:update:personnel:error', { applicationId, projectId: appRow.project_id }, err);
+    }
 
     await client.query('COMMIT');
     logInfo('applications:update:success', { applicationId, newStatus });
@@ -1658,6 +2980,14 @@ app.post('/api/applications/decide', async (req, res) => {
         }),
       ]
     );
+
+    if (newStatus === 'accepted') {
+      try {
+        await upsertPersonnel(client, projectId, contractorId, 'contractor');
+      } catch (err) {
+        logError('applications:decide:personnel:error', { projectId, contractorId }, err);
+      }
+    }
 
     await client.query('COMMIT');
     logInfo('applications:decide:success', { projectId, contractorId, newStatus });
@@ -1814,11 +3144,90 @@ app.post('/api/projects/:projectId/leave', async (req, res) => {
   const client = await pool.connect();
   try {
     const { projectId } = req.params;
-    const { contractorId } = req.body || {};
-    if (!isUuid(projectId) || !isUuid(contractorId)) {
-      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    const { contractorId, workerId } = req.body || {};
+    if (!isUuid(projectId)) {
+      return res.status(400).json({ message: 'Invalid projectId' });
     }
     await assertDbReady();
+
+    if (workerId) {
+      if (!isUuid(workerId)) {
+        return res.status(400).json({ message: 'Invalid workerId' });
+      }
+      const project = await getProjectById(projectId);
+      if (!project) return res.status(404).json({ message: 'Project not found' });
+      const worker = await getUserById(workerId);
+      const participants = await getProjectParticipants(projectId);
+      const personnelRow = await client.query(
+        'SELECT * FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+        [projectId, workerId]
+      );
+      const gigApplications = await client.query(
+        `
+          SELECT pa.id, pa.worker_post_id, gig.status AS gig_status
+          FROM project_applications pa
+          LEFT JOIN project_applications gig ON gig.id = pa.worker_post_id
+          WHERE pa.project_id = $1
+            AND pa.contractor_id = $2
+            AND pa.worker_post_id IS NOT NULL
+            AND pa.status IN ('pending','accepted')
+        `,
+        [projectId, workerId]
+      );
+      if (!personnelRow.rows.length && !gigApplications.rows.length) {
+        return res.status(404).json({ message: 'Worker not found on project' });
+      }
+      await client.query('BEGIN');
+      if (personnelRow.rows.length) {
+        await client.query('DELETE FROM project_personnel WHERE project_id = $1 AND user_id = $2', [
+          projectId,
+          workerId,
+        ]);
+      }
+      if (gigApplications.rows.length) {
+        const appIds = gigApplications.rows.map((r) => r.id);
+        await client.query(
+          `UPDATE project_applications SET status = 'withdrawn' WHERE id = ANY($1::uuid[])`,
+          [appIds]
+        );
+        const gigIds = Array.from(
+          new Set(gigApplications.rows.map((r) => r.worker_post_id).filter(Boolean))
+        );
+        if (gigIds.length) {
+          await client.query(
+            `UPDATE project_applications SET status = 'pending' WHERE id = ANY($1::uuid[])`,
+            [gigIds]
+          );
+        }
+      }
+      const notifyIds = [];
+      if (participants?.ownerId) notifyIds.push(participants.ownerId);
+      if (participants?.contractorId && participants.contractorId !== participants.ownerId) {
+        notifyIds.push(participants.contractorId);
+      }
+      for (const uid of notifyIds) {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await client.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            uid,
+            `${worker?.full_name || 'Worker'} left ${project.title || 'project'}`,
+            `${worker?.full_name || 'Worker'} has left ${project.title || 'the project'}.`,
+            JSON.stringify({ projectId, workerId, type: 'worker-left' }),
+          ]
+        );
+      }
+      await client.query('COMMIT');
+      return res.json({ status: 'left', projectId, workerId });
+    }
+
+    if (!contractorId || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'Invalid projectId or contractorId' });
+    }
 
     const appResult = await client.query(
       `
@@ -2019,8 +3428,7 @@ app.post('/api/projects', async (req, res) => {
 
     const milestoneResults = [];
     for (const m of normalizedMilestones) {
-      const milestoneId =
-        crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const milestoneId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
       const result = await client.query(
         `
           INSERT INTO milestones (id, project_id, name, amount, description, position)
@@ -2039,6 +3447,16 @@ app.post('/api/projects', async (req, res) => {
       milestoneResults.push(result.rows[0]);
     }
 
+    // Ensure a draft contract exists for this project, but do not block creation if it fails
+    try {
+      await client.query('SAVEPOINT project_contract');
+      await ensureProjectContract(client, projectResult.rows[0], milestoneResults);
+      await client.query('RELEASE SAVEPOINT project_contract');
+    } catch (contractErr) {
+      await client.query('ROLLBACK TO SAVEPOINT project_contract').catch(() => {});
+      logError('project:create:ensure-contract:error', { projectId }, contractErr);
+    }
+
     const persistedMedia = await persistMedia(projectId, normalizedMedia);
     const mediaResults = [];
     for (const item of persistedMedia) {
@@ -2052,6 +3470,13 @@ app.post('/api/projects', async (req, res) => {
         [mediaId, projectId, item.url, item.label || '']
       );
       mediaResults.push(result.rows[0]);
+    }
+
+    // Ensure the owner shows up in personnel lists
+    try {
+      await upsertPersonnel(client, projectId, userId, 'owner');
+    } catch (personnelErr) {
+      logError('project:create:personnel:error', { projectId, userId }, personnelErr);
     }
 
     await client.query('COMMIT');
@@ -2205,20 +3630,74 @@ app.delete('/api/projects/:projectId', async (req, res) => {
 
     await assertDbReady();
 
+    const projectRes = await client.query('SELECT * FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+    if (!projectRes.rows.length) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
     if (userId) {
-      const existing = await client.query(
-        'SELECT 1 FROM projects WHERE id = $1 AND user_id = $2 LIMIT 1',
-        [projectId, userId]
-      );
-      if (!existing.rows.length) {
-        return res.status(404).json({ message: 'Project not found for this user' });
+      if (projectRes.rows[0].user_id !== userId) {
+        return res.status(403).json({ message: 'Only the project owner can delete this project' });
       }
     }
 
+    // Collect participants to notify before deletion
+    const participants = new Set();
+    participants.add(projectRes.rows[0].user_id);
+
+    const contractorRes = await client.query(
+      `
+        SELECT contractor_id
+        FROM project_applications
+        WHERE project_id = $1 AND status = 'accepted' AND (is_worker_post IS NOT TRUE OR is_worker_post = false)
+      `,
+      [projectId]
+    );
+    contractorRes.rows.forEach((r) => r.contractor_id && participants.add(r.contractor_id));
+
+    const personnelRes = await client.query(
+      'SELECT user_id FROM project_personnel WHERE project_id = $1',
+      [projectId]
+    );
+    personnelRes.rows.forEach((r) => r.user_id && participants.add(r.user_id));
+
+    const gigApplicantsRes = await client.query(
+      `
+        SELECT contractor_id
+        FROM project_applications
+        WHERE project_id = $1
+          AND worker_post_id IS NOT NULL
+          AND status IN ('pending','accepted')
+      `,
+      [projectId]
+    );
+    gigApplicantsRes.rows.forEach((r) => r.contractor_id && participants.add(r.contractor_id));
+
     await client.query('BEGIN');
-    // milestones are deleted via ON DELETE CASCADE
-    await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
+    // Remove old notifications tied to this project
     await client.query('DELETE FROM notifications WHERE data->>\'projectId\' = $1', [projectId]);
+    // Delete project (dependent tables assumed ON DELETE CASCADE)
+    await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
+
+    // Notify everyone involved (except duplicates)
+    for (const uid of participants) {
+      if (!uid) continue;
+      const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          notifId,
+          uid,
+          'Project deleted',
+          `${projectRes.rows[0].title || 'A project'} has been deleted by the owner.`,
+          JSON.stringify({ type: 'project-deleted', projectId }),
+        ]
+      );
+    }
+
     await client.query('COMMIT');
 
     return res.status(204).send();
@@ -2265,6 +3744,14 @@ app.get('/api/projects/user/:userId', async (req, res) => {
           m.amount AS milestone_amount,
           m.description AS milestone_description,
           m.position AS milestone_position,
+          m.status AS milestone_status,
+          m.submitted_at AS milestone_submitted_at,
+          m.approved_at AS milestone_approved_at,
+          m.paid_at AS milestone_paid_at,
+          m.submitted_by AS milestone_submitted_by,
+          m.approved_by AS milestone_approved_by,
+          m.notes AS milestone_notes,
+          m.evidence AS milestone_evidence,
           m.created_at AS milestone_created_at,
           pm.id AS media_id,
           pm.url AS media_url,
@@ -2319,6 +3806,14 @@ app.get('/api/projects/user/:userId', async (req, res) => {
             amount: row.milestone_amount,
             description: row.milestone_description,
             position: row.milestone_position,
+            status: row.milestone_status,
+            submitted_at: row.milestone_submitted_at,
+            approved_at: row.milestone_approved_at,
+            paid_at: row.milestone_paid_at,
+            submitted_by: row.milestone_submitted_by,
+            approved_by: row.milestone_approved_by,
+            notes: row.milestone_notes,
+            evidence: row.milestone_evidence,
             created_at: row.milestone_created_at,
           })
         );
@@ -2456,6 +3951,1192 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
       ? 'Failed to fetch project'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+// Fund escrow for a project (homeowner deposit)
+app.post('/api/projects/:projectId/escrow/deposit', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { userId, amount, fundRemaining } = req.body || {};
+
+    if (!projectId || !userId) {
+      return res.status(400).json({ message: 'projectId and userId are required' });
+    }
+
+    await assertDbReady();
+    const projectRow = await getProjectById(projectId);
+    if (!projectRow) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (projectRow.user_id !== userId) {
+      return res.status(403).json({ message: 'Only the project owner can fund escrow' });
+    }
+
+    const contractSigned = await pool.query(
+      "SELECT status FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1",
+      [projectId]
+    );
+    const latestContractStatus = (contractSigned.rows[0]?.status || '').toLowerCase();
+    if (latestContractStatus !== 'signed') {
+      return res.status(403).json({ message: 'Contract must be fully signed before funding' });
+    }
+
+    const milestoneRows = await pool.query(
+      'SELECT id, amount FROM milestones WHERE project_id = $1',
+      [projectId]
+    );
+    const totalMilestones = milestoneRows.rows.reduce(
+      (sum, m) => sum + (m.amount !== null && m.amount !== undefined ? Number(m.amount) : 0),
+      0
+    );
+    await client.query('BEGIN');
+    const escrowRow = await ensureEscrowAccount(client, projectRow);
+    const alreadyDeposited = escrowRow.total_deposited !== null && escrowRow.total_deposited !== undefined
+      ? Number(escrowRow.total_deposited)
+      : 0;
+
+    let depositAmount = Number(amount);
+    if (fundRemaining) {
+      depositAmount = Math.max(totalMilestones - alreadyDeposited, 0);
+    }
+
+    if (!Number.isFinite(depositAmount) || depositAmount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Deposit amount must be greater than zero' });
+    }
+
+    let providerResp;
+    try {
+      providerResp = await paymentProvider.createEscrowDeposit(projectId, depositAmount, escrowRow.currency || 'USD');
+    } catch (providerError) {
+      const failTxId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO payment_transactions (id, project_id, milestone_id, payer_id, payee_id, type, amount, status, reference, provider, external_id, failure_reason)
+          VALUES ($1, $2, NULL, $3, NULL, 'DEPOSIT', $4, 'failed', $5, $6, $7, $8)
+        `,
+        [
+          failTxId,
+          projectId,
+          userId,
+          depositAmount,
+          fundRemaining ? 'fund_remaining' : 'deposit',
+          paymentProvider.provider || 'provider',
+          null,
+          providerError?.message || 'Provider error',
+        ]
+      );
+      await client.query('COMMIT');
+      return res.status(502).json({ message: 'Payment provider error' });
+    }
+
+    const providerStatus = (providerResp?.status || '').toLowerCase();
+    const providerId = providerResp?.id || null;
+
+    if (providerStatus !== 'succeeded') {
+      const failTxId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO payment_transactions (id, project_id, milestone_id, payer_id, payee_id, type, amount, status, reference, provider, external_id, failure_reason)
+          VALUES ($1, $2, NULL, $3, NULL, 'DEPOSIT', $4, 'failed', $5, $6, $7, $8)
+        `,
+        [
+          failTxId,
+          projectId,
+          userId,
+          depositAmount,
+          fundRemaining ? 'fund_remaining' : 'deposit',
+          paymentProvider.provider || 'provider',
+          providerId,
+          providerResp?.error || providerResp?.message || 'Payment failed',
+        ]
+      );
+      await client.query('COMMIT');
+      return res.status(502).json({ message: 'Payment could not be completed' });
+    }
+
+    const txId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO payment_transactions (id, project_id, milestone_id, payer_id, payee_id, type, amount, status, reference, provider, external_id)
+        VALUES ($1, $2, NULL, $3, NULL, 'DEPOSIT', $4, 'completed', $5, $6, $7)
+      `,
+      [
+        txId,
+        projectId,
+        userId,
+        depositAmount,
+        fundRemaining ? 'fund_remaining' : 'deposit',
+        paymentProvider.provider || 'provider',
+        providerId,
+      ]
+    );
+
+    const updatedEscrow = await client.query(
+      `
+        UPDATE escrow_accounts
+        SET total_deposited = total_deposited + $1,
+            available_balance = available_balance + $1,
+            updated_at = NOW()
+        WHERE project_id = $2
+        RETURNING *
+      `,
+      [depositAmount, projectId]
+    );
+
+    await refreshFundedMilestones(client, projectId, Number(updatedEscrow.rows[0].total_deposited || 0));
+    await client.query('COMMIT');
+
+    return res.json({ success: true, escrow: mapEscrowRow(updatedEscrow.rows[0]) });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('escrow:deposit:error', error);
+    const message = pool ? 'Failed to fund escrow' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Contractor submits milestone evidence
+app.post('/api/projects/:projectId/milestones/:milestoneId/submit', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId, milestoneId } = req.params;
+    const { contractorId, evidence, notes } = req.body || {};
+
+    if (!projectId || !milestoneId || !contractorId) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, milestoneId, and contractorId are required' });
+    }
+
+    await assertDbReady();
+    const projectRow = await getProjectById(projectId);
+    if (!projectRow) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const contractRes = await pool.query(
+      'SELECT status FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [projectId]
+    );
+    const contractStatus = (contractRes.rows[0]?.status || '').toLowerCase();
+    if (contractStatus !== 'signed') {
+      return res.status(403).json({ message: 'Contract must be signed before submitting work' });
+    }
+
+    const assignedContractorId = await getAssignedContractorId(projectId, client);
+    if (!assignedContractorId || assignedContractorId !== contractorId) {
+      return res.status(403).json({ message: 'Contractor is not assigned to this project' });
+    }
+
+    await client.query('BEGIN');
+    const milestoneRes = await client.query(
+      'SELECT * FROM milestones WHERE id = $1 AND project_id = $2 FOR UPDATE',
+      [milestoneId, projectId]
+    );
+    if (!milestoneRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Milestone not found' });
+    }
+
+    const currentStatus = (milestoneRes.rows[0].status || '').toLowerCase();
+    if (['approved', 'paid'].includes(currentStatus)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Milestone already approved/paid' });
+    }
+
+    const updated = await client.query(
+      `
+        UPDATE milestones
+        SET status = 'submitted',
+            submitted_at = NOW(),
+            submitted_by = $1,
+            notes = COALESCE($2, notes),
+            evidence = COALESCE($3, evidence)
+        WHERE id = $4
+        RETURNING *
+      `,
+      [contractorId, notes || '', Array.isArray(evidence) ? evidence : [], milestoneId]
+    );
+
+    await generateInvoiceForMilestone(client, milestoneId, { createStatus: 'SENT' });
+
+    await client.query('COMMIT');
+    return res.json({ success: true, milestone: mapMilestoneRow(updated.rows[0]) });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('milestones:submit:error', error);
+    const message = pool ? 'Failed to submit milestone' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Homeowner approves milestone and releases escrow funds
+app.post('/api/projects/:projectId/milestones/:milestoneId/approve', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId, milestoneId } = req.params;
+    const { homeownerId, contractorId } = req.body || {};
+
+    if (!projectId || !milestoneId || !homeownerId) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, milestoneId, and homeownerId are required' });
+    }
+
+    await assertDbReady();
+    const projectRow = await getProjectById(projectId);
+    if (!projectRow) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (projectRow.user_id !== homeownerId) {
+      return res.status(403).json({ message: 'Only the homeowner can approve milestones' });
+    }
+
+    const assignedContractorId = await getAssignedContractorId(projectId, client);
+    if (contractorId && contractorId !== assignedContractorId) {
+      return res.status(400).json({ message: 'contractorId does not match assigned contractor' });
+    }
+
+    const verified = await isUserVerified(contractorId || assignedContractorId);
+    if (!verified) {
+      return res.status(403).json({ message: 'Contractor is not verified' });
+    }
+
+    await client.query('BEGIN');
+    const milestoneRes = await client.query(
+      'SELECT * FROM milestones WHERE id = $1 AND project_id = $2 FOR UPDATE',
+      [milestoneId, projectId]
+    );
+    if (!milestoneRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Milestone not found' });
+    }
+
+    const milestoneRow = milestoneRes.rows[0];
+    const milestoneAmount = milestoneRow.amount !== null && milestoneRow.amount !== undefined
+      ? Number(milestoneRow.amount)
+      : 0;
+    if (!milestoneAmount || milestoneAmount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Milestone has no payable amount' });
+    }
+    if ((milestoneRow.status || '').toLowerCase() !== 'submitted') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Milestone is not submitted' });
+    }
+
+    const escrowRow = await ensureEscrowAccount(client, projectRow);
+    const available = escrowRow.available_balance !== null && escrowRow.available_balance !== undefined
+      ? Number(escrowRow.available_balance)
+      : 0;
+    if (available < milestoneAmount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Insufficient escrow balance' });
+    }
+
+    const contractRes = await client.query(
+      'SELECT status FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [projectId]
+    );
+    const contractStatus = (contractRes.rows[0]?.status || '').toLowerCase();
+    if (contractStatus !== 'signed') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Contract must be signed before payout' });
+    }
+
+    const contractorToPay = contractorId || assignedContractorId;
+    let providerResp;
+    try {
+      providerResp = await paymentProvider.createPayout(contractorToPay, milestoneAmount, escrowRow.currency || 'USD');
+    } catch (providerError) {
+      const failTxId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO payment_transactions (id, project_id, milestone_id, payer_id, payee_id, type, amount, status, reference, provider, external_id, failure_reason)
+          VALUES ($1, $2, $3, $4, $5, 'PAYOUT', $6, 'failed', 'milestone_payout', $7, $8, $9)
+        `,
+        [
+          failTxId,
+          projectId,
+          milestoneId,
+          homeownerId,
+          contractorToPay,
+          milestoneAmount,
+          paymentProvider.provider || 'provider',
+          null,
+          providerError?.message || 'Provider error',
+        ]
+      );
+      await client.query('COMMIT');
+      return res.status(502).json({ message: 'Payment provider error' });
+    }
+
+    if ((providerResp?.status || '').toLowerCase() !== 'succeeded') {
+      const failTxId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO payment_transactions (id, project_id, milestone_id, payer_id, payee_id, type, amount, status, reference, provider, external_id, failure_reason)
+          VALUES ($1, $2, $3, $4, $5, 'PAYOUT', $6, 'failed', 'milestone_payout', $7, $8, $9)
+        `,
+        [
+          failTxId,
+          projectId,
+          milestoneId,
+          homeownerId,
+          contractorToPay,
+          milestoneAmount,
+          paymentProvider.provider || 'provider',
+          providerResp?.id || null,
+          providerResp?.error || providerResp?.message || 'Payment failed',
+        ]
+      );
+      await client.query('COMMIT');
+      return res.status(502).json({ message: 'Payment could not be completed' });
+    }
+
+    const approved = await client.query(
+      `
+        UPDATE milestones
+        SET status = 'approved', approved_at = NOW(), approved_by = $1
+        WHERE id = $2
+        RETURNING *
+      `,
+      [homeownerId, milestoneId]
+    );
+
+    const payoutTxId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO payment_transactions (id, project_id, milestone_id, payer_id, payee_id, type, amount, status, reference, provider, external_id)
+        VALUES ($1, $2, $3, $4, $5, 'PAYOUT', $6, 'completed', 'milestone_payout', $7, $8)
+      `,
+      [
+        payoutTxId,
+        projectId,
+        milestoneId,
+        homeownerId,
+        contractorToPay,
+        milestoneAmount,
+        paymentProvider.provider || 'provider',
+        providerResp?.id || null,
+      ]
+    );
+
+    const updatedEscrow = await client.query(
+      `
+        UPDATE escrow_accounts
+        SET available_balance = available_balance - $1,
+            total_released = total_released + $1,
+            updated_at = NOW()
+        WHERE project_id = $2
+        RETURNING *
+      `,
+      [milestoneAmount, projectId]
+    );
+
+    const paid = await client.query(
+      `
+        UPDATE milestones
+        SET status = 'paid', paid_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [milestoneId]
+    );
+
+    await generateInvoiceForMilestone(client, milestoneId, { markPaid: true, createStatus: 'PAID' });
+
+    await client.query('COMMIT');
+
+    // Fire-and-forget accounting sync
+    try {
+      const connection = await getAccountingConnection(contractorToPay);
+      if (connection) {
+        accountingIntegration
+          .syncPayoutTransaction(payoutTxId, connection.provider)
+          .catch((err) => console.error('accounting:sync:error', err));
+        await pool.query(
+          'UPDATE contractor_accounting_connections SET last_synced_at = NOW() WHERE contractor_id = $1 AND provider = $2',
+          [contractorToPay, connection.provider]
+        ).catch(() => {});
+      }
+    } catch (syncErr) {
+      console.error('accounting:sync:dispatch:error', syncErr);
+    }
+
+    return res.json({
+      success: true,
+      milestone: mapMilestoneRow(paid.rows[0] || approved.rows[0]),
+      escrow: mapEscrowRow(updatedEscrow.rows[0]),
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('milestones:approve:error', error);
+    const message = pool ? 'Failed to approve milestone' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Connect contractor accounting provider (OAuth callback exchange stub)
+app.post('/api/accounting/connect', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { contractorId, provider, authCode } = req.body || {};
+    if (!contractorId || !provider || !authCode) {
+      return res.status(400).json({ message: 'contractorId, provider, and authCode are required' });
+    }
+
+    await assertDbReady();
+    const providerUpper = provider.toUpperCase();
+    if (!['QUICKBOOKS', 'XERO'].includes(providerUpper)) {
+      return res.status(400).json({ message: 'Invalid provider' });
+    }
+
+    let integrationResp;
+    try {
+      integrationResp = await accountingIntegration.connectProvider(contractorId, providerUpper, authCode);
+    } catch (err) {
+      console.error('accounting:connect:provider:error', err);
+      return res.status(502).json({ message: 'Provider connection failed' });
+    }
+
+    await client.query('BEGIN');
+    await client.query(
+      `
+        INSERT INTO contractor_accounting_connections (contractor_id, provider, access_token, refresh_token, expires_at, last_synced_at)
+        VALUES ($1, $2, $3, $4, $5, NULL)
+        ON CONFLICT (contractor_id, provider)
+        DO UPDATE SET
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          expires_at = EXCLUDED.expires_at,
+          updated_at = NOW()
+      `,
+      [
+        contractorId,
+        providerUpper,
+        integrationResp?.accessToken || null,
+        integrationResp?.refreshToken || null,
+        integrationResp?.expiresAt || null,
+      ]
+    );
+    await client.query('COMMIT');
+
+    return res.json({ success: true, connection: { provider: providerUpper, status: 'connected' } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('accounting:connect:error', error);
+    const message = pool ? 'Failed to connect accounting provider' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Contractor self: get current accounting connection
+app.get('/api/me/accounting', async (req, res) => {
+  try {
+    const { contractorId } = req.query || {};
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const connection = await getAccountingConnection(contractorId);
+    if (!connection) {
+      return res.json({ connected: false });
+    }
+    return res.json({
+      connected: true,
+      provider: connection.provider,
+      expiresAt: connection.expires_at,
+      lastSyncedAt: connection.last_synced_at,
+    });
+  } catch (error) {
+    console.error('accounting:self:get:error', error);
+    const message = pool ? 'Failed to load accounting connection' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Contractor self: initiate OAuth (returns auth URL)
+app.post('/api/me/accounting/connect', async (req, res) => {
+  try {
+    const { contractorId, provider } = req.body || {};
+    if (!contractorId || !provider) {
+      return res.status(400).json({ message: 'contractorId and provider are required' });
+    }
+    const providerUpper = provider.toUpperCase();
+    if (!['QUICKBOOKS', 'XERO'].includes(providerUpper)) {
+      return res.status(400).json({ message: 'Invalid provider' });
+    }
+    const authUrl = accountingIntegration.buildAuthUrl(providerUpper, contractorId);
+    return res.json({ provider: providerUpper, authUrl });
+  } catch (error) {
+    console.error('accounting:self:connect:error', error);
+    const message = pool ? 'Failed to start accounting connection' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// OAuth callback to finalize connection
+app.post('/api/accounting/callback', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { contractorId, provider, authCode } = req.body || {};
+    if (!contractorId || !provider || !authCode) {
+      return res.status(400).json({ message: 'contractorId, provider, and authCode are required' });
+    }
+    await assertDbReady();
+    const providerUpper = provider.toUpperCase();
+    if (!['QUICKBOOKS', 'XERO'].includes(providerUpper)) {
+      return res.status(400).json({ message: 'Invalid provider' });
+    }
+
+    let integrationResp;
+    try {
+      integrationResp = await accountingIntegration.connectProvider(contractorId, providerUpper, authCode);
+    } catch (err) {
+      console.error('accounting:callback:provider:error', err);
+      return res.status(502).json({ message: 'Provider connection failed' });
+    }
+
+    await client.query('BEGIN');
+    await client.query(
+      `
+        INSERT INTO contractor_accounting_connections (contractor_id, provider, access_token, refresh_token, expires_at, last_synced_at)
+        VALUES ($1, $2, $3, $4, $5, NULL)
+        ON CONFLICT (contractor_id, provider)
+        DO UPDATE SET
+          access_token = EXCLUDED.access_token,
+          refresh_token = EXCLUDED.refresh_token,
+          expires_at = EXCLUDED.expires_at,
+          updated_at = NOW()
+      `,
+      [
+        contractorId,
+        providerUpper,
+        integrationResp?.accessToken || null,
+        integrationResp?.refreshToken || null,
+        integrationResp?.expiresAt || null,
+      ]
+    );
+    await client.query('COMMIT');
+
+    return res.json({ success: true, provider: providerUpper });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('accounting:callback:error', error);
+    const message = pool ? 'Failed to complete accounting connection' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Start ID verification session
+app.post('/api/verification/start', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { userId, provider } = req.body || {};
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const providerName = (provider || idVerificationProvider.provider || 'stub-idp').toUpperCase();
+    const session = await idVerificationProvider.startSession(user);
+    await client.query('BEGIN');
+    const sessionId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const inserted = await client.query(
+      `
+        INSERT INTO verification_sessions (id, user_id, provider, external_session_id, status)
+        VALUES ($1, $2, $3, $4, 'PENDING')
+        RETURNING *
+      `,
+      [sessionId, userId, providerName, session.externalSessionId]
+    );
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      session: mapVerificationSessionRow(inserted.rows[0]),
+      clientToken: session.clientToken,
+      url: session.url,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('verification:start:error', error);
+    const message = pool ? 'Failed to start verification' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Verification provider webhook/callback
+app.post('/webhooks/verification', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const parsed = await idVerificationProvider.parseWebhook(req.body || {});
+    const externalSessionId = parsed.externalSessionId;
+    const status = (parsed.status || '').toUpperCase();
+
+    if (!externalSessionId) {
+      await client.query('ROLLBACK').catch(() => {});
+      return res.status(400).json({ message: 'externalSessionId is required' });
+    }
+
+    await assertDbReady();
+    await client.query('BEGIN');
+    const sessionRes = await client.query(
+      'SELECT * FROM verification_sessions WHERE external_session_id = $1 FOR UPDATE',
+      [externalSessionId]
+    );
+    if (!sessionRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Verification session not found' });
+    }
+
+    const sessionRow = sessionRes.rows[0];
+    const finalStatus = ['APPROVED', 'DENIED'].includes(status) ? status : 'PENDING';
+
+    const updatedSession = await client.query(
+      `
+        UPDATE verification_sessions
+        SET status = $1, updated_at = NOW()
+        WHERE id = $2
+        RETURNING *
+      `,
+      [finalStatus, sessionRow.id]
+    );
+
+    if (finalStatus === 'APPROVED') {
+      await client.query(
+        'UPDATE users SET is_verified = TRUE WHERE id = $1',
+        [sessionRow.user_id]
+      );
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, session: mapVerificationSessionRow(updatedSession.rows[0]) });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('verification:webhook:error', error);
+    const message = pool ? 'Failed to process verification webhook' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Payment provider webhook handler
+app.post('/webhooks/payments', async (req, res) => {
+  const rawPayload = JSON.stringify(req.body || {});
+  if (!validatePaymentSignature(req.headers, rawPayload)) {
+    return res.status(401).json({ message: 'Invalid signature' });
+  }
+
+  const event = req.body || {};
+  const eventType = (event.type || '').toLowerCase();
+  const txnId = event.transactionId || event.id || null;
+  const externalId = event.externalId || event.providerId || null;
+  const status = (event.status || '').toLowerCase();
+
+  if (!txnId) {
+    return res.status(400).json({ message: 'transactionId is required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await assertDbReady();
+    await client.query('BEGIN');
+
+    const txRes = await client.query('SELECT * FROM payment_transactions WHERE id = $1 FOR UPDATE', [txnId]);
+    if (!txRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+
+    const txRow = txRes.rows[0];
+    const isPayout = (txRow.type || '').toUpperCase() === 'PAYOUT';
+    const isDeposit = (txRow.type || '').toUpperCase() === 'DEPOSIT';
+
+    if (status === 'failed') {
+      await client.query(
+        `
+          UPDATE payment_transactions
+          SET status = 'failed', external_id = COALESCE($1, external_id), failure_reason = COALESCE($2, failure_reason)
+          WHERE id = $3
+        `,
+        [externalId, event.error || event.reason || 'Provider reported failure', txnId]
+      );
+      await client.query('COMMIT');
+      return res.json({ received: true });
+    }
+
+    const succeededEvent = status === 'succeeded' || status === 'completed' || eventType.includes('succeeded');
+    if (!succeededEvent) {
+      await client.query('ROLLBACK');
+      return res.json({ received: true });
+    }
+
+    if (txRow.status === 'completed') {
+      await client.query('ROLLBACK');
+      return res.json({ received: true });
+    }
+
+    // Mark transaction complete
+    const updatedTx = await client.query(
+      `
+        UPDATE payment_transactions
+        SET status = 'completed', external_id = COALESCE($1, external_id), failure_reason = NULL, provider = COALESCE(provider, $2)
+        WHERE id = $3
+        RETURNING *
+      `,
+      [externalId, event.provider || txRow.provider || null, txnId]
+    );
+
+    // On payout success, mark milestone paid and adjust escrow if this was previously pending
+    if (isPayout) {
+      const milestoneId = txRow.milestone_id;
+      if (milestoneId) {
+        await client.query(
+          `
+            UPDATE milestones
+            SET status = 'paid', paid_at = COALESCE(paid_at, NOW())
+            WHERE id = $1
+          `,
+          [milestoneId]
+        );
+        await markInvoicePaid(client, milestoneId);
+        await client.query(
+          `UPDATE contracts SET status = 'signed', signed_at = COALESCE(signed_at, NOW()) WHERE project_id = $1 AND status <> 'signed'`,
+          [txRow.project_id]
+        );
+      }
+
+      // Adjust escrow only if this was not already completed
+      const escrowRow = await ensureEscrowAccount(client, { id: txRow.project_id, user_id: null });
+      const amountNum = txRow.amount !== null && txRow.amount !== undefined ? Number(txRow.amount) : 0;
+      if (amountNum && txRow.status !== 'completed') {
+        await client.query(
+          `
+            UPDATE escrow_accounts
+            SET available_balance = GREATEST(0, available_balance - $1),
+                total_released = total_released + $1,
+                updated_at = NOW()
+            WHERE project_id = $2
+          `,
+          [amountNum, txRow.project_id]
+        );
+      }
+    }
+
+    if (isDeposit) {
+      // Ensure deposit totals are reflected if previously pending
+      const amountNum = txRow.amount !== null && txRow.amount !== undefined ? Number(txRow.amount) : 0;
+      if (amountNum && txRow.status !== 'completed') {
+        await client.query(
+          `
+            UPDATE escrow_accounts
+            SET total_deposited = total_deposited + $1,
+                available_balance = available_balance + $1,
+                updated_at = NOW()
+            WHERE project_id = $2
+          `,
+          [amountNum, txRow.project_id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    return res.json({ received: true, transaction: updatedTx.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('webhooks:payments:error', error);
+    const message = pool ? 'Failed to process webhook' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// E-signature webhook handler
+app.post('/webhooks/esign', async (req, res) => {
+  const rawHeaders = req.headers || {};
+  if (!validateEsignSignature(rawHeaders)) {
+    return res.status(401).json({ message: 'Invalid signature' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const parsed = await eSignatureProvider.parseWebhook(req.body || {});
+    const externalId = parsed.externalId;
+    if (!externalId) {
+      await client.query('ROLLBACK').catch(() => {});
+      return res.status(400).json({ message: 'externalId is required' });
+    }
+
+    await assertDbReady();
+    await client.query('BEGIN');
+    const contractRes = await client.query('SELECT * FROM contracts WHERE external_id = $1 FOR UPDATE', [externalId]);
+    if (!contractRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    let signedFileKey = null;
+    if (parsed.fileBase64) {
+      const key = `contracts/${contractRes.rows[0].id}/${parsed.fileName || 'signed.pdf'}`;
+      try {
+        await storageService.uploadFile(key, parsed.fileBase64, parsed.mimeType || 'application/pdf');
+        signedFileKey = key;
+      } catch (uploadErr) {
+        console.error('esign:webhook:upload:error', uploadErr);
+      }
+    }
+
+    const finalStatus = parsed.status === 'completed' || parsed.status === 'signed' ? 'signed' : 'pending';
+    const updated = await client.query(
+      `
+        UPDATE contracts
+        SET status = $1,
+            signed_file_key = COALESCE($2, signed_file_key),
+            signed_at = CASE WHEN $1 = 'signed' THEN NOW() ELSE signed_at END,
+            updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+      `,
+      [finalStatus, signedFileKey, contractRes.rows[0].id]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ success: true, contract: mapContractRow(updated.rows[0]) });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('esign:webhook:error', error);
+    const message = pool ? 'Failed to process e-sign webhook' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// Homeowner: list project payment transactions + invoices
+app.get('/api/projects/:projectId/payments', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { homeownerId, page = 1, pageSize = 20 } = req.query || {};
+
+    if (!projectId || !homeownerId) {
+      return res.status(400).json({ message: 'projectId and homeownerId are required' });
+    }
+
+    await assertDbReady();
+    const projectRow = await getProjectById(projectId);
+    if (!projectRow) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    if (projectRow.user_id !== homeownerId) {
+      return res.status(403).json({ message: 'Not authorized to view this project' });
+    }
+
+    const pageNum = Math.max(Number(page) || 1, 1);
+    const pageSizeNum = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const listPromise = pool.query(
+      `
+        SELECT
+          pt.*, m.name AS milestone_name, m.status AS milestone_status, m.amount AS milestone_amount,
+          inv.id AS invoice_id, inv.invoice_number, inv.status AS invoice_status, inv.amount AS invoice_amount,
+          inv.currency AS invoice_currency, inv.issue_date AS invoice_issue_date, inv.due_date AS invoice_due_date
+        FROM payment_transactions pt
+        LEFT JOIN milestones m ON m.id = pt.milestone_id
+        LEFT JOIN invoices inv ON inv.milestone_id = pt.milestone_id
+        WHERE pt.project_id = $1
+        ORDER BY pt.created_at DESC
+        LIMIT $2 OFFSET $3
+      `,
+      [projectId, pageSizeNum, offset]
+    );
+
+    const countPromise = pool.query(
+      'SELECT COUNT(*) FROM payment_transactions WHERE project_id = $1',
+      [projectId]
+    );
+
+    const [listResult, countResult] = await Promise.all([listPromise, countPromise]);
+
+    return res.json({
+      data: listResult.rows.map(mapTransactionWithContext),
+      page: pageNum,
+      pageSize: pageSizeNum,
+      total: Number(countResult.rows[0].count || 0),
+    });
+  } catch (error) {
+    console.error('payments:list:homeowner:error', error);
+    const message = pool ? 'Failed to fetch payments' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Contractor: list payouts + related invoices
+app.get('/api/contractors/:contractorId/payouts', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    const { page = 1, pageSize = 20 } = req.query || {};
+
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+
+    await assertDbReady();
+
+    const pageNum = Math.max(Number(page) || 1, 1);
+    const pageSizeNum = Math.min(Math.max(Number(pageSize) || 20, 1), 100);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const listPromise = pool.query(
+      `
+        SELECT
+          pt.*, m.name AS milestone_name, m.status AS milestone_status, m.amount AS milestone_amount,
+          inv.id AS invoice_id, inv.invoice_number, inv.status AS invoice_status, inv.amount AS invoice_amount,
+          inv.currency AS invoice_currency, inv.issue_date AS invoice_issue_date, inv.due_date AS invoice_due_date
+        FROM payment_transactions pt
+        LEFT JOIN milestones m ON m.id = pt.milestone_id
+        LEFT JOIN invoices inv ON inv.milestone_id = pt.milestone_id
+        WHERE pt.payee_id = $1 AND pt.type = 'PAYOUT'
+        ORDER BY pt.created_at DESC
+        LIMIT $2 OFFSET $3
+      `,
+      [contractorId, pageSizeNum, offset]
+    );
+
+    const countPromise = pool.query(
+      'SELECT COUNT(*) FROM payment_transactions WHERE payee_id = $1 AND type = \'PAYOUT\'',
+      [contractorId]
+    );
+
+    const [listResult, countResult] = await Promise.all([listPromise, countPromise]);
+
+    return res.json({
+      data: listResult.rows.map(mapTransactionWithContext),
+      page: pageNum,
+      pageSize: pageSizeNum,
+      total: Number(countResult.rows[0].count || 0),
+    });
+  } catch (error) {
+    console.error('payments:list:contractor:error', error);
+    const message = pool ? 'Failed to fetch payouts' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Upload milestone attachments (participants only)
+app.post('/api/milestones/:milestoneId/attachments', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { milestoneId } = req.params;
+    const { userId, fileName, mimeType, fileData, fileSize } = req.body || {};
+
+    if (!milestoneId || !userId || !fileName || !mimeType || !fileData) {
+      return res.status(400).json({ message: 'milestoneId, userId, fileName, mimeType, and fileData are required' });
+    }
+
+    if (!isAllowedMime(mimeType)) {
+      return res.status(400).json({ message: 'Unsupported file type' });
+    }
+
+    const sizeNum = Number(fileSize || 0);
+    const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+    if (sizeNum && sizeNum > MAX_SIZE) {
+      return res.status(400).json({ message: 'File too large (max 15MB)' });
+    }
+
+    await assertDbReady();
+    const projectId = await getProjectIdForMilestone(milestoneId);
+    if (!projectId) {
+      return res.status(404).json({ message: 'Milestone not found' });
+    }
+
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || (participants.ownerId !== userId && participants.contractorId !== userId)) {
+      return res.status(403).json({ message: 'Not authorized to attach files for this milestone' });
+    }
+
+    const safeName = fileName.replace(/\s+/g, '_');
+    const storageKey = `milestones/${milestoneId}/${Date.now()}_${safeName}`;
+
+    let uploadResult;
+    try {
+      uploadResult = await storageService.uploadFile(storageKey, fileData, mimeType);
+    } catch (storageError) {
+      console.error('attachments:upload:storage:error', storageError);
+      return res.status(502).json({ message: 'Failed to upload file' });
+    }
+
+    await client.query('BEGIN');
+    const attachmentId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const inserted = await client.query(
+      `
+        INSERT INTO milestone_attachments (id, milestone_id, uploader_id, storage_key, file_name, mime_type, file_size)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [
+        attachmentId,
+        milestoneId,
+        userId,
+        uploadResult.key,
+        fileName,
+        mimeType,
+        sizeNum || null,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    const signed = await storageService.getSignedUrl(uploadResult.key);
+
+    return res.status(201).json({
+      success: true,
+      attachment: {
+        ...mapAttachmentRow(inserted.rows[0]),
+        signedUrl: signed?.url || null,
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('attachments:upload:error', error);
+    const message = pool ? 'Failed to upload attachment' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
+  }
+});
+
+// List milestone attachments (participants only)
+app.get('/api/milestones/:milestoneId/attachments', async (req, res) => {
+  try {
+    const { milestoneId } = req.params;
+    const { userId } = req.query || {};
+
+    if (!milestoneId || !userId) {
+      return res.status(400).json({ message: 'milestoneId and userId are required' });
+    }
+
+    await assertDbReady();
+    const projectId = await getProjectIdForMilestone(milestoneId);
+    if (!projectId) {
+      return res.status(404).json({ message: 'Milestone not found' });
+    }
+
+    const participants = await getProjectParticipants(projectId);
+    if (!participants || (participants.ownerId !== userId && participants.contractorId !== userId)) {
+      return res.status(403).json({ message: 'Not authorized to view attachments for this milestone' });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT * FROM milestone_attachments
+        WHERE milestone_id = $1
+        ORDER BY created_at DESC
+      `,
+      [milestoneId]
+    );
+
+    const attachments = await Promise.all(
+      result.rows.map(async (row) => {
+        const signed = await storageService.getSignedUrl(row.storage_key);
+        return { ...mapAttachmentRow(row), signedUrl: signed?.url || null };
+      })
+    );
+
+    return res.json({ success: true, attachments });
+  } catch (error) {
+    console.error('attachments:list:error', error);
+    const message = pool ? 'Failed to fetch attachments' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Create e-signature request for homeowner + contractor
+app.post('/api/contracts/:contractId/sign-request', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { contractId } = req.params;
+    const { userId } = req.body || {};
+
+    if (!contractId || !userId) {
+      return res.status(400).json({ message: 'contractId and userId are required' });
+    }
+
+    await assertDbReady();
+    await client.query('BEGIN');
+    const contractRes = await client.query('SELECT * FROM contracts WHERE id = $1 FOR UPDATE', [contractId]);
+    if (!contractRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const contractRow = contractRes.rows[0];
+    const projectRow = await getProjectById(contractRow.project_id);
+    if (!projectRow) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const participants = await getProjectParticipants(projectRow.id);
+    if (!participants || !participants.ownerId || !participants.contractorId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Contractor must be assigned before e-sign' });
+    }
+    if (![participants.ownerId, participants.contractorId].includes(userId)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized to initiate signature' });
+    }
+
+    const esignResp = await eSignatureProvider.createSignatureRequest(contractRow, [
+      { id: participants.ownerId, role: 'homeowner' },
+      { id: participants.contractorId, role: 'contractor' },
+    ]);
+
+    const updated = await client.query(
+      `
+        UPDATE contracts
+        SET provider = $1, external_id = $2, status = 'pending', updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+      `,
+      [eSignatureProvider.provider, esignResp.externalId, contractId]
+    );
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      contract: mapContractRow(updated.rows[0]),
+      signingUrls: esignResp.signingUrls || {},
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('esign:request:error', error);
+    const message = pool ? 'Failed to create signature request' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  } finally {
+    client.release();
   }
 });
 
@@ -3171,12 +5852,62 @@ app.get('/api/projects/:projectId/personnel', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
     const participants = await getProjectParticipants(projectId);
-    if (!participants || !isProjectParticipant(participants, userId)) {
+    const rows = await fetchProjectPersonnel(projectId);
+
+    // Authorization: owner, assigned contractor, any accepted contractor app, or any listed personnel
+    const isOwner = project.user_id === userId;
+    const isAssignedContractor = participants && participants.contractorId === userId;
+    const isPersonnelMember = rows.some((r) => r.user_id === userId);
+    const acceptedApp = await pool.query(
+      "SELECT 1 FROM project_applications WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted' LIMIT 1",
+      [projectId, userId]
+    );
+    const isAcceptedContractor = acceptedApp.rows.length > 0;
+
+    if (!isOwner && !isAssignedContractor && !isPersonnelMember && !isAcceptedContractor) {
       return res.status(403).json({ message: 'Not authorized to view personnel' });
     }
 
-    const rows = await fetchProjectPersonnel(projectId);
-    return res.json(rows.map((row) => mapProjectPersonnelRow(row)));
+    const augmented = [...rows];
+    const seen = new Set(rows.map((r) => r.user_id));
+    if (participants?.ownerId && !seen.has(participants.ownerId)) {
+      const ownerUser = await getUserById(participants.ownerId);
+      if (ownerUser) {
+        augmented.push({
+          id: null,
+          project_id: projectId,
+          user_id: ownerUser.id,
+          personnel_role: 'owner',
+          created_at: project?.created_at || new Date(),
+          full_name: ownerUser.full_name,
+          email: ownerUser.email,
+          phone: ownerUser.phone,
+          profile_photo_url: ownerUser.profile_photo_url,
+          role: ownerUser.role,
+        });
+        seen.add(ownerUser.id);
+      }
+    }
+    if (participants?.contractorId && !seen.has(participants.contractorId)) {
+      const contractorUser = await getUserById(participants.contractorId);
+      if (contractorUser) {
+        augmented.push({
+          id: null,
+          project_id: projectId,
+          user_id: contractorUser.id,
+          personnel_role: 'contractor',
+          created_at: project?.created_at || new Date(),
+          full_name: contractorUser.full_name,
+          email: contractorUser.email,
+          phone: contractorUser.phone,
+          profile_photo_url: contractorUser.profile_photo_url,
+          role: contractorUser.role,
+        });
+        seen.add(contractorUser.id);
+      }
+    }
+
+    return res.json(augmented.map((row) => mapProjectPersonnelRow(row)));
   } catch (error) {
     logError('project-personnel:list:error', { projectId: req.params?.projectId }, error);
     const message = pool
@@ -3224,7 +5955,16 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
     const participants = await getProjectParticipants(projectId);
-    if (!participants || !isProjectParticipant(participants, userId)) {
+    const isOwnerOrContractor = participants && isProjectParticipant(participants, userId);
+    let isAcceptedContractor = false;
+    if (!isOwnerOrContractor) {
+      const acceptedApp = await client.query(
+        "SELECT 1 FROM project_applications WHERE project_id = $1 AND contractor_id = $2 AND status = 'accepted' LIMIT 1",
+        [projectId, userId]
+      );
+      isAcceptedContractor = acceptedApp.rows.length > 0;
+    }
+    if (!isOwnerOrContractor && !isAcceptedContractor) {
       return res.status(403).json({ message: 'Not authorized to add personnel' });
     }
 
@@ -3232,6 +5972,7 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
     for (const personId of uniqueIds) {
       const userRow = await client.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [personId]);
       if (!userRow.rows.length) continue;
+      const roleLower = normalizeRole(userRow.rows[0].role);
       await client.query(
         `
           INSERT INTO project_personnel (project_id, user_id, personnel_role)
@@ -3240,6 +5981,27 @@ app.post('/api/projects/:projectId/personnel', async (req, res) => {
         `,
         [projectId, personId, userRow.rows[0].role || null]
       );
+      if (roleLower === 'worker') {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await client.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            personId,
+            'Added to project',
+            `${project.title || 'A contractor'} added you to ${project.title || 'a project'}.`,
+            JSON.stringify({
+              type: 'worker-added',
+              projectId,
+              projectTitle: project.title || 'Project',
+              contractorName: req.body?.contractorName || '',
+            }),
+          ]
+        );
+      }
     }
     await client.query('COMMIT');
 
@@ -3323,8 +6085,13 @@ app.post('/api/contracts', async (req, res) => {
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
-    if (project.user_id !== createdBy) {
-      return res.status(403).json({ message: 'Only the project owner can create contracts' });
+    const assignedContractorId = await getAssignedContractorId(projectId);
+    const isOwner = project.user_id === createdBy;
+    const isAssignedContractor = assignedContractorId && assignedContractorId === createdBy;
+    if (!isOwner && !isAssignedContractor) {
+      return res
+        .status(403)
+        .json({ message: 'Only the project owner or assigned contractor can create contracts' });
     }
 
     const creator = await getUserById(createdBy);
@@ -3342,9 +6109,25 @@ app.post('/api/contracts', async (req, res) => {
       [contractId, projectId, createdBy, title.trim(), terms]
     );
 
+    const pdfMeta = await generateContractPdf({
+      contract: { ...result.rows[0], version: 1 },
+      project,
+      signatures: [],
+    });
+    if (pdfMeta?.pdfUrl) {
+      await pool.query('UPDATE contracts SET pdf_url = $1 WHERE id = $2', [pdfMeta.pdfUrl, contractId]);
+    }
+
     return res
       .status(201)
-      .json(mapContractRow({ ...result.rows[0], owner_id: project.user_id, signature_count: 0 }));
+      .json(
+        mapContractRow({
+          ...result.rows[0],
+          owner_id: project.user_id,
+          signature_count: 0,
+          pdf_url: pdfMeta?.pdfUrl || '',
+        })
+      );
   } catch (error) {
     logError('contracts:create:error', { body: req.body }, error);
     const message = pool
@@ -3472,6 +6255,107 @@ app.get('/api/contracts/:contractId', async (req, res) => {
   }
 });
 
+app.delete('/api/contracts/:contractId', async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    const { userId } = req.body || {};
+    if (!contractId || !userId) {
+      return res.status(400).json({ message: 'contractId and userId are required' });
+    }
+
+    const contractRow = await fetchContractWithProject(contractId);
+    if (!contractRow) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    if ((contractRow.status || '').toLowerCase() !== 'pending') {
+      return res.status(409).json({ message: 'Only pending contracts can be deleted' });
+    }
+
+    const participants = await getProjectParticipants(contractRow.project_id);
+    const personnelRows = await fetchProjectPersonnel(contractRow.project_id);
+    const contractorIds = await getProjectContractorIds(contractRow.project_id);
+
+    const ownerSideUsers = new Set();
+    if (participants?.ownerId) ownerSideUsers.add(participants.ownerId);
+    personnelRows.forEach((row) => {
+      const role = normalizeRole(row.personnel_role || row.role || '');
+      if (role === 'owner') {
+        ownerSideUsers.add(row.user_id);
+      }
+    });
+
+    const contractorTeam = new Set();
+    if (participants?.contractorId) contractorTeam.add(participants.contractorId);
+    personnelRows.forEach((row) => {
+      if (isNonLaborContractorRole(row.personnel_role || row.role || '')) {
+        contractorTeam.add(row.user_id);
+      }
+    });
+
+    const creatorIsOwnerSide = ownerSideUsers.has(contractRow.created_by);
+    const creatorIsContractorSide = contractorTeam.has(contractRow.created_by);
+
+    let authorized = false;
+    if (creatorIsOwnerSide) {
+      authorized = ownerSideUsers.has(userId);
+    } else if (creatorIsContractorSide) {
+      authorized = contractorTeam.has(userId);
+    }
+
+    if (!authorized) {
+      return res.status(403).json({ message: 'Not authorized to delete this contract' });
+    }
+
+    const contractTitle = contractRow.title || 'Contract';
+    const deleter = await getUserById(userId);
+    const deleterName = deleter?.full_name || 'A team member';
+
+    // Clean up sign-request notifications tied to this contract
+    await pool.query(
+      "DELETE FROM notifications WHERE data->>'contractId' = $1 AND data->>'type' = 'contract-signature'",
+      [contractId]
+    );
+
+    await pool.query('DELETE FROM contracts WHERE id = $1', [contractId]);
+
+    const notificationPromises = [];
+    contractorIds.forEach((cid) => {
+      const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      notificationPromises.push(
+        pool.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            cid,
+            'Contract deleted',
+            `${deleterName} deleted pending contract: ${contractTitle}`,
+            JSON.stringify({
+              type: 'contract-deleted',
+              contractId,
+              projectId: contractRow.project_id,
+              title: contractTitle,
+              deleterId: userId,
+              deleterName,
+            }),
+          ]
+        )
+      );
+    });
+    await Promise.all(notificationPromises);
+
+    return res.json({ success: true });
+  } catch (error) {
+    logError('contracts:delete:error', { contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to delete contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 app.put('/api/contracts/:contractId/status', async (req, res) => {
   try {
     const { contractId } = req.params;
@@ -3559,12 +6443,672 @@ app.post('/api/contracts/:contractId/sign', async (req, res) => {
       user_email: signer.email,
       user_role: signer.role,
     });
+
+    // Re-generate PDF with signatures
+    const project = await getProjectById(contractRow.project_id);
+    const signatureRows = await pool.query(
+      `
+        SELECT cs.*, u.full_name AS user_full_name, u.email AS user_email, u.role AS user_role
+        FROM contract_signatures cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.contract_id = $1
+        ORDER BY cs.signed_at ASC
+      `,
+      [contractId]
+    );
+    const pdfMeta = await generateContractPdf({
+      contract: { ...contractRow, version: contractRow.version || 1 },
+      project,
+      signatures: signatureRows.rows.map(mapSignatureRow),
+    });
+    if (pdfMeta?.pdfUrl) {
+      await pool.query('UPDATE contracts SET pdf_url = $1 WHERE id = $2', [pdfMeta.pdfUrl, contractId]);
+    }
+
+    // Notify other party
+    const otherUserId = contractRow.owner_id === userId ? contractRow.created_by : contractRow.owner_id;
+    if (otherUserId) {
+      const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1,$2,$3,$4,$5)
+        `,
+        [
+          notifId,
+          otherUserId,
+          'Contract signature needed',
+          `${signer.full_name || 'A user'} signed ${contractRow.title || 'a contract'}. Please sign to activate.`,
+          JSON.stringify({ contractId, projectId: contractRow.project_id, type: 'contract-signature' }),
+        ]
+      );
+    }
+
     return res.status(201).json(payload);
   } catch (error) {
     logError('contracts:sign:error', { contractId: req.params?.contractId }, error);
     const message = pool
       ? 'Failed to sign contract'
       : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/:contractorId/portfolio', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const portfolioRes = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
+      contractorId,
+    ]);
+    if (!portfolioRes.rows.length) {
+      return res.json(null);
+    }
+    const portfolio = portfolioRes.rows[0];
+    const mediaRes = await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [
+      portfolio.id,
+    ]);
+    return res.json(mapPortfolioRow(portfolio, mediaRes.rows.map(mapMediaRow)));
+  } catch (error) {
+    logError('portfolio:get:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch portfolio'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/portfolio', async (req, res) => {
+  try {
+    const { contractorId, title, bio, specialties = [], hourlyRate, serviceArea, media = [] } =
+      req.body || {};
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+
+    const existing = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
+      contractorId,
+    ]);
+    const portfolioId =
+      existing.rows[0]?.id || crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const savedMedia = media?.length ? await persistPortfolioMedia(portfolioId, media) : [];
+
+    if (existing.rows.length) {
+      await pool.query(
+        `
+          UPDATE portfolios
+          SET title = $1, bio = $2, specialties = $3, hourly_rate = $4, service_area = $5, updated_at = NOW()
+          WHERE contractor_id = $6
+        `,
+        [title || '', bio || '', specialties, hourlyRate || null, serviceArea || '', contractorId]
+      );
+    } else {
+      await pool.query(
+        `
+          INSERT INTO portfolios (id, contractor_id, title, bio, specialties, hourly_rate, service_area)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+        `,
+        [
+          portfolioId,
+          contractorId,
+          title || '',
+          bio || '',
+          specialties,
+          hourlyRate || null,
+          serviceArea || '',
+        ]
+      );
+    }
+
+    if (savedMedia.length) {
+      for (const item of savedMedia) {
+        const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          'INSERT INTO portfolio_media (id, portfolio_id, type, url, caption) VALUES ($1,$2,$3,$4,$5)',
+          [id, portfolioId, item.type || 'general', item.url, item.caption || '']
+        );
+      }
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM portfolios WHERE contractor_id = $1 LIMIT 1',
+      [contractorId]
+    );
+    const mediaRes = await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [
+      portfolioId,
+    ]);
+    await appendAudit({
+      actorId: contractorId,
+      actorRole: 'contractor',
+      action: existing.rows.length ? 'portfolio.update' : 'portfolio.create',
+      entityType: 'portfolio',
+      entityId: portfolioId,
+    });
+    return res.json(mapPortfolioRow(result.rows[0], mediaRes.rows.map(mapMediaRow)));
+  } catch (error) {
+    logError('portfolio:save:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to save portfolio'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/portfolio/:portfolioId/media', async (req, res) => {
+  try {
+    const { portfolioId } = req.params;
+    const { media = [] } = req.body || {};
+    if (!portfolioId) {
+      return res.status(400).json({ message: 'portfolioId is required' });
+    }
+    await assertDbReady();
+    const saved = await persistPortfolioMedia(portfolioId, media);
+    for (const item of saved) {
+      const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        'INSERT INTO portfolio_media (id, portfolio_id, type, url, caption) VALUES ($1,$2,$3,$4,$5)',
+        [id, portfolioId, item.type || 'general', item.url, item.caption || '']
+      );
+    }
+    const mediaRes = await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [
+      portfolioId,
+    ]);
+    return res.json(mediaRes.rows.map(mapMediaRow));
+  } catch (error) {
+    logError('portfolio:media:error', { portfolioId: req.params?.portfolioId }, error);
+    const message = pool ? 'Failed to add media' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/reviews', async (req, res) => {
+  try {
+    const {
+      contractorId,
+      projectId,
+      reviewerId,
+      ratingOverall,
+      ratingQuality,
+      ratingTimeliness,
+      ratingCommunication,
+      ratingBudget,
+      comment,
+      photos = [],
+    } = req.body || {};
+
+    if (!contractorId || !reviewerId || !ratingOverall) {
+      return res
+        .status(400)
+        .json({ message: 'contractorId, reviewerId, and ratingOverall are required' });
+    }
+    await assertDbReady();
+
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO reviews (
+          id, contractor_id, project_id, reviewer_id, rating_overall, rating_quality,
+          rating_timeliness, rating_communication, rating_budget, comment, photos, status
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `,
+      [
+        id,
+        contractorId,
+        projectId || null,
+        reviewerId,
+        ratingOverall,
+        ratingQuality || ratingOverall,
+        ratingTimeliness || ratingOverall,
+        ratingCommunication || ratingOverall,
+        ratingBudget || ratingOverall,
+        comment || '',
+        JSON.stringify(photos || []),
+        'pending',
+      ]
+    );
+
+    await appendAudit({
+      actorId: reviewerId,
+      actorRole: 'homeowner',
+      action: 'review.create',
+      entityType: 'review',
+      entityId: id,
+      metadata: { contractorId, projectId },
+    });
+    return res.status(201).json({ id });
+  } catch (error) {
+    logError('reviews:create:error', { body: req.body }, error);
+    const message = pool ? 'Failed to create review' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/:contractorId/reviews', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      `
+        SELECT r.*, u.full_name AS reviewer_name
+        FROM reviews r
+        LEFT JOIN users u ON u.id = r.reviewer_id
+        WHERE contractor_id = $1
+        ORDER BY created_at DESC
+      `,
+      [contractorId]
+    );
+    return res.json(result.rows.map(mapReviewRow));
+  } catch (error) {
+    logError('reviews:list:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool ? 'Failed to fetch reviews' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/reviews/:reviewId/respond', async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    const { responseText } = req.body || {};
+    if (!reviewId) {
+      return res.status(400).json({ message: 'reviewId is required' });
+    }
+    await assertDbReady();
+    await pool.query('UPDATE reviews SET response_text = $1, response_at = NOW() WHERE id = $2', [
+      responseText || '',
+      reviewId,
+    ]);
+    return res.json({ success: true });
+  } catch (error) {
+    logError('reviews:respond:error', { reviewId }, error);
+    const message = pool ? 'Failed to respond' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/reviews/:reviewId/flag', async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    if (!reviewId) {
+      return res.status(400).json({ message: 'reviewId is required' });
+    }
+    await assertDbReady();
+    await pool.query('UPDATE reviews SET status = $1 WHERE id = $2', ['flagged', reviewId]);
+    return res.json({ success: true });
+  } catch (error) {
+    logError('reviews:flag:error', { reviewId }, error);
+    const message = pool ? 'Failed to flag review' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/audit', async (req, res) => {
+  try {
+    const { actorId, entityType, entityId, limit = 50 } = req.query;
+    await assertDbReady();
+    const params = [];
+    let query = 'SELECT * FROM audit_logs WHERE 1=1';
+    if (actorId) {
+      params.push(actorId);
+      query += ` AND actor_id = $${params.length}`;
+    }
+    if (entityType) {
+      params.push(entityType);
+      query += ` AND entity_type = $${params.length}`;
+    }
+    if (entityId) {
+      params.push(entityId);
+      query += ` AND entity_id = $${params.length}`;
+    }
+    params.push(Math.min(Number(limit) || 50, 200));
+    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+    const result = await pool.query(query, params);
+    return res.json(result.rows.map(mapAuditRow));
+  } catch (error) {
+    logError('audit:list:error', { query: req.query }, error);
+    const message = pool ? 'Failed to fetch audit logs' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/audit', async (req, res) => {
+  try {
+    const { actorId, actorRole, action, entityType, entityId, metadata } = req.body || {};
+    if (!action) {
+      return res.status(400).json({ message: 'action is required' });
+    }
+    await appendAudit({ actorId, actorRole, action, entityType, entityId, metadata });
+    return res.json({ success: true });
+  } catch (error) {
+    logError('audit:create:error', { body: req.body }, error);
+    const message = pool ? 'Failed to append audit' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/compliance/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+    const result = await pool.query(
+      'SELECT * FROM compliance_documents WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    return res.json(result.rows.map(mapComplianceRow));
+  } catch (error) {
+    logError('compliance:list:error', { userId: req.params?.userId }, error);
+    const message = pool
+      ? 'Failed to fetch compliance documents'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/compliance', async (req, res) => {
+  try {
+    const { userId, type, fileData, fileName, mimeType, expiresAt, notes } = req.body || {};
+    if (!userId || !type || !fileData) {
+      return res.status(400).json({ message: 'userId, type, and fileData are required' });
+    }
+    await assertDbReady();
+    const persisted = await persistComplianceFile(userId, type, fileName, mimeType, fileData);
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO compliance_documents (id, user_id, type, url, expires_at, status, notes)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `,
+      [id, userId, type, persisted.url, expiresAt || null, 'active', notes || '']
+    );
+    await appendAudit({
+      actorId: userId,
+      actorRole: 'contractor',
+      action: 'compliance.upload',
+      entityType: 'compliance',
+      entityId: id,
+      metadata: { type, expiresAt },
+    });
+    return res
+      .status(201)
+      .json(mapComplianceRow({ id, user_id: userId, type, url: persisted.url, expires_at: expiresAt, status: 'active', notes }));
+  } catch (error) {
+    logError('compliance:create:error', { body: req.body }, error);
+    const message = pool
+      ? 'Failed to upload compliance document'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/compliance/check-expiry', async (_req, res) => {
+  try {
+    await assertDbReady();
+    const now = new Date();
+    const soon = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    await pool.query(
+      "UPDATE compliance_documents SET status = 'expired' WHERE expires_at IS NOT NULL AND expires_at < NOW() AND status <> 'expired'"
+    );
+    await pool.query(
+      "UPDATE compliance_documents SET status = 'expiring' WHERE expires_at IS NOT NULL AND expires_at BETWEEN NOW() AND $1 AND status = 'active'",
+      [soon.toISOString()]
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    logError('compliance:check-expiry:error', {}, error);
+    const message = pool ? 'Failed to check expiry' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/analytics', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const projects = await pool.query('SELECT COUNT(*) FROM projects');
+    const users = await pool.query('SELECT COUNT(*) FROM users');
+    const disputes = await pool.query("SELECT COUNT(*) FROM disputes WHERE status = 'open'");
+    const contractors = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'contractor'");
+    return res.json({
+      activeProjects: Number(projects.rows[0].count || 0),
+      users: Number(users.rows[0].count || 0),
+      disputesOpen: Number(disputes.rows[0].count || 0),
+      contractors: Number(contractors.rows[0].count || 0),
+    });
+  } catch (error) {
+    logError('admin:analytics:error', {}, error);
+    const message = pool ? 'Failed to fetch analytics' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const result = await pool.query('SELECT id, full_name, email, role, created_at, profile_photo_url FROM users ORDER BY created_at DESC LIMIT 200');
+    return res.json(result.rows.map(mapDbUser));
+  } catch (error) {
+    logError('admin:users:error', {}, error);
+    const message = pool ? 'Failed to fetch users' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/disputes', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const result = await pool.query('SELECT * FROM disputes ORDER BY created_at DESC LIMIT 200');
+    return res.json(result.rows.map(mapDisputeRow));
+  } catch (error) {
+    logError('admin:disputes:error', {}, error);
+    const message = pool ? 'Failed to fetch disputes' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/admin/disputes/:id/resolve', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    const { id } = req.params;
+    const { status, resolutionNotes } = req.body || {};
+    if (!id || !status) {
+      return res.status(400).json({ message: 'id and status are required' });
+    }
+    await assertDbReady();
+    await pool.query(
+      'UPDATE disputes SET status = $1, resolution_notes = $2, updated_at = NOW() WHERE id = $3',
+      [status, resolutionNotes || '', id]
+    );
+    await appendAudit({
+      actorRole: 'admin',
+      action: 'dispute.resolve',
+      entityType: 'dispute',
+      entityId: id,
+      metadata: { status },
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    logError('admin:disputes:resolve:error', { id: req.params?.id }, error);
+    const message = pool ? 'Failed to resolve dispute' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/search', async (req, res) => {
+  try {
+    const { specialty, ratingMin, serviceArea, priceMin, priceMax } = req.query || {};
+    await assertDbReady();
+    const params = [];
+    let where = "u.role = 'contractor'";
+    if (specialty) {
+      params.push(specialty.toLowerCase());
+      where += ` AND EXISTS (SELECT 1 FROM unnest(p.specialties) s WHERE lower(s) = $${params.length})`;
+    }
+    if (ratingMin) {
+      params.push(Number(ratingMin));
+      where += ` AND COALESCE(u.rating, 0) >= $${params.length}`;
+    }
+    if (serviceArea) {
+      params.push(`%${serviceArea.toLowerCase()}%`);
+      where += ` AND lower(p.service_area) LIKE $${params.length}`;
+    }
+    if (priceMin) {
+      params.push(Number(priceMin));
+      where += ` AND p.hourly_rate >= $${params.length}`;
+    }
+    if (priceMax) {
+      params.push(Number(priceMax));
+      where += ` AND p.hourly_rate <= $${params.length}`;
+    }
+    const result = await pool.query(
+      `
+        SELECT
+          u.id,
+          u.full_name,
+          u.email,
+          u.phone,
+          u.profile_photo_url,
+          u.rating,
+          p.title,
+          p.bio,
+          p.specialties,
+          p.hourly_rate,
+          p.service_area,
+          COALESCE(avg(r.rating_overall), u.rating) AS avg_rating,
+          COUNT(r.id) AS review_count
+        FROM users u
+        LEFT JOIN portfolios p ON p.contractor_id = u.id
+        LEFT JOIN reviews r ON r.contractor_id = u.id AND r.status <> 'flagged'
+        WHERE ${where}
+        GROUP BY u.id, p.title, p.bio, p.specialties, p.hourly_rate, p.service_area
+        ORDER BY avg_rating DESC NULLS LAST
+        LIMIT 100
+      `,
+      params
+    );
+    const mapped = result.rows.map((row) => ({
+      id: row.id,
+      fullName: row.full_name,
+      email: row.email,
+      phone: row.phone,
+      profilePhotoUrl: row.profile_photo_url || '',
+      rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
+      avgRating: row.avg_rating !== null && row.avg_rating !== undefined ? Number(row.avg_rating) : null,
+      reviewCount: Number(row.review_count || 0),
+      specialties: row.specialties || [],
+      hourlyRate:
+        row.hourly_rate !== null && row.hourly_rate !== undefined ? Number(row.hourly_rate) : null,
+      serviceArea: row.service_area || '',
+      title: row.title || '',
+      bio: row.bio || '',
+    }));
+    return res.json(mapped);
+  } catch (error) {
+    logError('contractors:search:error', { query: req.query }, error);
+    const message = pool
+      ? 'Failed to search contractors'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/contractors/:contractorId/profile', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+    const userRes = await pool.query('SELECT * FROM users WHERE id = $1 AND role = $2 LIMIT 1', [
+      contractorId,
+      'contractor',
+    ]);
+    if (!userRes.rows.length) {
+      return res.status(404).json({ message: 'Contractor not found' });
+    }
+    const portfolioRes = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
+      contractorId,
+    ]);
+    const portfolio = portfolioRes.rows[0] || null;
+    const mediaRes = portfolio
+      ? await pool.query('SELECT * FROM portfolio_media WHERE portfolio_id = $1', [portfolio.id])
+      : { rows: [] };
+    const reviewsRes = await pool.query(
+      `
+        SELECT r.*, u.full_name AS reviewer_name
+        FROM reviews r
+        LEFT JOIN users u ON u.id = r.reviewer_id
+        WHERE r.contractor_id = $1 AND r.status <> 'flagged'
+        ORDER BY r.created_at DESC
+      `,
+      [contractorId]
+    );
+    const avgRating =
+      reviewsRes.rows.length > 0
+        ? reviewsRes.rows.reduce((sum, r) => sum + Number(r.rating_overall || 0), 0) /
+          reviewsRes.rows.length
+        : userRes.rows[0].rating;
+
+    return res.json({
+      id: userRes.rows[0].id,
+      fullName: userRes.rows[0].full_name,
+      email: userRes.rows[0].email,
+      phone: userRes.rows[0].phone,
+      profilePhotoUrl: userRes.rows[0].profile_photo_url || '',
+      avgRating: avgRating ? Number(avgRating) : null,
+      reviewCount: reviewsRes.rows.length,
+      portfolio: portfolio ? mapPortfolioRow(portfolio, mediaRes.rows.map(mapMediaRow)) : null,
+      reviews: reviewsRes.rows.map(mapReviewRow),
+    });
+  } catch (error) {
+    logError('contractors:profile:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch contractor profile'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/admin/flags', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await assertDbReady();
+    const result = await pool.query('SELECT * FROM flags ORDER BY created_at DESC LIMIT 200');
+    return res.json(result.rows);
+  } catch (error) {
+    logError('admin:flags:error', {}, error);
+    const message = pool ? 'Failed to fetch flags' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+app.post('/api/admin/flags/:id/resolve', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    const { id } = req.params;
+    await assertDbReady();
+    await pool.query("UPDATE flags SET status = 'resolved', updated_at = NOW() WHERE id = $1", [id]);
+    await appendAudit({
+      actorRole: 'admin',
+      action: 'flag.resolve',
+      entityType: 'flag',
+      entityId: id,
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    logError('admin:flags:resolve:error', { id }, error);
+    const message = pool ? 'Failed to resolve flag' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
 });

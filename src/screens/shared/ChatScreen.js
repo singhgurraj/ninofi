@@ -57,20 +57,14 @@ const ChatScreen = ({ route, navigation }) => {
     }
   }, [projectId, project?.owner, project?.assignedContractor, refreshProject]);
 
-  const isParticipant = Boolean(
-    projectId &&
-      user?.id &&
-      (project?.userId === user.id ||
-        project?.owner?.id === user.id ||
-        project?.assignedContractor?.id === user.id)
-  );
-  const counterpart =
-    user?.role === 'homeowner'
-      ? project?.assignedContractor
-      : project?.assignedContractor?.id === user?.id
-      ? project?.owner
-      : null;
-  const activeReceiver = initialReceiver?.id ? initialReceiver : counterpart;
+  const isParticipant = Boolean(projectId && user?.id);
+  const defaultCandidates = [];
+  if (project?.owner && project?.owner?.id !== user?.id) defaultCandidates.push(project.owner);
+  if (project?.assignedContractor && project?.assignedContractor?.id !== user?.id) {
+    defaultCandidates.push(project.assignedContractor);
+  }
+  const fallbackReceiver = defaultCandidates.length ? defaultCandidates[0] : null;
+  const activeReceiver = initialReceiver?.id ? initialReceiver : fallbackReceiver;
   const isConversationScoped = Boolean(initialReceiver?.id);
   const canSend = Boolean(projectId && user?.id && activeReceiver?.id && isParticipant);
 

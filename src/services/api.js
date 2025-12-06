@@ -120,14 +120,45 @@ export const projectAPI = {
   deleteApplication: async (applicationId, contractorId) =>
     api.delete(`/applications/${applicationId}`, { data: contractorId ? { contractorId } : {} }),
   getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
-  leaveProject: async (projectId, contractorId) =>
-    api.post(`/projects/${projectId}/leave`, { contractorId }),
+  leaveProject: async (projectId, payload) => api.post(`/projects/${projectId}/leave`, payload),
   getProjectPersonnel: async (projectId, userId) =>
     api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
   addProjectPersonnel: async (projectId, payload) =>
     api.post(`/projects/${projectId}/personnel`, payload),
   deleteProjectPersonnel: async (projectId, personId, payload) =>
     api.delete(`/projects/${projectId}/personnel/${personId}`, { data: payload }),
+  createContract: async (payload) => api.post('/contracts', payload),
+  deleteContract: async (contractId, payload) =>
+    api.delete(`/contracts/${contractId}`, { data: payload }),
+  getContractsForProject: async (projectId) => api.get(`/contracts/project/${projectId}`),
+  getContract: async (contractId) => api.get(`/contracts/${contractId}`),
+  signContract: async (contractId, payload) => api.post(`/contracts/${contractId}/sign`, payload),
+  postWorkGig: async (projectId, payload) => api.post(`/projects/${projectId}/gigs`, payload),
+  listOpenGigs: async (workerId) =>
+    api.get('/gigs/open', { params: workerId ? { workerId } : {} }),
+  applyToGig: async (gigId, payload) => api.post(`/gigs/${gigId}/apply`, payload),
+  listGigApplications: async (workerId) => api.get('/gigs/applications', { params: { workerId } }),
+  withdrawGigApplication: async (applicationId, payload) =>
+    api.delete(`/gigs/applications/${applicationId}`, { data: payload }),
+  savePortfolio: async (payload) => api.post('/portfolio', payload),
+  getPortfolio: async (contractorId) => api.get(`/contractors/${contractorId}/portfolio`),
+  addPortfolioMedia: async (portfolioId, media) =>
+    api.post(`/portfolio/${portfolioId}/media`, { media }),
+  createReview: async (payload) => api.post('/reviews', payload),
+  getReviews: async (contractorId) => api.get(`/contractors/${contractorId}/reviews`),
+  respondReview: async (reviewId, payload) => api.post(`/reviews/${reviewId}/respond`, payload),
+  flagReview: async (reviewId) => api.post(`/reviews/${reviewId}/flag`),
+  getAudit: async (params) => api.get('/audit', { params }),
+  appendAudit: async (payload) => api.post('/audit', payload),
+  getCompliance: async (userId) => api.get(`/compliance/user/${userId}`),
+  uploadCompliance: async (payload) => api.post('/compliance', payload),
+  getAdminAnalytics: async (headers) => api.get('/admin/analytics', { headers }),
+  getAdminUsers: async (headers) => api.get('/admin/users', { headers }),
+  getAdminDisputes: async (headers) => api.get('/admin/disputes', { headers }),
+  resolveDispute: async (id, payload, headers) =>
+    api.post(`/admin/disputes/${id}/resolve`, payload, { headers }),
+  searchContractors: async (params) => api.get('/contractors/search', { params }),
+  getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
 };
 
 export const messageAPI = {

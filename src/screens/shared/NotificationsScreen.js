@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
 import { markAllRead } from '../../store/notificationSlice';
 import { loadNotifications, markNotificationsRead } from '../../services/notifications';
+import { projectAPI } from '../../services/api';
 import palette from '../../styles/palette';
 
 const NotificationsScreen = ({ navigation }) => {
@@ -33,6 +34,59 @@ const NotificationsScreen = ({ navigation }) => {
     }, [fetchNotifs])
   );
 
+  const handleNotificationPress = useCallback(
+    async (n) => {
+      let data = n.data || {};
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          data = {};
+        }
+      }
+
+      if (data?.type === 'message' && data.projectId && data.senderId) {
+        navigation.navigate('Chat', {
+          project: { id: data.projectId, title: data.projectTitle || 'Project' },
+          receiver: {
+            id: data.senderId,
+            fullName: data.senderName || 'Sender',
+            email: data.senderEmail || '',
+          },
+        });
+        return;
+      }
+
+      if (data?.type === 'worker-added' && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
+      // Contractor application/worker gig application: go to detail for accept/deny
+      if (data?.applicationId || (data?.projectId && data?.contractorId)) {
+        navigation.navigate('NotificationDetail', { notification: n });
+        return;
+      }
+
+      if (data?.projectId) {
+        try {
+          const res = await projectAPI.getProjectDetails(data.projectId);
+          const project = res.data;
+          navigation.navigate('ProjectOverview', {
+            project,
+            role: (user?.role || 'homeowner').toLowerCase(),
+          });
+          return;
+        } catch (err) {
+          Alert.alert('Error', 'Could not open project from notification.');
+        }
+      }
+
+      navigation.navigate('NotificationDetail', { notification: n });
+    },
+    [navigation, user?.role]
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -46,32 +100,7 @@ const NotificationsScreen = ({ navigation }) => {
             })
           ).entries()
         ).map(([key, n]) => (
-            <TouchableOpacity
-              key={key}
-              style={styles.card}
-              onPress={() => {
-                let data = n.data || {};
-                if (typeof data === 'string') {
-                  try {
-                    data = JSON.parse(data);
-                  } catch {
-                    data = {};
-                  }
-                }
-                if (data?.type === 'message' && data.projectId && data.senderId) {
-                  navigation.navigate('Chat', {
-                    project: { id: data.projectId, title: data.projectTitle || 'Project' },
-                    receiver: {
-                      id: data.senderId,
-                      fullName: data.senderName || 'Sender',
-                      email: data.senderEmail || '',
-                    },
-                  });
-                  return;
-                }
-                navigation.navigate('NotificationDetail', { notification: n });
-              }}
-            >
+            <TouchableOpacity key={key} style={styles.card} onPress={() => handleNotificationPress(n)}>
               <Text style={styles.cardTitle}>{n.title}</Text>
               <Text style={styles.cardBody}>{n.body}</Text>
               {n.data?.contractorName && (

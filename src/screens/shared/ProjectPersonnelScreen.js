@@ -74,19 +74,30 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
     try {
       const res = await projectAPI.getProjectPersonnel(project.id, user.id);
       const rows = res.data || [];
-      const base = buildPersonnel(project);
-      const merged = [...base, ...rows.map((r) => ({
-        id: r.user?.id || r.userId,
-        name: r.user?.fullName,
-        role: r.role,
-        email: r.user?.email,
-        phone: r.user?.phone,
-        photo: r.user?.profilePhotoUrl,
-      }))];
+      let baseProject = project;
+      if (!project.assignedContractor || !project.owner) {
+        try {
+          const details = await projectAPI.getProjectDetails(project.id);
+          baseProject = details.data || project;
+        } catch {}
+      }
+      const base = buildPersonnel(baseProject);
+      const merged = [
+        ...base,
+        ...rows.map((r) => ({
+          id: r.user?.id || r.userId,
+          name: r.user?.fullName,
+          role: r.role,
+          email: r.user?.email,
+          phone: r.user?.phone,
+          photo: r.user?.profilePhotoUrl,
+        })),
+      ];
       const deduped = [];
       const seen = new Set();
       merged.forEach((p) => {
-        if (!p?.id || seen.has(p.id)) return;
+        if (!p?.id) return;
+        if (seen.has(p.id)) return;
         if (user.id === p.id) return; // hide own card
         seen.add(p.id);
         deduped.push(p);
@@ -200,6 +211,29 @@ const ProjectPersonnelScreen = ({ route, navigation }) => {
                     <Text style={styles.messageText}>Message</Text>
                   </TouchableOpacity>
                   {isContractor ? (
+                    <>
+                      {String(person.role || '').toLowerCase() === 'worker' ? (
+                        <TouchableOpacity
+                          style={styles.assignButton}
+                          onPress={() =>
+                            navigation.navigate('AssignWork', {
+                              project,
+                              worker: person,
+                            })
+                          }
+                        >
+                          <Text style={styles.assignText}>Assign Work</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      <TouchableOpacity
+                        style={styles.removeButton}
+                        onPress={() => handleRemove(person.id)}
+                      >
+                        <Text style={styles.removeText}>Remove</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                  {!isContractor ? (
                     <TouchableOpacity
                       style={styles.removeButton}
                       onPress={() => handleRemove(person.id)}
@@ -261,6 +295,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   messageText: { color: '#fff', fontWeight: '700' },
+  assignButton: {
+    marginTop: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.primary,
+    alignItems: 'center',
+  },
+  assignText: { color: palette.primary, fontWeight: '700' },
   removeButton: {
     marginTop: 8,
     paddingVertical: 8,
