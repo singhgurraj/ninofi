@@ -200,3 +200,14 @@ export const contractAPI = {
   deleteContract,
   fetchApprovedContractsForContractor,
 };
+
+export const fetchApprovedContractsForUser = async (userId) => {
+  if (!userId) return { success: false, error: 'userId is required' };
+  try {
+    const res = await projectAPI.listApprovedContractsForUser(userId);
+    return { success: true, data: res.data || [] };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to load contracts';
+    return { success: false, error: msg };
+  }
+};

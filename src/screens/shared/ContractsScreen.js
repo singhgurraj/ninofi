@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { contractAPI, fetchApprovedContractsForContractor } from '../../services/contracts';
+import { contractAPI, fetchApprovedContractsForContractor, fetchApprovedContractsForUser } from '../../services/contracts';
 
 const statusStyles = {
   pending: { label: 'Pending', backgroundColor: '#FEF3C7', color: '#D97706' },
@@ -50,17 +50,14 @@ const ContractsScreen = ({ navigation }) => {
         setIsLoading(true);
       }
       try {
-        const res = await contractAPI.getUserContracts(user.id);
-        setContracts(res.data || []);
         if ((user.role || '').toLowerCase() === 'contractor') {
           const approved = await fetchApprovedContractsForContractor(user.id);
-          if (approved.success) {
-            setApprovedGenerated(approved.data || []);
-          } else {
-            setApprovedGenerated([]);
-          }
+          setApprovedGenerated(approved.success ? approved.data || [] : []);
+          setContracts([]);
         } else {
-          setApprovedGenerated([]);
+          const approved = await fetchApprovedContractsForUser(user.id);
+          setApprovedGenerated(approved.success ? approved.data || [] : []);
+          setContracts([]);
         }
       } catch (error) {
         Alert.alert('Error', error.response?.data?.message || 'Failed to load contracts');
@@ -118,10 +115,6 @@ const ContractsScreen = ({ navigation }) => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>My Contracts</Text>
-        </View>
-
         {isLoading && <Text style={styles.muted}>Loading contracts...</Text>}
         {!isLoading && isContractor && approvedGenerated.length === 0 && (
           <Text style={styles.muted}>No signed contracts yet.</Text>

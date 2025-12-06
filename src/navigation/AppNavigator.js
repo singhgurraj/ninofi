@@ -311,7 +311,7 @@ const MainAppStack = () => (
       <MainStack.Screen
         name="Contracts"
         component={ContractsScreen}
-        options={{ title: 'Contracts' }}
+        options={{ title: 'My Contracts' }}
       />
       <MainStack.Screen
         name="ContractDetails"

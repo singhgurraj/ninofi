@@ -7447,6 +7447,65 @@ app.get('/api/contracts/approved/:contractorId', async (req, res) => {
   }
 });
 
+// Approved generated contracts for any signed user (fully signed)
+app.get('/api/contracts/approved/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+
+    const result = await pool.query(
+      `
+        SELECT DISTINCT gc.*
+        FROM generated_contracts gc
+        JOIN generated_contract_signatures gcs ON gcs.contract_id = gc.id
+        WHERE gcs.user_id = $1
+          AND EXISTS (
+            SELECT 1 FROM generated_contract_signatures s
+            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'homeowner'
+          )
+          AND EXISTS (
+            SELECT 1 FROM generated_contract_signatures s
+            WHERE s.contract_id = gc.id AND lower(s.signer_role) = 'contractor'
+          )
+      `,
+      [userId]
+    );
+
+    const ids = result.rows.map((r) => r.id);
+    let signatures = [];
+    if (ids.length) {
+      const sigs = await pool.query(
+        `
+          SELECT gcs.*, u.full_name, u.role AS signer_role
+          FROM generated_contract_signatures gcs
+          LEFT JOIN users u ON u.id = gcs.user_id
+          WHERE gcs.contract_id = ANY($1::uuid[])
+        `,
+        [ids]
+      );
+      signatures = sigs.rows;
+    }
+
+    const groupedSigs = signatures.reduce((acc, row) => {
+      acc[row.contract_id] = acc[row.contract_id] || [];
+      acc[row.contract_id].push(row);
+      return acc;
+    }, {});
+
+    const payload = result.rows.map((row) => mapGeneratedContractRow(row, groupedSigs[row.id] || []));
+    return res.json(payload);
+  } catch (error) {
+    logError('contracts:list-approved-user:error', { userId: req.params?.userId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
 // Update a generated contract (either party)
 app.put('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
   try {
