@@ -40,9 +40,6 @@ const ContractsScreen = ({ navigation }) => {
   const [approvedGenerated, setApprovedGenerated] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [isModalVisible, setModalVisible] = useState(false);
-  const [formData, setFormData] = useState(initialFormState);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchContracts = useCallback(
     async (opts = { refreshing: false }) => {
@@ -83,40 +80,6 @@ const ContractsScreen = ({ navigation }) => {
     fetchContracts({ refreshing: true });
   }, [fetchContracts]);
 
-  const updateField = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const resetForm = () => setFormData(initialFormState);
-
-  const handleCreateContract = async () => {
-    if (!user?.id) {
-      Alert.alert('Not signed in', 'Please sign in again.');
-      return;
-    }
-    if (!formData.title.trim() || !formData.terms.trim() || !formData.projectId.trim()) {
-      Alert.alert('Required', 'Please fill in all fields.');
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      await contractAPI.createContract({
-        title: formData.title.trim(),
-        terms: formData.terms.trim(),
-        projectId: formData.projectId.trim(),
-        createdBy: user.id,
-      });
-      Alert.alert('Success', 'Contract created successfully.');
-      setModalVisible(false);
-      resetForm();
-      fetchContracts();
-    } catch (error) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to create contract');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const renderContractCard = (contract) => {
     const status = contract.status || 'pending';
     const badge = statusStyles[status] || statusStyles.pending;
@@ -139,6 +102,7 @@ const ContractsScreen = ({ navigation }) => {
   };
 
   const isHomeowner = (user?.role || '').toLowerCase() === 'homeowner';
+  const isContractor = (user?.role || '').toLowerCase() === 'contractor';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -146,7 +110,7 @@ const ContractsScreen = ({ navigation }) => {
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backIcon}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Contracts</Text>
+        <Text style={styles.headerTitle}>Signed Contracts</Text>
         <View style={styles.headerSpacer} />
       </View>
       <ScrollView
@@ -155,103 +119,42 @@ const ContractsScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
-          <Text style={styles.title}>Contracts</Text>
-          {isHomeowner ? (
-            <TouchableOpacity style={styles.primaryButton} onPress={() => setModalVisible(true)}>
-              <Text style={styles.primaryButtonText}>Create Contract</Text>
-            </TouchableOpacity>
-          ) : null}
+          <Text style={styles.title}>Signed Contracts</Text>
         </View>
 
         {isLoading && <Text style={styles.muted}>Loading contracts...</Text>}
-        {!isLoading && contracts.length === 0 && (
+        {!isLoading && isContractor && approvedGenerated.length === 0 && (
+          <Text style={styles.muted}>No signed contracts yet.</Text>
+        )}
+        {!isLoading && isContractor && approvedGenerated.map((c) => (
+          <TouchableOpacity
+            key={c.id}
+            style={styles.card}
+            onPress={() =>
+              navigation.navigate('ProjectOverview', {
+                project: { id: c.projectId },
+                role: 'contractor',
+                openContractId: c.id,
+              })
+            }
+          >
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>{c.description || 'Contract'}</Text>
+              <View style={[styles.badge, { backgroundColor: statusStyles.signed.backgroundColor }]}>
+                <Text style={[styles.badgeText, { color: statusStyles.signed.color }]}>Approved</Text>
+              </View>
+            </View>
+            <Text style={styles.cardMeta}>Project: {c.projectId}</Text>
+            <Text style={styles.cardMeta}>
+              Total: {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        {!isLoading && !isContractor && contracts.length === 0 && (
           <Text style={styles.muted}>No contracts yet.</Text>
         )}
-        {!isLoading && contracts.map(renderContractCard)}
-        {approvedGenerated.length > 0 && (
-          <View style={{ marginTop: 16 }}>
-            <Text style={styles.sectionTitle}>Approved Contracts</Text>
-            {approvedGenerated.map((c) => (
-              <TouchableOpacity
-                key={c.id}
-                style={styles.card}
-                onPress={() =>
-                  navigation.navigate('ProjectOverview', {
-                    project: { id: c.projectId },
-                    role: 'contractor',
-                    openContractId: c.id,
-                  })
-                }
-              >
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitle}>{c.description || 'Contract'}</Text>
-                  <View style={[styles.badge, { backgroundColor: statusStyles.signed.backgroundColor }]}>
-                    <Text style={[styles.badgeText, { color: statusStyles.signed.color }]}>Approved</Text>
-                  </View>
-                </View>
-                <Text style={styles.cardMeta}>Project: {c.projectId}</Text>
-                <Text style={styles.cardMeta}>
-                  Total: {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+        {!isLoading && !isContractor && contracts.map(renderContractCard)}
       </ScrollView>
-
-      <Modal visible={isModalVisible} animationType='slide' transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Create Contract</Text>
-
-            <Text style={styles.label}>Title</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.title}
-              onChangeText={(text) => updateField('title', text)}
-              placeholder='Contract title'
-            />
-
-            <Text style={styles.label}>Terms</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={formData.terms}
-              onChangeText={(text) => updateField('terms', text)}
-              placeholder='Enter contract terms...'
-              multiline
-            />
-
-            <Text style={styles.label}>Project ID</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.projectId}
-              onChangeText={(text) => updateField('projectId', text)}
-              placeholder='Enter project ID'
-              autoCapitalize='none'
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setModalVisible(false);
-                  resetForm();
-                }}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={handleCreateContract}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.submitText}>{isSubmitting ? 'Saving...' : 'Save'}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };

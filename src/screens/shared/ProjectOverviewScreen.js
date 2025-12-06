@@ -31,6 +31,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const [editingContract, setEditingContract] = useState(null);
   const [editFields, setEditFields] = useState({ description: '', contractText: '' });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [originalEditFields, setOriginalEditFields] = useState({ description: '', contractText: '' });
 
   if (!project) {
     return (
@@ -222,14 +223,27 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
       }
     }
     setEditingContract(contractToEdit);
-    setEditFields({
+    const nextFields = {
       description: contractToEdit.description || '',
       contractText: contractToEdit.contractText || '',
-    });
+    };
+    setEditFields(nextFields);
+    setOriginalEditFields(nextFields);
   };
 
   const saveEditContract = async (options = { closeView: false }) => {
-    if (!project?.id || !editingContract?.id || !user?.id) return;
+    if (!project?.id || !editingContract?.id || !user?.id) {
+      setEditingContract(null);
+      return;
+    }
+    const changed =
+      editFields.description !== originalEditFields.description ||
+      editFields.contractText !== originalEditFields.contractText;
+    if (!changed) {
+      setEditingContract(null);
+      if (options.closeView) setViewing(null);
+      return;
+    }
     setIsSavingEdit(true);
     const res = await updateGeneratedContract({
       projectId: project.id,
@@ -349,6 +363,9 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => startEditContract(c)}>
                     <Text style={styles.actionLink}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteGeneratedContract(c.id)}>
+                    <Text style={styles.deleteLink}>Delete</Text>
                   </TouchableOpacity>
                 </View>
               </View>
