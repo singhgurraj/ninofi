@@ -172,6 +172,9 @@ export const projectAPI = {
   getAdminDisputes: async (headers) => api.get('/admin/disputes', { headers }),
   resolveDispute: async (id, payload, headers) =>
     api.post(`/admin/disputes/${id}/resolve`, payload, { headers }),
+  getAdminPendingTasks: async () => api.get('/admin/tasks/pending'),
+  postAdminTaskDecision: async (taskId, payload) => api.post(`/admin/tasks/${taskId}/decision`, payload),
+  submitGigWork: async (projectId, payload) => api.post(`/gigs/${projectId}/submit-work`, payload),
   searchContractors: async (params) => api.get('/contractors/search', { params }),
   getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
 };

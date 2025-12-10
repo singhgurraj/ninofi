@@ -494,6 +494,24 @@ const initDb = async () => {
       ) THEN
         ALTER TABLE users ADD COLUMN stripe_payouts_enabled BOOLEAN NOT NULL DEFAULT false;
       END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'wallet_balance_cents'
+      ) THEN
+        ALTER TABLE users ADD COLUMN wallet_balance_cents BIGINT NOT NULL DEFAULT 0;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'user_role'
+      ) THEN
+        ALTER TABLE users ADD COLUMN user_role TEXT NOT NULL DEFAULT 'USER';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'is_stripe_connected'
+      ) THEN
+        ALTER TABLE users ADD COLUMN is_stripe_connected BOOLEAN NOT NULL DEFAULT false;
+      END IF;
     END
     $$;
   `);
@@ -745,6 +763,46 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS notifications_project_idx ON notifications ((data->>\'projectId\'))'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id UUID PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      title TEXT NOT NULL,
+      description TEXT,
+      project_id UUID,
+      creator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      worker_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      escrow_amount_cents BIGINT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      proof_image_url TEXT,
+      verified_at TIMESTAMPTZ,
+      denied_at TIMESTAMPTZ,
+      admin_message TEXT,
+      stripe_payment_intent_id TEXT,
+      stripe_transfer_id TEXT
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS tasks_creator_idx ON tasks (creator_id, status)');
+  await pool.query('CREATE INDEX IF NOT EXISTS tasks_worker_idx ON tasks (worker_id, status)');
+  await pool.query('CREATE INDEX IF NOT EXISTS tasks_project_idx ON tasks (project_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id UUID PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      payer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount_cents BIGINT NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'usd',
+      status TEXT NOT NULL,
+      stripe_payment_intent_id TEXT,
+      stripe_transfer_id TEXT,
+      description TEXT
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS wallet_txn_user_idx ON wallet_transactions (payer_id, recipient_id, created_at DESC)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS expenses (
@@ -2007,6 +2065,42 @@ const authMiddleware = (req, res, next) => {
   } catch (error) {
     console.error('auth:verify:error', error);
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+};
+
+const requireAuth = (req, res, next) => authMiddleware(req, res, next);
+
+const requireAdmin = async (req, res, next) => {
+  try {
+    authMiddleware(req, res, () => {});
+    if (!req.userId) return; // authMiddleware already responded
+    await assertDbReady();
+    const userRes = await pool.query('SELECT user_role FROM users WHERE id = $1 LIMIT 1', [req.userId]);
+    const role = (userRes.rows[0]?.user_role || '').toUpperCase();
+    if (role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    return next();
+  } catch (error) {
+    console.error('auth:admin:error', error);
+    return res.status(500).json({ message: 'Auth check failed' });
+  }
+};
+
+const sendNotification = async (userId, title, message) => {
+  if (!userId || !title || !message) return;
+  try {
+    await assertDbReady();
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO notifications (id, user_id, title, body, data, read, created_at)
+        VALUES ($1, $2, $3, $4, $5, false, NOW())
+      `,
+      [id, userId, title, message, {}]
+    );
+  } catch (err) {
+    console.error('notify:error', err);
   }
 };
 
@@ -4752,8 +4846,9 @@ app.post('/api/stripe/connect/account-link', async (req, res) => {
     }
     await assertDbReady();
     const userRow = await getUserById(contractorId);
-    if (!userRow || (userRow.role || '').toLowerCase() !== 'contractor') {
-      return res.status(404).json({ message: 'Contractor not found' });
+    const userRole = (userRow.role || '').toLowerCase();
+    if (!userRow || !['contractor', 'worker'].includes(userRole)) {
+      return res.status(404).json({ message: 'User not eligible for payouts' });
     }
 
     const stripe = getStripeClient();
@@ -4828,8 +4923,9 @@ app.get('/api/stripe/connect/status', async (req, res) => {
     }
     await assertDbReady();
     const userRow = await getUserById(contractorId);
-    if (!userRow || (userRow.role || '').toLowerCase() !== 'contractor') {
-      return res.status(404).json({ message: 'Contractor not found' });
+    const role = (userRow?.role || '').toLowerCase();
+    if (!userRow || !['contractor', 'worker'].includes(role)) {
+      return res.status(404).json({ message: 'User not eligible for payouts' });
     }
     if (!userRow.stripe_account_id) {
       return res.status(400).json({ message: 'Stripe account not connected' });
@@ -4867,6 +4963,330 @@ app.get('/api/stripe/connect/status', async (req, res) => {
     console.error('stripe:status:error', error);
     const message = pool ? 'Failed to load Stripe status' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+const TASK_STATUSES = {
+  PENDING: 'PENDING',
+  FUNDED: 'FUNDED',
+  ASSIGNED: 'ASSIGNED',
+  SUBMITTED: 'SUBMITTED',
+  UNDER_REVIEW: 'UNDER_REVIEW',
+  VERIFIED: 'VERIFIED',
+  PAID_OUT: 'PAID_OUT',
+  DENIED: 'DENIED',
+  CANCELLED: 'CANCELLED',
+};
+
+app.post('/api/tasks', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { title, description, projectId, escrowAmountCents } = req.body || {};
+    if (!title || !escrowAmountCents || Number(escrowAmountCents) <= 0) {
+      return res.status(400).json({ message: 'title and escrowAmountCents are required' });
+    }
+    const taskId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO tasks (id, title, description, project_id, creator_id, escrow_amount_cents, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [taskId, title, description || null, projectId || null, req.userId, Number(escrowAmountCents), TASK_STATUSES.PENDING]
+    );
+    return res.status(201).json({ id: taskId });
+  } catch (error) {
+    console.error('tasks:create:error', error);
+    return res.status(500).json({ message: 'Failed to create task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tasks/:taskId/claim', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    if (!taskId) return res.status(400).json({ message: 'taskId is required' });
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (task.worker_id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Task already claimed' });
+    }
+    if (![TASK_STATUSES.PENDING, TASK_STATUSES.FUNDED].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task cannot be claimed' });
+    }
+    const newStatus = task.status === TASK_STATUSES.FUNDED ? TASK_STATUSES.ASSIGNED : TASK_STATUSES.PENDING;
+    await client.query(
+      'UPDATE tasks SET worker_id = $1, status = $2, updated_at = NOW() WHERE id = $3',
+      [req.userId, newStatus, taskId]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:claim:error', error);
+    return res.status(500).json({ message: 'Failed to claim task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tasks/:taskId/fund', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (task.creator_id !== req.userId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (![TASK_STATUSES.PENDING, TASK_STATUSES.ASSIGNED].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not fundable' });
+    }
+    if (!task.escrow_amount_cents || Number(task.escrow_amount_cents) <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Invalid escrow amount' });
+    }
+    const stripe = getStripeClient();
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Number(task.escrow_amount_cents),
+      currency: 'usd',
+      automatic_payment_methods: { enabled: true },
+      metadata: {
+        ninofi_type: 'task_escrow',
+        task_id: task.id,
+        creator_user_id: task.creator_id,
+        worker_user_id: task.worker_id || '',
+      },
+    });
+    await client.query(
+      'UPDATE tasks SET stripe_payment_intent_id = $1, updated_at = NOW() WHERE id = $2',
+      [paymentIntent.id, taskId]
+    );
+    await client.query('COMMIT');
+    return res.json({ paymentIntentClientSecret: paymentIntent.client_secret, taskId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:fund:error', error);
+    return res.status(500).json({ message: 'Failed to fund task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tasks/:taskId/submit', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    const { proofImageUrl } = req.body || {};
+    if (!proofImageUrl) return res.status(400).json({ message: 'proofImageUrl is required' });
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (task.worker_id !== req.userId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (![TASK_STATUSES.ASSIGNED, TASK_STATUSES.FUNDED].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not in a submittable state' });
+    }
+    await client.query(
+      `
+        UPDATE tasks
+        SET status = $1,
+            proof_image_url = $2,
+            updated_at = NOW()
+        WHERE id = $3
+      `,
+      [TASK_STATUSES.SUBMITTED, proofImageUrl, taskId]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:submit:error', error);
+    return res.status(500).json({ message: 'Failed to submit task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/gigs/:projectId/submit-work', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { proofImageUrl, amountCents, title, description } = req.body || {};
+    if (!projectId) return res.status(400).json({ message: 'projectId is required' });
+    if (!proofImageUrl) return res.status(400).json({ message: 'proofImageUrl is required' });
+    if (!amountCents || Number(amountCents) <= 0) {
+      return res.status(400).json({ message: 'amountCents must be greater than 0' });
+    }
+    await client.query('BEGIN');
+    const projectRes = await client.query('SELECT * FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+    if (!projectRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const project = projectRes.rows[0];
+    const taskId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO tasks (id, title, description, project_id, creator_id, worker_id, escrow_amount_cents, status, proof_image_url)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `,
+      [
+        taskId,
+        title || project.title || 'Gig Submission',
+        description || project.description || null,
+        projectId,
+        project.user_id,
+        req.userId,
+        Number(amountCents),
+        TASK_STATUSES.SUBMITTED,
+        proofImageUrl,
+      ]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true, taskId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('gigs:submit-work:error', error);
+    return res.status(500).json({ message: 'Failed to submit work' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/admin/tasks/pending', requireAdmin, async (_req, res) => {
+  try {
+    await assertDbReady();
+    const rows = await pool.query(
+      `
+        SELECT t.*, 
+               uc.full_name AS creator_name, uc.email AS creator_email,
+               uw.full_name AS worker_name, uw.email AS worker_email
+        FROM tasks t
+        LEFT JOIN users uc ON uc.id = t.creator_id
+        LEFT JOIN users uw ON uw.id = t.worker_id
+        WHERE t.status IN ($1, $2)
+        ORDER BY t.created_at DESC
+      `,
+      [TASK_STATUSES.SUBMITTED, TASK_STATUSES.UNDER_REVIEW]
+    );
+    const tasks = rows.rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      escrowAmountCents: Number(t.escrow_amount_cents || 0),
+      status: t.status,
+      proofImageUrl: t.proof_image_url || null,
+      creator: { id: t.creator_id, name: t.creator_name, email: t.creator_email },
+      worker: t.worker_id ? { id: t.worker_id, name: t.worker_name, email: t.worker_email } : null,
+      createdAt: t.created_at,
+    }));
+    return res.json({ tasks });
+  } catch (error) {
+    console.error('admin:tasks:pending:error', error);
+    return res.status(500).json({ message: 'Failed to load tasks' });
+  }
+});
+
+app.post('/api/admin/tasks/:taskId/decision', requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    const { decision, message } = req.body || {};
+    if (!['APPROVE', 'DENY'].includes((decision || '').toUpperCase())) {
+      return res.status(400).json({ message: 'decision must be APPROVE or DENY' });
+    }
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (![TASK_STATUSES.SUBMITTED, TASK_STATUSES.UNDER_REVIEW].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not ready for decision' });
+    }
+    if ((decision || '').toUpperCase() === 'DENY') {
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1, denied_at = NOW(), admin_message = $2, updated_at = NOW()
+          WHERE id = $3
+        `,
+        [TASK_STATUSES.DENIED, message || null, taskId]
+      );
+      if (task.worker_id) {
+        await sendNotification(task.worker_id, 'Task denied', `Support has denied your claim: ${message || 'No reason provided.'}`);
+      }
+      await client.query('COMMIT');
+      return res.json({ success: true, status: TASK_STATUSES.DENIED });
+    }
+
+    if (!task.worker_id || !task.escrow_amount_cents || task.escrow_amount_cents <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task missing worker or amount' });
+    }
+    const workerRes = await client.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [task.worker_id]);
+    const worker = workerRes.rows[0];
+    if (!worker?.stripe_account_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Worker missing Stripe account' });
+    }
+    const stripe = getStripeClient();
+    const transfer = await stripe.transfers.create({
+      amount: Number(task.escrow_amount_cents),
+      currency: 'usd',
+      destination: worker.stripe_account_id,
+      metadata: {
+        ninofi_type: 'task_payout',
+        task_id: task.id,
+        worker_user_id: worker.id,
+      },
+    });
+    await client.query(
+      `
+        UPDATE tasks
+        SET status = $1,
+            verified_at = NOW(),
+            admin_message = $2,
+            stripe_transfer_id = $3,
+            updated_at = NOW()
+        WHERE id = $4
+      `,
+      [TASK_STATUSES.VERIFIED, message || null, transfer.id, taskId]
+    );
+    await client.query('COMMIT');
+    await sendNotification(worker.id, 'Task approved', `$${Number(task.escrow_amount_cents / 100).toFixed(2)} earned for ${task.title}.`);
+    return res.json({ success: true, status: TASK_STATUSES.VERIFIED, transferId: transfer.id });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('admin:tasks:decision:error', error);
+    return res.status(500).json({ message: 'Failed to process decision' });
+  } finally {
+    client.release();
   }
 });
 
@@ -5004,6 +5424,64 @@ app.post('/api/wallet/add-demo-funds', authMiddleware, async (req, res) => {
   }
 });
 
+app.get('/api/wallet/status', requireAuth, async (req, res) => {
+  try {
+    await assertDbReady();
+    const user = await getUserById(req.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const availableCents = Number(user.wallet_balance_cents || 0);
+    return res.json({
+      isStripeConnected: !!user.stripe_account_id,
+      availableBalance: Number((availableCents / 100).toFixed(2)),
+      availableBalanceCents: availableCents,
+    });
+  } catch (error) {
+    console.error('wallet:status:error', error);
+    return res.status(500).json({ message: 'Failed to load wallet status' });
+  }
+});
+
+app.get('/api/wallet/transactions', requireAuth, async (req, res) => {
+  try {
+    await assertDbReady();
+    const rows = await pool.query(
+      `
+        SELECT wt.*, 
+               payer.full_name AS payer_name, payer.email AS payer_email,
+               recip.full_name AS recipient_name, recip.email AS recipient_email
+        FROM wallet_transactions wt
+        JOIN users payer ON payer.id = wt.payer_id
+        JOIN users recip ON recip.id = wt.recipient_id
+        WHERE wt.payer_id = $1 OR wt.recipient_id = $1
+        ORDER BY wt.created_at DESC
+        LIMIT 20
+      `,
+      [req.userId]
+    );
+    const transactions = rows.rows.map((t) => {
+      const direction = t.recipient_id === req.userId ? 'in' : 'out';
+      const counterpartyName = direction === 'in' ? t.payer_name : t.recipient_name;
+      const counterpartyEmail = direction === 'in' ? t.payer_email : t.recipient_email;
+      const amountCents = Number(t.amount_cents || 0);
+      return {
+        id: t.id,
+        createdAt: t.created_at instanceof Date ? t.created_at.toISOString() : t.created_at,
+        amountCents,
+        amount: Number((amountCents / 100).toFixed(2)),
+        status: t.status,
+        direction,
+        description: t.description || '',
+        counterpartyName: counterpartyName || '',
+        counterpartyEmail: counterpartyEmail || '',
+      };
+    });
+    return res.json({ transactions });
+  } catch (error) {
+    console.error('wallet:transactions:error', error);
+    return res.status(500).json({ message: 'Failed to load transactions' });
+  }
+});
+
 // Start ID verification session
 app.post('/api/verification/start', async (req, res) => {
   const client = await pool.connect();
@@ -5089,8 +5567,66 @@ const handleStripeWebhook = async (req, res) => {
         }
         break;
       }
-      case 'payment_intent.succeeded':
-      case 'payment_intent.payment_failed':
+      case 'payment_intent.succeeded': {
+        const pi = event.data?.object;
+        const meta = pi?.metadata || {};
+        if ((meta.ninofi_type || '').toLowerCase() === 'task_escrow' && meta.task_id) {
+          await pool.query(
+            'UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND status IN ($3, $4)',
+            [TASK_STATUSES.FUNDED, meta.task_id, TASK_STATUSES.PENDING, TASK_STATUSES.ASSIGNED]
+          );
+        }
+        break;
+      }
+      case 'payment_intent.payment_failed': {
+        const pi = event.data?.object;
+        const meta = pi?.metadata || {};
+        if ((meta.ninofi_type || '').toLowerCase() === 'task_escrow' && meta.task_id) {
+          await pool.query('UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2', [TASK_STATUSES.PENDING, meta.task_id]);
+        }
+        break;
+      }
+      case 'transfer.paid': {
+        const transfer = event.data?.object;
+        const meta = transfer?.metadata || {};
+        if ((meta.ninofi_type || '').toLowerCase() === 'task_payout' && meta.task_id) {
+          const taskId = meta.task_id;
+          const workerId = meta.worker_user_id || null;
+          const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+          const task = taskRes.rows[0];
+          if (task) {
+            await pool.query(
+              'UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND status <> $1',
+              [TASK_STATUSES.PAID_OUT, taskId]
+            );
+            if (workerId) {
+              const txnId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+              await pool.query(
+                `
+                  INSERT INTO wallet_transactions (id, payer_id, recipient_id, amount_cents, currency, status, stripe_transfer_id, description, created_at)
+                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+                  ON CONFLICT (id) DO NOTHING
+                `,
+                [
+                  txnId,
+                  task.creator_id,
+                  workerId,
+                  task.escrow_amount_cents || 0,
+                  'usd',
+                  'SUCCEEDED',
+                  transfer.id,
+                  `Task payout: ${task.title || 'Task'}`,
+                ]
+              );
+              await pool.query(
+                'UPDATE users SET wallet_balance_cents = COALESCE(wallet_balance_cents,0) + $1 WHERE id = $2',
+                [task.escrow_amount_cents || 0, workerId]
+              );
+            }
+          }
+        }
+        break;
+      }
       case 'transfer.created':
       case 'balance.available':
       case 'payout.paid':
