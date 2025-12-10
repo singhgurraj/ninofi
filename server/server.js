@@ -5290,6 +5290,83 @@ app.post('/api/admin/tasks/:taskId/decision', requireAdmin, async (req, res) => 
   }
 });
 
+app.post('/api/wallet/send-payment', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { recipientUserId, recipientEmail, amountCents, description } = req.body || {};
+    const payerId = req.userId;
+    const amount = Number(amountCents);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'amountCents must be greater than 0' });
+    }
+
+    await assertDbReady();
+    let recipientId = recipientUserId;
+    if (!recipientId && recipientEmail) {
+      const recRes = await pool.query(
+        'SELECT id FROM users WHERE email_normalized = lower($1) LIMIT 1',
+        [recipientEmail]
+      );
+      recipientId = recRes.rows[0]?.id;
+    }
+    if (!recipientId) {
+      return res.status(400).json({ message: 'recipientUserId or recipientEmail required' });
+    }
+    if (recipientId === payerId) {
+      return res.status(400).json({ message: 'Cannot pay yourself' });
+    }
+
+    const payerRes = await pool.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [payerId]);
+    const recipientRes = await pool.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [recipientId]);
+    const payer = payerRes.rows[0];
+    const recipient = recipientRes.rows[0];
+    if (!payer || !recipient) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (!recipient.stripe_account_id) {
+      return res.status(400).json({ message: 'Recipient not connected to Stripe' });
+    }
+
+    const stripe = getStripeClient();
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount,
+      currency: 'usd',
+      payment_method: 'pm_card_visa',
+      confirm: true,
+      metadata: {
+        ninofi_transaction_type: 'p2p',
+        payer_user_id: payerId,
+        recipient_user_id: recipientId,
+      },
+    });
+
+    const txnId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO wallet_transactions (id, payer_id, recipient_id, amount_cents, currency, status, stripe_payment_intent_id, description, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+      `,
+      [
+        txnId,
+        payerId,
+        recipientId,
+        amount,
+        'usd',
+        'PENDING',
+        paymentIntent.id,
+        description || '',
+      ]
+    );
+
+    return res.json({ paymentIntentClientSecret: paymentIntent.client_secret, transactionId: txnId });
+  } catch (error) {
+    console.error('wallet:send-payment:error', error);
+    return res.status(500).json({ message: 'Failed to start payment' });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/wallet/balance', authMiddleware, async (req, res) => {
   try {
     const userId = req.userId;
@@ -5575,6 +5652,20 @@ const handleStripeWebhook = async (req, res) => {
             'UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND status IN ($3, $4)',
             [TASK_STATUSES.FUNDED, meta.task_id, TASK_STATUSES.PENDING, TASK_STATUSES.ASSIGNED]
           );
+        } else if ((meta.ninofi_transaction_type || '').toLowerCase() === 'p2p') {
+          const payerId = meta.payer_user_id;
+          const recipientId = meta.recipient_user_id;
+          const amount = Number(pi.amount || 0);
+          if (payerId && recipientId && amount > 0) {
+            await pool.query(
+              'UPDATE wallet_transactions SET status = $1 WHERE stripe_payment_intent_id = $2',
+              ['SUCCEEDED', pi.id]
+            );
+            await pool.query(
+              'UPDATE users SET wallet_balance_cents = COALESCE(wallet_balance_cents,0) + $1 WHERE id = $2',
+              [amount, recipientId]
+            );
+          }
         }
         break;
       }
@@ -5583,6 +5674,11 @@ const handleStripeWebhook = async (req, res) => {
         const meta = pi?.metadata || {};
         if ((meta.ninofi_type || '').toLowerCase() === 'task_escrow' && meta.task_id) {
           await pool.query('UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2', [TASK_STATUSES.PENDING, meta.task_id]);
+        } else if ((meta.ninofi_transaction_type || '').toLowerCase() === 'p2p') {
+          await pool.query(
+            'UPDATE wallet_transactions SET status = $1 WHERE stripe_payment_intent_id = $2',
+            ['FAILED', pi.id]
+          );
         }
         break;
       }

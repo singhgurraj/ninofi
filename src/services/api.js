@@ -190,6 +190,9 @@ export const walletAPI = {
   getBalance: async () => api.get('/wallet/balance'),
   addTestFunds: async () => api.post('/wallet/add-test-funds'),
   addDemoFunds: async () => api.post('/wallet/add-demo-funds'),
+  getStatus: async () => api.get('/wallet/status'),
+  getTransactions: async () => api.get('/wallet/transactions'),
+  sendPayment: async (payload) => api.post('/wallet/send-payment', payload),
 };
 
 export const messageAPI = {
