@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const Stripe = require('stripe');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
@@ -1986,6 +1987,27 @@ const signJwt = (userId) => {
   const secret = getJwtSecret();
   const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
   return jwt.sign({ sub: userId }, secret, { expiresIn });
+};
+
+const authMiddleware = (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const payload = jwt.verify(token, getJwtSecret());
+    if (!payload?.sub || !isUuid(payload.sub)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.userId = payload.sub;
+    req.user = { id: payload.sub };
+    return next();
+  } catch (error) {
+    console.error('auth:verify:error', error);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 };
 
 const redactValue = (value = '') => {
@@ -4823,6 +4845,48 @@ app.get('/api/stripe/connect/status', async (req, res) => {
     console.error('stripe:status:error', error);
     const message = pool ? 'Failed to load Stripe status' : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+app.get('/api/wallet/balance', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await assertDbReady();
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!user.stripe_account_id) {
+      return res.status(400).json({ error: 'No connected Stripe account' });
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    const balance = await stripe.balance.retrieve({
+      stripeAccount: user.stripe_account_id,
+    });
+
+    const availableUsd = (balance.available || []).find(
+      (entry) => (entry.currency || '').toLowerCase() === 'usd'
+    );
+    const pendingUsd = (balance.pending || []).find(
+      (entry) => (entry.currency || '').toLowerCase() === 'usd'
+    );
+
+    const available = Number((availableUsd?.amount || 0) / 100);
+    const pending = Number((pendingUsd?.amount || 0) / 100);
+
+    return res.status(200).json({
+      currency: 'usd',
+      available,
+      pending,
+    });
+  } catch (error) {
+    console.error('wallet:balance:error', error);
+    return res.status(500).json({ error: 'Failed to fetch wallet balance' });
   }
 });
 

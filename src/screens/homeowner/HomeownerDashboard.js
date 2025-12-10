@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
+  Linking,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -12,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
 import { loadProjectsForUser } from '../../services/projects';
 import { loadNotifications } from '../../services/notifications';
+import { createConnectAccountLink } from '../../services/payments';
 
 const HomeownerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -19,6 +22,7 @@ const HomeownerDashboard = ({ navigation }) => {
   const { projects, isLoading } = useSelector((state) => state.projects);
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const [isConnectingStripe, setIsConnectingStripe] = useState(false);
 
   const fetchProjects = useCallback(() => {
     if (user?.id) {
@@ -36,6 +40,28 @@ const HomeownerDashboard = ({ navigation }) => {
       fetchProjects();
     }, [fetchProjects])
   );
+
+  const handleConnectBank = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Unavailable', 'Sign in first.');
+      return;
+    }
+    setIsConnectingStripe(true);
+    const res = await createConnectAccountLink(user.id);
+    setIsConnectingStripe(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
+      return;
+    }
+    const url = res.data?.url;
+    if (url) {
+      try {
+        await Linking.openURL(url);
+      } catch (_err) {
+        Alert.alert('Error', 'Could not open Stripe onboarding link');
+      }
+    }
+  }, [user?.id]);
 
   const stats = {
     activeProjects: projects?.length || 0,
@@ -131,6 +157,35 @@ const HomeownerDashboard = ({ navigation }) => {
                 minimumFontScale={0.85}
               >
                 Contracts
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleConnectBank}
+              disabled={isConnectingStripe}
+            >
+              <Text style={styles.actionIcon}>🏦</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => navigation.navigate('Wallet')}
+            >
+              <Text style={styles.actionIcon}>💰</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Wallet
               </Text>
             </TouchableOpacity>
           </View>
@@ -323,11 +378,13 @@ const styles = StyleSheet.create({
   },
   quickActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
     marginTop: 6,
   },
   actionButton: {
-    flex: 1,
+    flexBasis: '48%',
+    flexGrow: 1,
     backgroundColor: palette.primary,
     padding: 18,
     borderRadius: 16,
@@ -349,7 +406,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   actionButtonOutline: {
-    flex: 1,
+    flexBasis: '48%',
+    flexGrow: 1,
     backgroundColor: palette.surface,
     padding: 18,
     borderRadius: 16,

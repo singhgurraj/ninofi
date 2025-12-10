@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
     SafeAreaView,
@@ -8,18 +8,40 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { useSelector } from 'react-redux';
+import { walletAPI } from '../../services/api';
 import palette from '../../styles/palette';
 
 const WalletScreen = ({ navigation }) => {
-  const { role } = useSelector((state) => state.auth);
   const [selectedTab, setSelectedTab] = useState('all');
+  const [available, setAvailable] = useState(0);
+  const [pending, setPending] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const walletData = {
-    balance: 0,
-    pending: 0,
-    thisMonth: 0,
-  };
+  const formatCurrency = (amount = 0) =>
+    `$${Number(amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+
+  const loadBalance = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await walletAPI.getBalance();
+      const data = res.data || {};
+      setAvailable(Number(data.available || 0));
+      setPending(Number(data.pending || 0));
+    } catch (_err) {
+      setError('Could not load wallet balance.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBalance();
+  }, [loadBalance]);
 
   const transactions = [];
 
@@ -31,7 +53,7 @@ const WalletScreen = ({ navigation }) => {
   });
 
   const handleWithdraw = () => {
-    if (walletData.balance === 0) {
+    if (available === 0) {
       Alert.alert('No Balance', 'You have no available balance to withdraw');
       return;
     }
@@ -58,27 +80,34 @@ const WalletScreen = ({ navigation }) => {
             <Text style={styles.backText}>←</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>My Wallet</Text>
-          <TouchableOpacity>
-            <Text style={styles.settingsIcon}>⚙️</Text>
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={loadBalance}
+            disabled={loading}
+          >
+            <Text style={styles.refreshText}>{loading ? 'Loading...' : 'Refresh'}</Text>
           </TouchableOpacity>
         </View>
 
         {/* Balance Card */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Available Balance</Text>
-          <Text style={styles.balanceAmount}>${walletData.balance.toLocaleString()}</Text>
+          <Text style={styles.balanceAmount}>
+            {loading ? 'Loading...' : formatCurrency(available)}
+          </Text>
           
           <View style={styles.balanceDetails}>
             <View style={styles.balanceItem}>
-              <Text style={styles.balanceItemLabel}>Pending</Text>
-              <Text style={styles.balanceItemValue}>${walletData.pending.toLocaleString()}</Text>
+              <Text style={styles.balanceItemLabel}>Available</Text>
+              <Text style={styles.balanceItemValue}>{formatCurrency(available)}</Text>
             </View>
             <View style={styles.balanceDivider} />
             <View style={styles.balanceItem}>
-              <Text style={styles.balanceItemLabel}>This Month</Text>
-              <Text style={styles.balanceItemValue}>${walletData.thisMonth.toLocaleString()}</Text>
+              <Text style={styles.balanceItemLabel}>Pending</Text>
+              <Text style={styles.balanceItemValue}>{formatCurrency(pending)}</Text>
             </View>
           </View>
+          {error && <Text style={styles.errorText}>{error}</Text>}
 
           <View style={styles.actionButtons}>
             <TouchableOpacity 
@@ -281,8 +310,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: palette.text,
   },
-  settingsIcon: {
-    fontSize: 20,
+  refreshButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  refreshText: {
+    color: palette.primary,
+    fontWeight: '700',
   },
   balanceCard: {
     backgroundColor: palette.primary,
@@ -327,6 +361,11 @@ const styles = StyleSheet.create({
     width: 1,
     backgroundColor: 'rgba(255,255,255,0.3)',
     marginHorizontal: 15,
+  },
+  errorText: {
+    color: '#FFE4E6',
+    fontSize: 12,
+    marginTop: 4,
   },
   actionButtons: {
     flexDirection: 'row',

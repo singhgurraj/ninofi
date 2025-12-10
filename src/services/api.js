@@ -183,6 +183,10 @@ export const paymentsAPI = {
     api.get('/stripe/connect/status', { params: { contractorId, userId: contractorId } }),
 };
 
+export const walletAPI = {
+  getBalance: async () => api.get('/wallet/balance'),
+};
+
 export const messageAPI = {
   list: async (projectId, userId) =>
     api.get(`/projects/${projectId}/messages`, { params: { userId } }),

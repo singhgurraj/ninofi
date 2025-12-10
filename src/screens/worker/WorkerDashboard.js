@@ -1,4 +1,6 @@
 import {
+    Alert,
+    Linking,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -7,16 +9,18 @@ import {
     View,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
 import { loadNotifications } from '../../services/notifications';
+import { createConnectAccountLink } from '../../services/payments';
 
 const WorkerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const [isConnectingStripe, setIsConnectingStripe] = useState(false);
 
   const stats = {
     earnings: 0,
@@ -32,6 +36,28 @@ const WorkerDashboard = ({ navigation }) => {
       // no-op
     }
   }, [dispatch, user?.id]);
+
+  const handleConnectBank = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Unavailable', 'Sign in first.');
+      return;
+    }
+    setIsConnectingStripe(true);
+    const res = await createConnectAccountLink(user.id);
+    setIsConnectingStripe(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
+      return;
+    }
+    const url = res.data?.url;
+    if (url) {
+      try {
+        await Linking.openURL(url);
+      } catch (_err) {
+        Alert.alert('Error', 'Could not open Stripe onboarding link');
+      }
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     fetchNotifs();
@@ -130,6 +156,21 @@ const WorkerDashboard = ({ navigation }) => {
                 minimumFontScale={0.85}
               >
                 My Applications
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleConnectBank}
+              disabled={isConnectingStripe}
+            >
+              <Text style={styles.actionIcon}>🏦</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
               </Text>
             </TouchableOpacity>
 
