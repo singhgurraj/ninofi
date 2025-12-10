@@ -1,5 +1,5 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Linking,
@@ -35,6 +35,7 @@ const ContractorDashboard = ({ navigation }) => {
     !!((stripeStatus?.accountId || user?.stripeAccountId) &&
     ((stripeStatus?.payoutsEnabled ?? user?.stripePayoutsEnabled) ||
       (stripeStatus?.chargesEnabled ?? user?.stripeChargesEnabled)));
+  const lastConnectedRef = useRef(isStripeConnected);
 
   const loadStripeStatus = useCallback(async () => {
     if (!user?.id) return;
@@ -82,6 +83,13 @@ const ContractorDashboard = ({ navigation }) => {
     }
     navigation.navigate('Wallet');
   }, [handleConnectBank, isStripeConnected, navigation]);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [isStripeConnected]);
 
   useFocusEffect(
     useCallback(() => {
@@ -159,33 +167,35 @@ const ContractorDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.cardGrid}>
-            <TouchableOpacity 
-              style={[styles.actionCard, shadowCard]}
-              onPress={handleConnectBank}
-              disabled={isConnectingStripe}
-            >
-              <Text style={styles.actionIcon}>🏦</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
+            {!isStripeConnected && (
+              <TouchableOpacity 
+                style={[styles.actionCard, shadowCard]}
+                onPress={handleConnectBank}
+                disabled={isConnectingStripe}
               >
-                Connect Bank
-              </Text>
-              <Text
-                style={styles.actionText}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.8}
-              >
-                {isConnectingStripe
-                  ? 'Opening…'
-                  : stripeStatus?.payoutsEnabled
-                  ? 'Ready for payouts'
-                  : 'Required for payouts'}
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.actionIcon}>🏦</Text>
+                <Text
+                  style={styles.actionTitle}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  Connect Bank
+                </Text>
+                <Text
+                  style={styles.actionText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                >
+                  {isConnectingStripe
+                    ? 'Opening…'
+                    : stripeStatus?.payoutsEnabled
+                    ? 'Ready for payouts'
+                    : 'Required for payouts'}
+                </Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('FindJobs')}
