@@ -4890,6 +4890,40 @@ app.get('/api/wallet/balance', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/wallet/add-test-funds', authMiddleware, async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Not allowed in production' });
+    }
+
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await assertDbReady();
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!user.stripe_account_id) {
+      return res.status(400).json({ error: 'No connected Stripe account' });
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    await stripe.transfers.create({
+      amount: 5000,
+      currency: 'usd',
+      destination: user.stripe_account_id,
+    });
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error('wallet:add-test-funds:error', error);
+    return res.status(500).json({ error: 'Failed to add test funds' });
+  }
+});
+
 // Start ID verification session
 app.post('/api/verification/start', async (req, res) => {
   const client = await pool.connect();

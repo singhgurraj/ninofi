@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
+    ActivityIndicator,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -17,6 +18,7 @@ const WalletScreen = ({ navigation }) => {
   const [pending, setPending] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [addingFunds, setAddingFunds] = useState(false);
 
   const formatCurrency = (amount = 0) =>
     `$${Number(amount || 0).toLocaleString(undefined, {
@@ -67,6 +69,20 @@ const WalletScreen = ({ navigation }) => {
       ]
     );
   };
+
+  const handleAddFunds = useCallback(async () => {
+    setAddingFunds(true);
+    setError(null);
+    try {
+      await walletAPI.addTestFunds();
+      await loadBalance();
+      Alert.alert('Success', 'Added $50 test funds.');
+    } catch (_err) {
+      setError('Could not add test funds.');
+    } finally {
+      setAddingFunds(false);
+    }
+  }, [loadBalance]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -124,21 +140,45 @@ const WalletScreen = ({ navigation }) => {
                 Withdraw
               </Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.analyticsButton}
-              onPress={() => Alert.alert('Analytics', 'Detailed analytics coming soon')}
-            >
-              <Text style={styles.analyticsIcon}>📊</Text>
-              <Text
-                style={styles.analyticsText}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
+            {__DEV__ ? (
+              <TouchableOpacity 
+                style={[
+                  styles.analyticsButton,
+                  addingFunds && styles.disabledButton,
+                ]}
+                onPress={handleAddFunds}
+                disabled={addingFunds}
               >
-                Analytics
-              </Text>
-            </TouchableOpacity>
+                {addingFunds ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.analyticsIcon}>💵</Text>
+                )}
+                <Text
+                  style={styles.analyticsText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {addingFunds ? 'Adding...' : 'Add $50 Test Funds'}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                style={styles.analyticsButton}
+                onPress={() => Alert.alert('Analytics', 'Detailed analytics coming soon')}
+              >
+                <Text style={styles.analyticsIcon}>📊</Text>
+                <Text
+                  style={styles.analyticsText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  Analytics
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -411,6 +451,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  disabledButton: {
+    opacity: 0.7,
   },
   quickActions: {
     flexDirection: 'row',
