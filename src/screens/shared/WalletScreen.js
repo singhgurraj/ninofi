@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
     ActivityIndicator,
-    Linking,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -12,7 +11,6 @@ import {
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import { walletAPI } from '../../services/api';
-import { createConnectAccountLink } from '../../services/payments';
 import palette from '../../styles/palette';
 
 const WalletScreen = ({ navigation }) => {
@@ -23,7 +21,6 @@ const WalletScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [addingFunds, setAddingFunds] = useState(false);
-  const [redirected, setRedirected] = useState(false);
   const isStripeConnected =
     !!((user?.stripeAccountId || user?.stripe_account_id) &&
     (user?.stripePayoutsEnabled || user?.stripe_payouts_enabled) &&
@@ -34,23 +31,6 @@ const WalletScreen = ({ navigation }) => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
-
-  const redirectToConnectBank = useCallback(async () => {
-    setRedirected(true);
-    if (!user?.id) {
-      navigation.goBack?.();
-      return;
-    }
-    const res = await createConnectAccountLink(user.id);
-    if (res.success && res.data?.url) {
-      try {
-        await Linking.openURL(res.data.url);
-      } catch (_err) {
-        // no-op
-      }
-    }
-    navigation.goBack?.();
-  }, [navigation, user?.id]);
 
   const loadBalance = useCallback(async () => {
     setLoading(true);
@@ -68,18 +48,8 @@ const WalletScreen = ({ navigation }) => {
   }, []);
 
   useEffect(() => {
-    if (role === 'contractor' && !isStripeConnected) {
-      return;
-    }
     loadBalance();
-  }, [isStripeConnected, loadBalance, role]);
-
-  useEffect(() => {
-    if (redirected) return;
-    if (role === 'contractor' && !isStripeConnected) {
-      redirectToConnectBank();
-    }
-  }, [isStripeConnected, redirectToConnectBank, redirected, role]);
+  }, [loadBalance]);
 
   const transactions = [];
 
