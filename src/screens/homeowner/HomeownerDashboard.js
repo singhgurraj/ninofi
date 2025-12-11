@@ -51,6 +51,14 @@ const HomeownerDashboard = ({ navigation }) => {
         (status?.accountId || user?.stripe_account_id) &&
         (status?.payoutsEnabled || status?.chargesEnabled || user?.stripePayoutsEnabled || user?.stripeChargesEnabled)
       );
+      if (connected) {
+        prevStripeStatusRef.current = {
+          connected,
+          payoutsEnabled: status?.payoutsEnabled,
+          chargesEnabled: status?.chargesEnabled,
+        };
+        return;
+      }
       const prev = prevStripeStatusRef.current;
       const changed =
         !prev ||

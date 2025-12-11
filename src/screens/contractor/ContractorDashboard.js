@@ -71,23 +71,6 @@ const ContractorDashboard = ({ navigation }) => {
     }
     if (res.data) {
       setStripeStatus(res.data);
-      const connectedNow = !!(
-        (res.data.accountId || user?.stripeAccountId) &&
-        (res.data.payoutsEnabled || res.data.chargesEnabled || user?.stripePayoutsEnabled || user?.stripeChargesEnabled)
-      );
-      dispatch(
-        addNotification({
-          title: 'Stripe status',
-          body: connectedNow ? 'Bank connected and ready.' : 'Stripe onboarding pending verification.',
-          read: false,
-          createdAt: new Date().toISOString(),
-        })
-      );
-      prevStripeStatusRef.current = {
-        connected: connectedNow,
-        payoutsEnabled: res.data.payoutsEnabled,
-        chargesEnabled: res.data.chargesEnabled,
-      };
     }
     const url = res.data?.url;
     if (url) {
@@ -151,14 +134,16 @@ const ContractorDashboard = ({ navigation }) => {
         prev.payoutsEnabled !== status?.payoutsEnabled ||
         prev.chargesEnabled !== status?.chargesEnabled);
     if (changed) {
-      dispatch(
-        addNotification({
-          title: 'Stripe status',
-          body: connectedNow ? 'Bank connected and ready.' : 'Stripe onboarding pending verification.',
-          read: false,
-          createdAt: new Date().toISOString(),
-        })
-      );
+      if (!connectedNow) {
+        dispatch(
+          addNotification({
+            title: 'Stripe status',
+            body: 'Stripe onboarding pending verification.',
+            read: false,
+            createdAt: new Date().toISOString(),
+          })
+        );
+      }
       prevStripeStatusRef.current = {
         connected: connectedNow,
         payoutsEnabled: status?.payoutsEnabled,
