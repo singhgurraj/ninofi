@@ -4019,8 +4019,15 @@ app.delete('/api/projects/:projectId', async (req, res) => {
     taskWorkersRes.rows.forEach((r) => r.worker_id && participants.add(r.worker_id));
 
     await client.query('BEGIN');
-    // Remove old notifications tied to this project
-    await client.query('DELETE FROM notifications WHERE data->>\'projectId\' = $1', [projectId]);
+    // Remove old notifications tied to this project (except the upcoming project-deleted notice)
+    await client.query(
+      `
+        DELETE FROM notifications
+        WHERE data->>'projectId' = $1
+          AND COALESCE(data->>'type','') <> 'project-deleted'
+      `,
+      [projectId]
+    );
     // Delete dependent tasks (no FK cascade) then project
     await client.query('DELETE FROM tasks WHERE project_id = $1', [projectId]);
     await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
