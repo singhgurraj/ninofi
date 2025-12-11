@@ -126,10 +126,11 @@ export const leaveProject = async (projectId, payload, dispatch) => {
     return { success: false, error: 'Missing projectId' };
   }
   try {
-    await projectAPI.leaveProject(projectId, payload);
-    if (dispatch && payload?.contractorId) {
-      dispatch(loadOpenProjects(payload.contractorId));
-      dispatch(loadContractorProjects(payload.contractorId));
+    const body = typeof payload === 'string' ? { contractorId: payload } : payload;
+    await projectAPI.leaveProject(projectId, body);
+    if (dispatch && body?.contractorId) {
+      dispatch(loadOpenProjects(body.contractorId));
+      dispatch(loadContractorProjects(body.contractorId));
     }
     return { success: true };
   } catch (error) {

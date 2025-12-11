@@ -61,6 +61,10 @@ const PortfolioEditScreen = ({ route, navigation }) => {
     ]);
   };
 
+  const removeMedia = (mediaId) => {
+    setMedia((prev) => prev.filter((item) => (item.id || item.url) !== mediaId));
+  };
+
   const handleSave = async () => {
     if (!user?.id) return;
     setSaving(true);
@@ -144,13 +148,23 @@ const PortfolioEditScreen = ({ route, navigation }) => {
               <Text style={styles.primaryText}>+ Add photo</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ gap: 10 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 10 }}
+          >
             {media.length ? (
-              media.map((m) => (
-                <View key={m.id} style={styles.mediaItem}>
-                  <Image source={{ uri: m.url }} style={styles.mediaImg} />
-                </View>
-              ))
+              media.map((m) => {
+                const mediaKey = m.id || m.url;
+                return (
+                  <View key={mediaKey} style={styles.mediaItem}>
+                    <Image source={{ uri: m.url }} style={styles.mediaImg} />
+                    <TouchableOpacity style={styles.removeButton} onPress={() => removeMedia(mediaKey)}>
+                      <Text style={styles.removeText}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
             ) : (
               <Text style={styles.muted}>No photos yet.</Text>
             )}
@@ -171,38 +185,52 @@ const PortfolioEditScreen = ({ route, navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 14, paddingBottom: 40 },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
+  content: { padding: 20, gap: 16, paddingBottom: 40 },
+  title: { fontSize: 24, fontWeight: '800', color: palette.text },
   card: {
     backgroundColor: palette.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
-    gap: 10,
+    gap: 12,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
-  label: { color: palette.text, fontWeight: '600' },
+  label: { color: palette.text, fontWeight: '700', fontSize: 14 },
   input: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: palette.border,
     borderRadius: 12,
-    padding: 12,
+    padding: 14,
     color: palette.text,
+    backgroundColor: '#F8F9FA',
+    fontSize: 15,
   },
   multiline: { minHeight: 100, textAlignVertical: 'top' },
   galleryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: palette.text },
-  primaryText: { color: palette.primary, fontWeight: '700' },
+  cardTitle: { fontSize: 18, fontWeight: '800', color: palette.text },
+  primaryText: { color: palette.primary, fontWeight: '800' },
   muted: { color: palette.muted },
-  mediaItem: { width: 140, marginRight: 10 },
-  mediaImg: { width: 140, height: 110, borderRadius: 12, backgroundColor: '#eee' },
+  mediaItem: { width: 140, marginRight: 12 },
+  mediaImg: { width: 140, height: 110, borderRadius: 14, backgroundColor: '#EEF2FF' },
+  removeButton: { marginTop: 8, alignSelf: 'flex-start' },
+  removeText: { color: palette.error, fontWeight: '700' },
   primaryButton: {
     backgroundColor: palette.primary,
     padding: 16,
     borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
-  primaryButtonText: { color: '#fff', fontWeight: '700' },
+  primaryButtonText: { color: '#fff', fontWeight: '800' },
   disabled: { opacity: 0.6 },
 });
 

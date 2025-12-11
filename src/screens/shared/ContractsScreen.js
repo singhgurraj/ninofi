@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useSelector } from 'react-redux';
 import palette from '../../styles/palette';
-import { contractAPI } from '../../services/contracts';
+import { contractAPI, fetchApprovedContractsForContractor, fetchApprovedContractsForUser } from '../../services/contracts';
 
 const statusStyles = {
   pending: { label: 'Pending', backgroundColor: '#FEF3C7', color: '#D97706' },
@@ -37,11 +37,9 @@ const formatDate = (value) => {
 const ContractsScreen = ({ navigation }) => {
   const { user } = useSelector((state) => state.auth);
   const [contracts, setContracts] = useState([]);
+  const [approvedGenerated, setApprovedGenerated] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [isModalVisible, setModalVisible] = useState(false);
-  const [formData, setFormData] = useState(initialFormState);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchContracts = useCallback(
     async (opts = { refreshing: false }) => {
@@ -52,8 +50,13 @@ const ContractsScreen = ({ navigation }) => {
         setIsLoading(true);
       }
       try {
-        const res = await contractAPI.getUserContracts(user.id);
-        setContracts(res.data || []);
+        const roleLower = (user.role || '').toLowerCase();
+        const approved =
+          roleLower === 'contractor'
+            ? await fetchApprovedContractsForContractor(user.id)
+            : await fetchApprovedContractsForUser(user.id);
+        setApprovedGenerated(approved.success ? approved.data || [] : []);
+        setContracts([]);
       } catch (error) {
         Alert.alert('Error', error.response?.data?.message || 'Failed to load contracts');
       } finally {
@@ -61,7 +64,7 @@ const ContractsScreen = ({ navigation }) => {
         setRefreshing(false);
       }
     },
-    [user?.id]
+    [user?.id, user?.role]
   );
 
   useEffect(() => {
@@ -71,40 +74,6 @@ const ContractsScreen = ({ navigation }) => {
   const handleRefresh = useCallback(() => {
     fetchContracts({ refreshing: true });
   }, [fetchContracts]);
-
-  const updateField = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const resetForm = () => setFormData(initialFormState);
-
-  const handleCreateContract = async () => {
-    if (!user?.id) {
-      Alert.alert('Not signed in', 'Please sign in again.');
-      return;
-    }
-    if (!formData.title.trim() || !formData.terms.trim() || !formData.projectId.trim()) {
-      Alert.alert('Required', 'Please fill in all fields.');
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      await contractAPI.createContract({
-        title: formData.title.trim(),
-        terms: formData.terms.trim(),
-        projectId: formData.projectId.trim(),
-        createdBy: user.id,
-      });
-      Alert.alert('Success', 'Contract created successfully.');
-      setModalVisible(false);
-      resetForm();
-      fetchContracts();
-    } catch (error) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to create contract');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   const renderContractCard = (contract) => {
     const status = contract.status || 'pending';
@@ -128,6 +97,7 @@ const ContractsScreen = ({ navigation }) => {
   };
 
   const isHomeowner = (user?.role || '').toLowerCase() === 'homeowner';
+  const isContractor = (user?.role || '').toLowerCase() === 'contractor';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -135,7 +105,7 @@ const ContractsScreen = ({ navigation }) => {
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backIcon}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Contracts</Text>
+        <Text style={styles.headerTitle}>My Contracts</Text>
         <View style={styles.headerSpacer} />
       </View>
       <ScrollView
@@ -143,75 +113,36 @@ const ContractsScreen = ({ navigation }) => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>Contracts</Text>
-          {isHomeowner ? (
-            <TouchableOpacity style={styles.primaryButton} onPress={() => setModalVisible(true)}>
-              <Text style={styles.primaryButtonText}>Create Contract</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
         {isLoading && <Text style={styles.muted}>Loading contracts...</Text>}
-        {!isLoading && contracts.length === 0 && (
-          <Text style={styles.muted}>No contracts yet.</Text>
+        {!isLoading && approvedGenerated.length === 0 && (
+          <Text style={styles.muted}>No signed contracts yet.</Text>
         )}
-        {!isLoading && contracts.map(renderContractCard)}
+        {!isLoading &&
+          approvedGenerated.map((c) => (
+            <TouchableOpacity
+              key={c.id}
+              style={styles.card}
+              onPress={() =>
+                navigation.navigate('ProjectOverview', {
+                  project: { id: c.projectId },
+                  role: isContractor ? 'contractor' : 'homeowner',
+                  openContractId: c.id,
+                })
+              }
+            >
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{c.description || 'Contract'}</Text>
+                <View style={[styles.badge, { backgroundColor: statusStyles.signed.backgroundColor }]}>
+                  <Text style={[styles.badgeText, { color: statusStyles.signed.color }]}>Approved</Text>
+                </View>
+              </View>
+              <Text style={styles.cardMeta}>Project: {c.projectId}</Text>
+              <Text style={styles.cardMeta}>
+                Total: {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+              </Text>
+            </TouchableOpacity>
+          ))}
       </ScrollView>
-
-      <Modal visible={isModalVisible} animationType='slide' transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Create Contract</Text>
-
-            <Text style={styles.label}>Title</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.title}
-              onChangeText={(text) => updateField('title', text)}
-              placeholder='Contract title'
-            />
-
-            <Text style={styles.label}>Terms</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={formData.terms}
-              onChangeText={(text) => updateField('terms', text)}
-              placeholder='Enter contract terms...'
-              multiline
-            />
-
-            <Text style={styles.label}>Project ID</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.projectId}
-              onChangeText={(text) => updateField('projectId', text)}
-              placeholder='Enter project ID'
-              autoCapitalize='none'
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setModalVisible(false);
-                  resetForm();
-                }}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={handleCreateContract}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.submitText}>{isSubmitting ? 'Saving...' : 'Save'}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -272,31 +203,31 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: '#fff', fontWeight: '700' },
   card: {
     backgroundColor: palette.surface,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
-    marginBottom: 12,
-    shadowColor: '#1E293B',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    marginBottom: 14,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: palette.text },
+  cardTitle: { fontSize: 18, fontWeight: '800', color: palette.text },
   badge: {
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  badgeText: { fontWeight: '600' },
-  cardMeta: { color: palette.muted, marginTop: 6 },
-  viewDetails: { color: palette.primary, marginTop: 8, fontWeight: '600' },
+  badgeText: { fontWeight: '700', letterSpacing: 0.2 },
+  cardMeta: { color: palette.muted, marginTop: 6, fontSize: 13 },
+  viewDetails: { color: palette.primary, marginTop: 10, fontWeight: '700' },
   muted: { color: palette.muted },
   modalOverlay: {
     flex: 1,

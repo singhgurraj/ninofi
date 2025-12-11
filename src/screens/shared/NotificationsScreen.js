@@ -62,6 +62,21 @@ const NotificationsScreen = ({ navigation }) => {
         return;
       }
 
+      if (data?.type === 'task-assigned' && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
+      if (data?.type === 'task-decision' && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
+      if (data?.taskId && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
       // Contractor application/worker gig application: go to detail for accept/deny
       if (data?.applicationId || (data?.projectId && data?.contractorId)) {
         navigation.navigate('NotificationDetail', { notification: n });
@@ -121,19 +136,24 @@ const NotificationsScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 12 },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
-  muted: { color: palette.muted },
+  content: { padding: 20, gap: 14, paddingBottom: 32 },
+  title: { fontSize: 24, fontWeight: '800', color: palette.text },
+  muted: { color: palette.muted, fontSize: 13.5 },
   card: {
     backgroundColor: palette.surface,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: palette.text },
-  cardBody: { color: palette.text, marginTop: 4 },
-  meta: { color: palette.muted, marginTop: 4, fontSize: 12 },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: palette.text },
+  cardBody: { color: palette.text, marginTop: 4, fontSize: 14 },
+  meta: { color: palette.muted, marginTop: 4, fontSize: 13 },
 });
 
 export default NotificationsScreen;

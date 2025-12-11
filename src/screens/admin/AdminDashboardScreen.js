@@ -23,7 +23,7 @@ const AdminDashboardScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Admin Dashboard</Text>
         <View style={styles.cardRow}>
           {[
@@ -61,29 +61,46 @@ const AdminDashboardScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 12, paddingBottom: 40 },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
-  cardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  content: { padding: 22, gap: 16, paddingBottom: 44 },
+  title: { fontSize: 26, fontWeight: '800', color: palette.text },
+  cardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   card: {
     flexBasis: '48%',
     backgroundColor: palette.surface,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
+    gap: 6,
   },
-  cardLabel: { color: palette.muted },
-  cardValue: { color: palette.text, fontWeight: '700', fontSize: 18 },
+  cardLabel: { color: palette.muted, fontSize: 14, letterSpacing: 0.1 },
+  cardValue: { color: palette.text, fontWeight: '800', fontSize: 22 },
   cardFull: {
     backgroundColor: palette.surface,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
+    gap: 10,
   },
-  disputeRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: palette.border },
-  rowTitle: { color: palette.text, fontWeight: '700' },
-  muted: { color: palette.muted },
+  disputeRow: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    gap: 4,
+  },
+  rowTitle: { color: palette.text, fontWeight: '700', fontSize: 15 },
+  muted: { color: palette.muted, fontSize: 14 },
 });
 
 export default AdminDashboardScreen;

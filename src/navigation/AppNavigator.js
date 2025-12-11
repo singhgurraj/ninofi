@@ -1,6 +1,7 @@
 import { createStackNavigator } from '@react-navigation/stack';
 import React from 'react';
 import { useSelector } from 'react-redux';
+import Constants from 'expo-constants';
 import { useEffect } from 'react';
 
 // Auth screens
@@ -56,6 +57,7 @@ import AuditLogScreen from '../screens/shared/AuditLogScreen';
 import ComplianceScreen from '../screens/shared/ComplianceScreen';
 import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
 import AdminModerationScreen from '../screens/admin/AdminModerationScreen';
+import AdminTasksScreen from '../screens/admin/AdminTasksScreen';
 import ContractorSearchScreen from '../screens/homeowner/ContractorSearchScreen';
 import ContractorProfileScreen from '../screens/homeowner/ContractorProfileScreen';
 import AssignWorkScreen from '../screens/contractor/AssignWorkScreen';
@@ -69,6 +71,11 @@ const MainStack = createStackNavigator();
 const AppNavigator = () => {
   const auth = useSelector((state) => state.auth);
   const { isAuthenticated, role } = auth;
+  const adminEmails = (Constants.expoConfig?.extra?.adminEmails || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isAdmin = auth?.user?.email && adminEmails.includes(auth.user.email.toLowerCase());
 
   useEffect(() => {
     if (isAuthenticated && auth?.token) {
@@ -264,6 +271,11 @@ const MainAppStack = () => (
         options={{ title: 'Moderation' }}
       />
       <MainStack.Screen
+        name="AdminTasks"
+        component={AdminTasksScreen}
+        options={{ title: 'Tasks Review' }}
+      />
+      <MainStack.Screen
         name="ContractorSearch"
         component={ContractorSearchScreen}
         options={{ title: 'Find Contractors' }}
@@ -311,7 +323,7 @@ const MainAppStack = () => (
       <MainStack.Screen
         name="Contracts"
         component={ContractsScreen}
-        options={{ title: 'Contracts' }}
+        options={{ title: 'My Contracts' }}
       />
       <MainStack.Screen
         name="ContractDetails"

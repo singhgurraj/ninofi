@@ -1,13 +1,14 @@
 import React from 'react';
 import {
-    Alert,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import palette from '../../styles/palette';
 
 const ProjectDetailsScreen = ({ route, navigation }) => {
   const { project } = route.params || {
@@ -63,25 +64,27 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
         </View>
 
         {/* Status */}
-        <View style={styles.statusContainer}>
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusText}>{project.status}</Text>
+        <View style={styles.card}>
+          <View style={styles.statusContainer}>
+            <View style={styles.statusBadge}>
+              <Text style={styles.statusText}>{project.status}</Text>
+            </View>
+            <Text style={styles.startDate}>Started Jan 15, 2025</Text>
           </View>
-          <Text style={styles.startDate}>Started Jan 15, 2025</Text>
-        </View>
 
-        {/* Progress */}
-        <View style={styles.progressSection}>
-          <Text style={styles.progressLabel}>
-            Progress: {project.milestones?.filter(m => m.status === 'approved').length || 0} of {project.milestones?.length || 0} milestones
-          </Text>
-          <Text style={styles.progressAmount}>
-            ${project.released} / ${project.budget} released
-          </Text>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${project.progress}%` }]} />
+          {/* Progress */}
+          <View style={styles.progressSection}>
+            <Text style={styles.progressLabel}>
+              Progress: {project.milestones?.filter(m => m.status === 'approved').length || 0} of {project.milestones?.length || 0} milestones
+            </Text>
+            <Text style={styles.progressAmount}>
+              ${project.released} / ${project.budget} released
+            </Text>
+            <View style={styles.progressBar}>
+              <View style={[styles.progressFill, { width: `${project.progress}%` }]} />
+            </View>
+            <Text style={styles.completionText}>{project.progress}% Complete • Est. completion: Mar 1, 2025</Text>
           </View>
-          <Text style={styles.completionText}>{project.progress}% Complete • Est. completion: Mar 1, 2025</Text>
         </View>
 
 {/* Quick Actions */}
@@ -116,7 +119,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       }}
     >
       <Text style={styles.actionIcon}>✓</Text>
-      <Text style={styles.actionText}>Review Milestone</Text>
+      <Text
+        style={styles.actionText}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        Review Milestone
+      </Text>
     </TouchableOpacity>
     
     <TouchableOpacity 
@@ -124,7 +134,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       onPress={() => navigation.navigate('Chat', { project })}
     >
       <Text style={styles.actionIconOutline}>💬</Text>
-      <Text style={styles.actionTextOutline}>Contact</Text>
+      <Text
+        style={styles.actionTextOutline}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        Contact
+      </Text>
     </TouchableOpacity>
     
     <TouchableOpacity 
@@ -132,7 +149,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
       onPress={() => console.log('Call - Coming soon')}
     >
       <Text style={styles.actionIconOutline}>📞</Text>
-      <Text style={styles.actionTextOutline}>Call</Text>
+      <Text
+        style={styles.actionTextOutline}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.85}
+      >
+        Call
+      </Text>
     </TouchableOpacity>
     {project?.assignedContractor?.id ? (
       <TouchableOpacity
@@ -145,7 +169,14 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
         }
       >
         <Text style={styles.actionIconOutline}>⭐</Text>
-        <Text style={styles.actionTextOutline}>Leave Review</Text>
+        <Text
+          style={styles.actionTextOutline}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.85}
+        >
+          Leave Review
+        </Text>
       </TouchableOpacity>
     ) : null}
   </View>
@@ -249,14 +280,21 @@ const ProjectDetailsScreen = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: palette.background,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
   backButton: {
     width: 40,
@@ -265,13 +303,14 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 24,
-    color: '#333',
+    color: palette.text,
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '600',
     flex: 1,
     marginLeft: 10,
+    color: palette.text,
   },
   menuButton: {
     width: 40,
@@ -281,69 +320,81 @@ const styles = StyleSheet.create({
   },
   menuText: {
     fontSize: 24,
-    color: '#666',
+    color: palette.muted,
+  },
+  card: {
+    backgroundColor: palette.surface,
+    margin: 20,
+    marginBottom: 12,
+    padding: 18,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
-    paddingTop: 10,
-    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
   },
   statusBadge: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: palette.accent,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
   },
   statusText: {
-    color: '#1976D2',
+    color: palette.primary,
     fontSize: 14,
     fontWeight: '500',
   },
   startDate: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
   },
   progressSection: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    marginTop: 10,
+    marginTop: 6,
   },
   progressLabel: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
     marginBottom: 4,
   },
   progressAmount: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     marginBottom: 10,
+    color: palette.text,
   },
   progressBar: {
     height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
+    backgroundColor: palette.border,
+    borderRadius: 6,
     marginBottom: 10,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#1976D2',
-    borderRadius: 4,
+    backgroundColor: palette.primary,
+    borderRadius: 6,
   },
   completionText: {
     fontSize: 12,
-    color: '#666',
+    color: palette.muted,
   },
   section: {
     padding: 20,
-    paddingTop: 10,
+    paddingTop: 4,
   },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 15,
+    fontWeight: '700',
+    marginBottom: 14,
+    color: palette.text,
   },
   quickActions: {
     flexDirection: 'row',
@@ -351,10 +402,15 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    backgroundColor: '#1976D2',
-    padding: 15,
-    borderRadius: 8,
+    backgroundColor: palette.primary,
+    padding: 16,
+    borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   actionIcon: {
     fontSize: 20,
@@ -362,57 +418,77 @@ const styles = StyleSheet.create({
   },
   actionText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
   },
   actionButtonOutline: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-    borderRadius: 8,
+    backgroundColor: palette.surface,
+    padding: 16,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   actionIconOutline: {
     fontSize: 20,
     marginBottom: 5,
   },
   actionTextOutline: {
-    color: '#333',
-    fontSize: 12,
-    fontWeight: '600',
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: '700',
   },
   contractorCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: palette.surface,
+    padding: 18,
+    borderRadius: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   contractorInfo: {
     flex: 1,
   },
   contractorName: {
     fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 5,
+    fontWeight: '700',
+    marginBottom: 6,
+    color: palette.text,
   },
   contractorRating: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
   },
   viewProfile: {
-    color: '#1976D2',
+    color: palette.primary,
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   milestoneCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: palette.surface,
+    padding: 16,
+    borderRadius: 16,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   milestoneHeader: {
     flexDirection: 'row',
@@ -423,7 +499,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: palette.accent,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -436,24 +512,26 @@ const styles = StyleSheet.create({
   },
   milestoneName: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     marginBottom: 4,
+    color: palette.text,
   },
   milestoneDate: {
     fontSize: 12,
-    color: '#666',
+    color: palette.muted,
   },
   milestoneAmount: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: palette.text,
   },
   milestoneActions: {
     marginBottom: 10,
   },
   reviewNeeded: {
     fontSize: 14,
-    color: '#FF9800',
-    fontWeight: '500',
+    color: palette.warning,
+    fontWeight: '600',
   },
   milestoneStatus: {
     paddingHorizontal: 12,
@@ -463,7 +541,7 @@ const styles = StyleSheet.create({
   },
   milestoneStatusText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   bottomActions: {
     flexDirection: 'row',
@@ -473,29 +551,39 @@ const styles = StyleSheet.create({
   },
   addFundsButton: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   addFundsText: {
-    color: '#333',
+    color: palette.text,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   supportButton: {
     flex: 1,
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#1E293B',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   supportText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });
 

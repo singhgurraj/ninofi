@@ -14,11 +14,18 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '../../services/auth';
 import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
+import palette from '../../styles/palette';
 
 const ProfileScreen = ({ navigation: propNavigation }) => {
   const navigation = propNavigation || useNavigation();
   const router = useRouter();
   const { user, role, isAuthenticated } = useSelector((state) => state.auth);
+  const adminEmails = (Constants.expoConfig?.extra?.adminEmails || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isAdmin = user?.email ? adminEmails.includes(user.email.toLowerCase()) : false;
   const dispatch = useDispatch();
   const hasNavigation = Boolean(navigation);
 
@@ -227,25 +234,35 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
         </View>
 
         {/* Account Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Admin Tools</Text>
-          <TouchableOpacity
-            style={styles.adminButton}
-            onPress={() => navigation.navigate('FeatureFlags')}
-          >
-            <Text style={styles.adminButtonIcon}>🧭</Text>
-            <Text style={styles.adminButtonText}>Feature Flags</Text>
-            <Text style={styles.actionArrow}>→</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.adminButton}
-            onPress={() => navigation.navigate('SystemMonitoring')}
-          >
-            <Text style={styles.adminButtonIcon}>📈</Text>
-            <Text style={styles.adminButtonText}>System Monitoring</Text>
-            <Text style={styles.actionArrow}>→</Text>
-          </TouchableOpacity>
-        </View>
+        {isAdmin && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Admin Tools</Text>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate('FeatureFlags')}
+            >
+              <Text style={styles.adminButtonIcon}>🧭</Text>
+              <Text style={styles.adminButtonText}>Feature Flags</Text>
+              <Text style={styles.actionArrow}>→</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate('SystemMonitoring')}
+            >
+              <Text style={styles.adminButtonIcon}>📈</Text>
+              <Text style={styles.adminButtonText}>System Monitoring</Text>
+              <Text style={styles.actionArrow}>→</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate('AdminTasks')}
+            >
+              <Text style={styles.adminButtonIcon}>🗂️</Text>
+              <Text style={styles.adminButtonText}>Task Reviews</Text>
+              <Text style={styles.actionArrow}>→</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Account Actions */}
         <View style={styles.section}>
@@ -293,14 +310,21 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: palette.background,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
+    padding: 16,
+    backgroundColor: palette.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   backButton: {
     width: 40,
@@ -313,47 +337,57 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 24,
-    color: '#333',
+    color: palette.text,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '800',
     flex: 1,
     textAlign: 'center',
+    color: palette.text,
   },
   editButton: {
-    fontSize: 16,
-    color: '#1976D2',
-    fontWeight: '500',
+    fontSize: 15,
+    color: palette.primary,
+    fontWeight: '700',
   },
   profileCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 30,
+    backgroundColor: palette.surface,
+    padding: 24,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   avatar: {
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 15,
   },
   avatarText: {
     fontSize: 40,
-    fontWeight: 'bold',
+    fontWeight: '800',
     color: '#FFFFFF',
   },
   name: {
     fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 5,
+    fontWeight: '800',
+    marginBottom: 6,
+    color: palette.text,
   },
   role: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 15,
+    color: palette.muted,
     marginBottom: 10,
   },
   verificationBadge: {
@@ -372,47 +406,67 @@ const styles = StyleSheet.create({
   verificationText: {
     color: '#4CAF50',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   statsContainer: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    marginTop: 10,
-    gap: 10,
+    backgroundColor: palette.surface,
+    padding: 18,
+    marginTop: 12,
+    gap: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   statCard: {
     flex: 1,
     alignItems: 'center',
-    padding: 15,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 10,
+    padding: 14,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 5,
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 4,
+    color: palette.primaryDark || palette.primary,
   },
   statLabel: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 12.5,
+    color: palette.muted,
   },
   section: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    marginTop: 10,
+    backgroundColor: palette.surface,
+    padding: 18,
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 15,
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 14,
+    color: palette.text,
   },
   adminButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#EEE',
+    borderBottomColor: palette.border,
   },
   adminButtonIcon: {
     fontSize: 20,
@@ -421,40 +475,47 @@ const styles = StyleSheet.create({
   adminButtonText: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
+    color: palette.text,
+    fontWeight: '700',
   },
   inputGroup: {
-    marginBottom: 15,
+    marginBottom: 14,
   },
   label: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
     marginBottom: 8,
-    color: '#333',
+    color: palette.text,
   },
   input: {
-    backgroundColor: '#F5F5F5',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 15,
+    color: palette.text,
   },
   inputDisabled: {
-    backgroundColor: '#FAFAFA',
-    color: '#999',
+    backgroundColor: '#F1F5F9',
+    color: palette.muted,
   },
   saveButton: {
-    backgroundColor: '#1976D2',
-    padding: 15,
-    borderRadius: 8,
+    backgroundColor: palette.primary,
+    padding: 16,
+    borderRadius: 14,
     alignItems: 'center',
     marginTop: 10,
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   saveButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   settingRow: {
     flexDirection: 'row',
@@ -462,26 +523,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: palette.border,
   },
   settingInfo: {
     flex: 1,
   },
   settingLabel: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '700',
     marginBottom: 3,
+    color: palette.text,
   },
   settingDesc: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 12.5,
+    color: palette.muted,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: palette.border,
   },
   actionIcon: {
     fontSize: 20,
@@ -490,29 +552,35 @@ const styles = StyleSheet.create({
   actionText: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
+    color: palette.text,
+    fontWeight: '700',
   },
   actionArrow: {
     fontSize: 18,
-    color: '#999',
+    color: palette.muted,
   },
   logoutButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     margin: 20,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#FF5722',
+    borderColor: '#FF6B6B',
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   logoutText: {
-    color: '#FF5722',
+    color: '#FF6B6B',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   version: {
     textAlign: 'center',
-    color: '#999',
+    color: palette.muted,
     fontSize: 12,
     marginBottom: 30,
   },

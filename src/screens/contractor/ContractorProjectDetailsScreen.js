@@ -25,6 +25,8 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
     project?.owner?.id &&
     user?.id &&
     project.assignedContractor.id === user.id;
+  const canLeaveProject =
+    canLeave || project?.assignedContractor?.id === user?.id || (user?.role || '').toLowerCase() === 'contractor';
 
   if (!project) {
     return (
@@ -68,7 +70,7 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
           style: 'destructive',
           onPress: async () => {
             setIsLeaving(true);
-            const result = await leaveProject(project.id, user.id, dispatch);
+            const result = await leaveProject(project.id, { contractorId: user.id }, dispatch);
             setIsLeaving(false);
             if (result.success) {
               Alert.alert('Left project', 'The homeowner has been notified.', [
@@ -85,47 +87,72 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.backIcon}>←</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Project Details</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>{project.title}</Text>
-        <Text style={styles.meta}>{project.projectType || 'Project'}</Text>
-        <Text style={styles.meta}>Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}</Text>
-        <Text style={styles.meta}>{project.timeline || 'No timeline provided'}</Text>
-        <Text style={styles.meta}>{project.address || 'No address provided'}</Text>
-
-        <Text style={styles.sectionTitle}>Description</Text>
-        <Text style={styles.body}>{project.description || 'No description provided.'}</Text>
-
-        <Text style={styles.sectionTitle}>Milestones</Text>
-        {project.milestones?.length ? (
-          project.milestones.map((m, idx) => (
-            <View key={m.id || idx} style={styles.milestone}>
-              <Text style={styles.milestoneTitle}>{m.name}</Text>
-              <Text style={styles.milestoneMeta}>
-                ${Number(m.amount || 0).toLocaleString()} • {m.description || 'No description'}
-              </Text>
+        <View style={styles.card}>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{project.title}</Text>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{project.projectType || 'Project'}</Text>
             </View>
-          ))
-        ) : (
-          <Text style={styles.muted}>No milestones.</Text>
-        )}
+          </View>
+          <Text style={styles.meta}>Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}</Text>
+          <Text style={styles.meta}>{project.timeline || 'No timeline provided'}</Text>
+          <Text style={styles.meta}>{project.address || 'No address provided'}</Text>
+        </View>
 
-        <Text style={styles.sectionTitle}>Images</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
-          {project.media?.length ? (
-            project.media.map((m, idx) => (
-              <Image
-                key={m.id || idx}
-                source={{ uri: m.url }}
-                style={styles.media}
-              />
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Description</Text>
+          <Text style={styles.body}>{project.description || 'No description provided.'}</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Milestones</Text>
+          {project.milestones?.length ? (
+            project.milestones.map((m, idx) => (
+              <View key={m.id || idx} style={styles.milestone}>
+                <View>
+                  <Text style={styles.milestoneTitle}>{m.name}</Text>
+                  <Text style={styles.milestoneMeta}>
+                    ${Number(m.amount || 0).toLocaleString()} • {m.description || 'No description'}
+                  </Text>
+                </View>
+                <View style={styles.milestonePill}>
+                  <Text style={styles.milestonePillText}>{m.status || 'Pending'}</Text>
+                </View>
+              </View>
             ))
           ) : (
-            <Text style={styles.muted}>No images attached.</Text>
+            <Text style={styles.muted}>No milestones.</Text>
           )}
-        </ScrollView>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Images</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
+            {project.media?.length ? (
+              project.media.map((m, idx) => (
+                <Image
+                  key={m.id || idx}
+                  source={{ uri: m.url }}
+                  style={styles.media}
+                />
+              ))
+            ) : (
+              <Text style={styles.muted}>No images attached.</Text>
+            )}
+          </ScrollView>
+        </View>
       </ScrollView>
 
-      {(canApply || canLeave) && (
+      {(canApply || canLeaveProject) && (
         <View style={styles.footer}>
           {canChat && (
             <TouchableOpacity
@@ -146,7 +173,7 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
               </Text>
             </TouchableOpacity>
           )}
-          {canLeave && (
+          {canLeaveProject && (
             <TouchableOpacity
               style={[styles.leaveButton, isLeaving ? styles.leaveDisabled : null]}
               onPress={handleLeave}
@@ -163,52 +190,152 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 12 },
-  title: { fontSize: 24, fontWeight: '700', color: palette.text },
-  meta: { color: palette.muted },
-  sectionTitle: { marginTop: 16, fontSize: 18, fontWeight: '700', color: palette.text },
-  body: { color: palette.text, marginTop: 6, lineHeight: 20 },
-  milestone: {
-    paddingVertical: 8,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: palette.surface,
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  milestoneTitle: { fontWeight: '700', color: palette.text },
-  milestoneMeta: { color: palette.muted, marginTop: 2 },
-  mediaRow: { marginTop: 8 },
-  media: { width: 140, height: 140, borderRadius: 12, marginRight: 10, backgroundColor: '#eee' },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backIcon: { fontSize: 24, color: palette.text },
+  headerTitle: { fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center', color: palette.text },
+  headerSpacer: { width: 40 },
+  content: { padding: 20, gap: 14 },
+  card: {
+    backgroundColor: palette.surface,
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+    gap: 6,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  title: { fontSize: 24, fontWeight: '800', color: palette.text, flex: 1 },
+  badge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: palette.accent,
+  },
+  badgeText: { color: palette.primary, fontWeight: '700', letterSpacing: 0.2 },
+  meta: { color: palette.muted, fontSize: 13.5 },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: palette.text, marginBottom: 8 },
+  body: { color: palette.text, marginTop: 4, lineHeight: 22, fontSize: 15 },
+  milestone: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  milestoneTitle: { fontWeight: '800', color: palette.text, fontSize: 15 },
+  milestoneMeta: { color: palette.muted, marginTop: 2, fontSize: 13.5 },
+  milestonePill: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    maxWidth: '75%',
+    flexShrink: 1,
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  milestonePillText: {
+    color: palette.primary,
+    fontWeight: '700',
+    fontSize: 12.5,
+    textAlign: 'center',
+    flexShrink: 1,
+    flexWrap: 'wrap',
+  },
+  mediaRow: { marginTop: 10, gap: 10 },
+  media: {
+    width: 140,
+    height: 140,
+    borderRadius: 14,
+    marginRight: 12,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
   muted: { color: palette.muted },
   footer: {
     padding: 20,
     borderTopWidth: 1,
     borderTopColor: palette.border,
     backgroundColor: palette.surface,
-    gap: 10,
+    gap: 12,
+    shadowColor: '#111827',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   chatButton: {
     backgroundColor: '#E8EAFF',
-    padding: 14,
-    borderRadius: 12,
+    padding: 16,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
-  chatText: { color: palette.primary, fontWeight: '700' },
+  chatText: { color: palette.primary, fontWeight: '800' },
   applyButton: {
     backgroundColor: palette.primary,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   applyDisabled: { backgroundColor: '#A5B4FC' },
-  applyText: { color: '#fff', fontWeight: '700' },
+  applyText: { color: '#fff', fontWeight: '800' },
   leaveButton: {
     backgroundColor: '#FEE2E2',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  leaveText: { color: '#B91C1C', fontWeight: '700' },
+  leaveText: { color: '#B91C1C', fontWeight: '800' },
   leaveDisabled: { opacity: 0.7 },
 });
 

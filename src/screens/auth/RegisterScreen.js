@@ -128,11 +128,7 @@ const RegisterScreen = ({ route, navigation }) => {
             keyboardShouldPersistTaps="handled"
             style={styles.scrollView}
           >
-            <View style={[
-              styles.header,
-              isSmallScreen && styles.headerSmall,
-              isExtraSmallScreen && styles.headerExtraSmall
-            ]}>
+            <View style={styles.headerShell}>
               <TouchableOpacity 
                 style={styles.backButton}
                 onPress={() => navigation.goBack()}
@@ -434,32 +430,46 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingHorizontal: 20,
   },
   scrollContentSmall: {},
   scrollContentExtraSmall: {},
+  headerShell: {
+    paddingHorizontal: 4,
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
   header: {
     padding: 20,
-    paddingTop: 10,
+    paddingTop: 12,
+    backgroundColor: palette.surface,
+    borderRadius: 18,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   headerSmall: {
     paddingHorizontal: 16,
-    paddingTop: 6,
-    paddingBottom: 6,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
   headerExtraSmall: {
     paddingHorizontal: 12,
-    paddingTop: 0,
-    paddingBottom: 4,
+    paddingTop: 6,
+    paddingBottom: 6,
   },
   headerLinkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 10,
+    justifyContent: 'center',
   },
   headerLink: {
     color: palette.primary,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     marginLeft: 6,
   },
   headerLinkSmall: {
@@ -484,13 +494,14 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginTop: 20,
-    marginBottom: 10,
+    fontSize: 28,
+    fontWeight: '800',
+    marginTop: 12,
+    marginBottom: 8,
     textAlign: 'center',
     alignSelf: 'stretch',
     color: palette.text,
+    letterSpacing: 0.2,
   },
   titleSmall: {
     fontSize: 28,
@@ -503,7 +514,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: palette.muted,
   },
   subtitleSmall: {
@@ -513,23 +524,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   form: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 0,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 22,
+    paddingTop: 26,
+    paddingBottom: 22,
+    backgroundColor: palette.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginTop: 20,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   formSmall: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 0,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
   },
   formExtraSmall: {
-    paddingHorizontal: 12,
-    paddingTop: 4,
-    paddingBottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 16,
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   inputContainerSmall: {
     marginBottom: 16,
@@ -538,8 +558,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   label: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
     marginBottom: 8,
     color: palette.text,
   },
@@ -552,12 +572,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   input: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: palette.border,
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 15,
     fontSize: 16,
-    backgroundColor: '#F9F6FF',
+    backgroundColor: '#F8F9FA',
     color: palette.text,
   },
   inputSmall: {
@@ -571,10 +591,10 @@ const styles = StyleSheet.create({
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: palette.border,
-    borderRadius: 8,
-    backgroundColor: '#F9F6FF',
+    borderRadius: 12,
+    backgroundColor: '#F8F9FA',
   },
   passwordContainerSmall: {
     borderRadius: 6,
@@ -616,7 +636,7 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    color: '#888',
+    color: palette.muted,
     marginTop: 5,
   },
   hintSmall: {
@@ -630,7 +650,7 @@ const styles = StyleSheet.create({
   checkboxContainer: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   checkboxContainerSmall: {
     marginBottom: 16,
@@ -643,7 +663,7 @@ const styles = StyleSheet.create({
     height: 24,
     borderWidth: 2,
     borderColor: palette.border,
-    borderRadius: 4,
+    borderRadius: 6,
     marginRight: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -692,9 +712,14 @@ const styles = StyleSheet.create({
   registerButton: {
     backgroundColor: palette.primary,
     paddingVertical: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
     marginBottom: 0,
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   registerButtonSmall: {
     paddingVertical: 14,
@@ -705,12 +730,12 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   registerButtonDisabled: {
-    backgroundColor: '#CBB5FF',
+    backgroundColor: '#A5B4FC',
   },
   registerButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   registerButtonTextSmall: {
     fontSize: 17,

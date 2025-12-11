@@ -45,16 +45,16 @@ const AuditLogScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 12 },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
+  content: { padding: 20, gap: 14, paddingBottom: 32 },
+  title: { fontSize: 24, fontWeight: '800', color: palette.text },
   row: {
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
   },
-  action: { color: palette.text, fontWeight: '700' },
-  meta: { color: palette.muted },
-  muted: { color: palette.muted },
+  action: { color: palette.text, fontWeight: '800', fontSize: 15 },
+  meta: { color: palette.muted, fontSize: 13.5, marginTop: 2 },
+  muted: { color: palette.muted, fontSize: 13.5 },
 });
 
 export default AuditLogScreen;

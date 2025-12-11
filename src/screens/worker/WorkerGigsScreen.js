@@ -4,7 +4,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import palette from '../../styles/palette';
 import { projectAPI } from '../../services/api';
-import { removeWorkerProject } from '../../store/projectSlice';
+import {
+  addWorkerAssignment,
+  addWorkerProject,
+  removeWorkerAssignmentsByProject,
+  removeWorkerProject,
+} from '../../store/projectSlice';
 
 const WorkerGigsScreen = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -23,20 +28,21 @@ const WorkerGigsScreen = ({ navigation }) => {
         new Set(accepted.map((a) => a.project_id || a.projectId).filter(Boolean))
       );
 
-      const invalid = new Set();
-      await Promise.all(
-        acceptedIds.map(async (pid) => {
-          try {
-            await projectAPI.getProjectDetails(pid);
-          } catch (err) {
-            const code = err?.response?.status;
-            if (code === 404) {
-              invalid.add(pid);
-              dispatch(removeWorkerProject(pid));
-            }
+    const invalid = new Set();
+    await Promise.all(
+      acceptedIds.map(async (pid) => {
+        try {
+          await projectAPI.getProjectDetails(pid);
+        } catch (err) {
+          const code = err?.response?.status;
+          if (code === 404) {
+            invalid.add(pid);
+            dispatch(removeWorkerProject(pid));
+            dispatch(removeWorkerAssignmentsByProject(pid));
           }
-        })
-      );
+        }
+      })
+    );
 
       const filtered = invalid.size
         ? fetched.filter((a) => !invalid.has(a.project_id || a.projectId))
@@ -49,6 +55,45 @@ const WorkerGigsScreen = ({ navigation }) => {
 
   useEffect(() => {
     loadApplications();
+    (async () => {
+      try {
+        const taskRes = await projectAPI.listWorkerTasks(user?.id);
+        const tasks = taskRes.data?.tasks || [];
+        const existingIds = new Set((workerAssignments || []).map((a) => a.id));
+        const mapped = tasks.map((t) => ({
+          id: t.id,
+          projectId: t.projectId,
+          projectTitle: t.projectTitle,
+          projectDescription: t.projectDescription,
+          workerId: user?.id,
+          description: t.description,
+          dueDate: t.dueDate || '',
+          pay: t.pay || 0,
+          status: t.status,
+          proofImageUrl: t.proofImageUrl || null,
+        }));
+        mapped.forEach((m) => {
+          if (!existingIds.has(m.id)) {
+            dispatch(addWorkerAssignment(m));
+          }
+          if (m.projectId) {
+            dispatch(
+              addWorkerProject({
+                id: m.projectId,
+                title: m.projectTitle || '',
+                description: m.projectDescription || '',
+              })
+            );
+          }
+        });
+        const activeProjectIds = new Set(tasks.map((t) => t.projectId).filter(Boolean));
+        (workerAssignments || [])
+          .filter((a) => a.workerId === user?.id && a.projectId && !activeProjectIds.has(a.projectId))
+          .forEach((a) => dispatch(removeWorkerAssignmentsByProject(a.projectId)));
+      } catch (err) {
+        console.log('worker:tasks:error', err?.response?.data || err.message);
+      }
+    })();
   }, [loadApplications]);
 
   const acceptedApps = apps.filter((a) => (a.status || '').toLowerCase() === 'accepted');
@@ -69,6 +114,20 @@ const WorkerGigsScreen = ({ navigation }) => {
       seen.add(p.id);
     }
   });
+  // Include projects that came only via assigned tasks
+  workerAssignments
+    .filter((a) => a.projectId && a.workerId === user?.id)
+    .forEach((a) => {
+      if (!seen.has(a.projectId)) {
+        const taskProject = (workerProjects || []).find((p) => p.id === a.projectId);
+        cards.push({
+          id: a.projectId,
+          title: taskProject?.title || 'Project',
+          description: taskProject?.description || '',
+        });
+        seen.add(a.projectId);
+      }
+    });
   acceptedApps.forEach((a) => {
     const pid = a.project_id || a.projectId;
     if (pid && !seen.has(pid)) {
@@ -76,6 +135,10 @@ const WorkerGigsScreen = ({ navigation }) => {
       seen.add(pid);
     }
   });
+
+  const handleCheckIn = (proj) => {
+    Alert.alert('Checked in', `Checked in at ${proj.title || 'project'}.`);
+  };
 
   const handleOpen = async (projId) => {
     try {
@@ -85,6 +148,7 @@ const WorkerGigsScreen = ({ navigation }) => {
       const status = err?.response?.status;
       if (status === 404) {
         dispatch(removeWorkerProject(projId));
+        dispatch(removeWorkerAssignmentsByProject(projId));
         setApps((prev) => prev.filter((a) => (a.project_id || a.projectId) !== projId));
         loadApplications();
         Alert.alert('Project removed', 'This project is no longer available.');
@@ -100,17 +164,25 @@ const WorkerGigsScreen = ({ navigation }) => {
         <Text style={styles.title}>My Gigs</Text>
         {cards.length === 0 && <Text style={styles.muted}>No gigs assigned yet.</Text>}
         {cards.map((proj) => (
-          <TouchableOpacity
-            key={proj.id}
-            style={styles.card}
-            onPress={() => handleOpen(proj.id)}
-          >
-            <Text style={styles.cardTitle}>{proj.title || 'Project'}</Text>
-            <Text style={styles.cardMeta}>{proj.description || 'No description provided.'}</Text>
-            <Text style={styles.cardMeta}>
-              Assigned work: {assignments.filter((a) => a.projectId === proj.id).length}
-            </Text>
-          </TouchableOpacity>
+          <View key={proj.id} style={styles.card}>
+            <TouchableOpacity onPress={() => handleOpen(proj.id)}>
+              <Text style={styles.cardTitle}>{proj.title || 'Project'}</Text>
+              <Text style={styles.cardMeta}>{proj.description || 'No description provided.'}</Text>
+              <Text style={styles.cardMeta}>
+                Assigned work: {assignments.filter((a) => a.projectId === proj.id).length}
+              </Text>
+              <Text style={styles.cardMeta}>
+                Pay: $
+                {assignments
+                  .filter((a) => a.projectId === proj.id)
+                  .reduce((sum, a) => sum + Number(a.pay || 0), 0)
+                  .toLocaleString()}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.checkInButton} onPress={() => handleCheckIn(proj)}>
+              <Text style={styles.checkInText}>Check in at job site</Text>
+            </TouchableOpacity>
+          </View>
         ))}
       </ScrollView>
     </SafeAreaView>
@@ -132,6 +204,16 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontWeight: '700', color: palette.text },
   cardMeta: { color: palette.muted, fontSize: 12 },
+  checkInButton: {
+    marginTop: 8,
+    backgroundColor: '#E8EAFF',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  checkInText: { color: palette.primary, fontWeight: '700' },
 });
 
 export default WorkerGigsScreen;

@@ -15,10 +15,9 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
-import palette from '../../styles/palette';
 import { expenseAPI } from '../../services/expenses';
+import palette from '../../styles/palette';
 
 const categoryOptions = [
   { label: 'Materials', value: 'materials' },
@@ -36,7 +35,6 @@ const initialFormState = {
 };
 
 const formatCurrency = (value) => `$${Number(value || 0).toLocaleString()}`;
-
 const formatDate = (value) => {
   if (!value) return '';
   const date = new Date(value);
@@ -44,7 +42,6 @@ const formatDate = (value) => {
 };
 
 const ExpenseTrackingScreen = () => {
-  const navigation = useNavigation();
   const { user } = useSelector((state) => state.auth);
   const [expenses, setExpenses] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -56,11 +53,8 @@ const ExpenseTrackingScreen = () => {
   const fetchExpenses = useCallback(
     async (opts = { refreshing: false }) => {
       if (!user?.id) return;
-      if (opts.refreshing) {
-        setRefreshing(true);
-      } else {
-        setIsLoading(true);
-      }
+      if (opts.refreshing) setRefreshing(true);
+      else setIsLoading(true);
       try {
         const res = await expenseAPI.getContractorExpenses(user.id);
         setExpenses(res.data || []);
@@ -83,14 +77,8 @@ const ExpenseTrackingScreen = () => {
   }, [fetchExpenses]);
 
   const totalExpenses = expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
-
-  const updateField = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const resetForm = () => {
-    setFormData(initialFormState);
-  };
+  const updateField = (field, value) => setFormData((prev) => ({ ...prev, [field]: value }));
+  const resetForm = () => setFormData(initialFormState);
 
   const handleLogExpense = async () => {
     if (!user?.id) {
@@ -154,19 +142,12 @@ const ExpenseTrackingScreen = () => {
         <Text style={styles.cardTitle}>{expense.category || 'Expense'}</Text>
         <Text style={styles.amount}>{formatCurrency(expense.amount)}</Text>
       </View>
-      {expense.description ? (
-        <Text style={styles.cardMeta}>{expense.description}</Text>
-      ) : null}
+      {expense.description ? <Text style={styles.cardMeta}>{expense.description}</Text> : null}
       <Text style={styles.cardMeta}>Date: {formatDate(expense.date)}</Text>
       {expense.projectTitle || expense.projectId ? (
-        <Text style={styles.cardMeta}>
-          Project: {expense.projectTitle || expense.projectId}
-        </Text>
+        <Text style={styles.cardMeta}>Project: {expense.projectTitle || expense.projectId}</Text>
       ) : null}
-      <TouchableOpacity
-        style={styles.deleteButton}
-        onPress={() => handleDelete(expense.id)}
-      >
+      <TouchableOpacity style={styles.deleteButton} onPress={() => handleDelete(expense.id)}>
         <Text style={styles.deleteText}>Delete</Text>
       </TouchableOpacity>
     </View>
@@ -174,13 +155,6 @@ const ExpenseTrackingScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Expense Tracking</Text>
-        <View style={styles.headerSpacer} />
-      </View>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
@@ -199,9 +173,7 @@ const ExpenseTrackingScreen = () => {
         </View>
 
         {isLoading && <Text style={styles.muted}>Loading expenses...</Text>}
-        {!isLoading && expenses.length === 0 && (
-          <Text style={styles.muted}>No expenses logged yet.</Text>
-        )}
+        {!isLoading && expenses.length === 0 && <Text style={styles.muted}>No expenses logged yet.</Text>}
         {!isLoading && expenses.map(renderExpenseCard)}
       </ScrollView>
 
@@ -209,97 +181,89 @@ const ExpenseTrackingScreen = () => {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.modalOverlay}>
             <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
               style={styles.modalKeyboardContainer}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
-              <ScrollView
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
+              <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
                 <Text style={styles.modalTitle}>Log Expense</Text>
 
-            <Text style={styles.label}>Category</Text>
-            <View style={styles.categoryRow}>
-              {categoryOptions.map((option) => (
-                <TouchableOpacity
-                  key={option.value}
-                  style={[
-                    styles.categoryPill,
-                    formData.category === option.value && styles.categoryPillActive,
-                  ]}
-                  onPress={() => updateField('category', option.value)}
-                >
-                  <Text
-                    style={[
-                      styles.categoryText,
-                      formData.category === option.value && styles.categoryTextActive,
-                    ]}
+                <Text style={styles.label}>Category</Text>
+                <View style={styles.categoryRow}>
+                  {categoryOptions.map((option) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.categoryPill,
+                        formData.category === option.value && styles.categoryPillActive,
+                      ]}
+                      onPress={() => updateField('category', option.value)}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryText,
+                          formData.category === option.value && styles.categoryTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.label}>Amount</Text>
+                <TextInput
+                  style={styles.input}
+                  value={formData.amount}
+                  onChangeText={(text) => updateField('amount', text)}
+                  placeholder="Enter amount"
+                  keyboardType="decimal-pad"
+                  selectionColor={palette.primary}
+                />
+
+                <Text style={styles.label}>Description</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={formData.description}
+                  onChangeText={(text) => updateField('description', text)}
+                  placeholder="What was this expense for?"
+                  multiline
+                  selectionColor={palette.primary}
+                />
+
+                <Text style={styles.label}>Date</Text>
+                <TextInput
+                  style={styles.input}
+                  value={formData.date}
+                  onChangeText={(text) => updateField('date', text)}
+                  placeholder="YYYY-MM-DD"
+                  selectionColor={palette.primary}
+                />
+
+                <Text style={styles.label}>Project ID</Text>
+                <TextInput
+                  style={styles.input}
+                  value={formData.projectId}
+                  onChangeText={(text) => updateField('projectId', text)}
+                  placeholder="Enter project ID"
+                  autoCapitalize="none"
+                  selectionColor={palette.primary}
+                />
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => {
+                      setModalVisible(false);
+                      resetForm();
+                    }}
+                    disabled={isSubmitting}
                   >
-                    {option.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Amount</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.amount}
-              onChangeText={(text) => updateField('amount', text)}
-              placeholder="Enter amount"
-              keyboardType="decimal-pad"
-              selectionColor={palette.primary}
-            />
-
-            <Text style={styles.label}>Description</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={formData.description}
-              onChangeText={(text) => updateField('description', text)}
-              placeholder="What was this expense for?"
-              multiline
-              selectionColor={palette.primary}
-            />
-
-            <Text style={styles.label}>Date</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.date}
-              onChangeText={(text) => updateField('date', text)}
-              placeholder="YYYY-MM-DD"
-              selectionColor={palette.primary}
-            />
-
-            <Text style={styles.label}>Project ID</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.projectId}
-              onChangeText={(text) => updateField('projectId', text)}
-              placeholder="Enter project ID"
-              autoCapitalize="none"
-              selectionColor={palette.primary}
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setModalVisible(false);
-                  resetForm();
-                }}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={handleLogExpense}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.submitText}>{isSubmitting ? 'Saving...' : 'Save'}</Text>
-              </TouchableOpacity>
-            </View>
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.submitButton} onPress={handleLogExpense} disabled={isSubmitting}>
+                    <Text style={styles.submitText}>{isSubmitting ? 'Saving...' : 'Save'}</Text>
+                  </TouchableOpacity>
+                </View>
               </ScrollView>
             </KeyboardAvoidingView>
           </View>
@@ -311,46 +275,9 @@ const ExpenseTrackingScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: palette.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.border,
-    shadowColor: '#1E293B',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backIcon: {
-    fontSize: 24,
-    color: palette.text,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    flex: 1,
-    textAlign: 'center',
-  },
-  headerSpacer: {
-    width: 40,
-  },
   content: { padding: 20, gap: 14 },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { fontSize: 22, fontWeight: '800', color: palette.text },
   primaryButton: {
     backgroundColor: palette.primary,
     paddingHorizontal: 16,
@@ -390,26 +317,15 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 18, fontWeight: '700', color: palette.text },
   amount: { fontSize: 18, fontWeight: '700', color: palette.primary },
   cardMeta: { color: palette.muted, marginTop: 4 },
   deleteButton: { marginTop: 10 },
   deleteText: { color: '#DC2626', fontWeight: '600' },
   muted: { color: palette.muted },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modalKeyboardContainer: {
-    flex: 1,
-  },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  modalKeyboardContainer: { flex: 1 },
   modalScrollContent: {
     backgroundColor: palette.surface,
     borderRadius: 18,
@@ -418,52 +334,32 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     shadowColor: '#1E293B',
     shadowOpacity: 0.08,
-    shadowRadius: 12,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     elevation: 4,
-  },
-  modalContent: {
-    backgroundColor: palette.surface,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: palette.border,
   },
   modalTitle: { fontSize: 20, fontWeight: '700', color: palette.text, marginBottom: 12 },
   label: { color: palette.text, marginTop: 10, marginBottom: 4, fontWeight: '600' },
   input: {
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 12,
     color: palette.text,
-    backgroundColor: '#F8FAFC',
   },
   textArea: { height: 90, textAlignVertical: 'top' },
-  categoryRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
+  categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   categoryPill: {
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 18,
+    borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  categoryPillActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
-  },
+  categoryPillActive: { backgroundColor: palette.primary, borderColor: palette.primary },
   categoryText: { color: palette.text },
   categoryTextActive: { color: '#fff', fontWeight: '600' },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 16,
-    gap: 10,
-  },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, gap: 10 },
   cancelButton: {
     paddingVertical: 10,
     paddingHorizontal: 16,

@@ -1,18 +1,21 @@
-import React, { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSelector } from 'react-redux';
-import palette from '../../styles/palette';
 import {
-  fetchGeneratedContracts,
   fetchGeneratedContract,
+  fetchGeneratedContracts,
   proposeContract,
+  deleteGeneratedContract,
+  signGeneratedContract,
+  updateGeneratedContract,
 } from '../../services/contracts';
+import palette from '../../styles/palette';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
   const { project, role = 'homeowner' } = route.params || {};
   const { user } = useSelector((state) => state.auth);
-  const [generatedContracts, setGeneratedContracts] = useState([]);
+  const [contracts, setContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractsError, setContractsError] = useState(null);
   const [proposeOpen, setProposeOpen] = useState(false);
@@ -24,6 +27,11 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [loadingContractText, setLoadingContractText] = useState(false);
+  const [isSigning, setIsSigning] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
+  const [editFields, setEditFields] = useState({ description: '', contractText: '' });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [originalEditFields, setOriginalEditFields] = useState({ description: '', contractText: '' });
 
   if (!project) {
     return (
@@ -52,13 +60,41 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     navigation.navigate('ProjectPersonnel', { project, role });
   };
 
+  const isFullySigned = useCallback((contract) => {
+    const roles = new Set(
+      (contract?.signatures || []).map((s) => (s.signerRole || '').toLowerCase())
+    );
+    return roles.has('homeowner') && roles.has('contractor');
+  }, []);
+
+  const proposedContracts = useMemo(
+    () => contracts.filter((c) => !isFullySigned(c)),
+    [contracts, isFullySigned]
+  );
+  const approvedContracts = useMemo(
+    () => contracts.filter((c) => isFullySigned(c)),
+    [contracts, isFullySigned]
+  );
+
   const loadContracts = useCallback(async () => {
     if (!project?.id) return;
     setContractsLoading(true);
     setContractsError(null);
     const res = await fetchGeneratedContracts(project.id);
     if (res.success) {
-      setGeneratedContracts(res.data || []);
+      const list = res.data || [];
+      // Fetch details (with signatures) for each generated contract
+      const detailed = await Promise.all(
+        list.map(async (c) => {
+          const detail = await fetchGeneratedContract(project.id, c.id);
+          return detail.success ? detail.data : c;
+        })
+      );
+      const withSignatures = detailed.map((c) => ({
+        ...c,
+        signatures: c.signatures || [],
+      }));
+      setContracts(withSignatures);
     } else {
       setContractsError(res.error || 'Failed to load contracts');
     }
@@ -91,7 +127,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     }
     setProposeOpen(false);
     setProposal({ description: '', totalBudget: '', currency: 'USD' });
-    setGeneratedContracts((prev) => [res.data, ...prev]);
+    setContracts((prev) => [res.data, ...prev]);
   };
 
   const openContract = async (contract) => {
@@ -108,6 +144,135 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
       Alert.alert('Error', res.error || 'Failed to load contract');
     }
   };
+
+  const handleDeleteGeneratedContract = async (contractId) => {
+    if (!project?.id || !user?.id) return;
+    Alert.alert('Delete contract', 'Are you sure you want to delete this generated contract?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const res = await deleteGeneratedContract({ projectId: project.id, contractId, userId: user.id });
+          if (!res.success) {
+            Alert.alert('Error', res.error || 'Failed to delete contract');
+            return;
+          }
+          setContracts((prev) => prev.filter((c) => c.id !== contractId));
+          if (viewing?.id === contractId) {
+            setViewing(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleSignGenerated = async (signerRole) => {
+    if (!project?.id || !viewing?.id || !user?.id) return;
+    setIsSigning(true);
+    const res = await signGeneratedContract({
+      projectId: project.id,
+      contractId: viewing.id,
+      userId: user.id,
+      signerRole,
+    });
+    setIsSigning(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to sign');
+      return;
+    }
+    const newSignature = res.data?.signature;
+    setViewing((prev) => {
+      if (!prev) return prev;
+      const existing = prev.signatures || [];
+      const withoutExisting = existing.filter((s) => s.userId !== newSignature?.userId);
+      return {
+        ...prev,
+        contractText: res.data?.contractText || prev.contractText,
+        signatures: newSignature ? [...withoutExisting, newSignature] : existing,
+      };
+    });
+    if (viewing) {
+      const updatedContract = {
+        ...viewing,
+        contractText: res.data?.contractText || viewing.contractText,
+        signatures: viewing?.signatures
+          ? [
+              ...viewing.signatures.filter((s) => s.userId !== newSignature?.userId),
+              ...(newSignature ? [newSignature] : []),
+            ]
+          : newSignature
+          ? [newSignature]
+          : [],
+      };
+      setContracts((prev) => {
+        const others = prev.filter((c) => c.id !== viewing.id);
+        return [...others, updatedContract];
+      });
+    }
+  };
+
+  const startEditContract = async (contract) => {
+    let contractToEdit = contract;
+    if (!contract.contractText) {
+      setLoadingContractText(true);
+      const res = await fetchGeneratedContract(project.id, contract.id);
+      setLoadingContractText(false);
+      if (res.success) {
+        contractToEdit = res.data;
+      }
+    }
+    setEditingContract(contractToEdit);
+    const nextFields = {
+      description: contractToEdit.description || '',
+      contractText: contractToEdit.contractText || '',
+    };
+    setEditFields(nextFields);
+    setOriginalEditFields(nextFields);
+  };
+
+  const saveEditContract = async (options = { closeView: false }) => {
+    if (!project?.id || !editingContract?.id || !user?.id) {
+      setEditingContract(null);
+      return;
+    }
+    const changed =
+      editFields.description !== originalEditFields.description ||
+      editFields.contractText !== originalEditFields.contractText;
+    if (!changed) {
+      setEditingContract(null);
+      if (options.closeView) setViewing(null);
+      return;
+    }
+    setIsSavingEdit(true);
+    const res = await updateGeneratedContract({
+      projectId: project.id,
+      contractId: editingContract.id,
+      userId: user.id,
+      payload: {
+        description: editFields.description,
+        contractText: editFields.contractText,
+      },
+    });
+    setIsSavingEdit(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to update contract');
+      return;
+    }
+    const updated = res.data;
+    setContracts((prev) => {
+      const others = prev.filter((c) => c.id !== updated.id);
+      return [...others, updated];
+    });
+    if (viewing?.id === updated.id) {
+      setViewing(options.closeView ? null : updated);
+    }
+    setEditingContract(null);
+  };
+
+  const handleReturnSave = useCallback(() => {
+    saveEditContract({ closeView: true });
+  }, [saveEditContract]);
 
   const isContractor = role === 'contractor';
   const showEdit = role === 'homeowner';
@@ -174,14 +339,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
         {role !== 'worker' && (
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Generated Contracts</Text>
+              <Text style={styles.sectionTitle}>Proposed Contracts</Text>
               {contractsLoading ? <Text style={styles.muted}>Loading…</Text> : null}
             </View>
             {contractsError ? <Text style={styles.errorText}>{contractsError}</Text> : null}
-            {!contractsLoading && !contractsError && generatedContracts.length === 0 ? (
-              <Text style={styles.muted}>No generated contracts yet.</Text>
+            {!contractsLoading && !contractsError && proposedContracts.length === 0 ? (
+              <Text style={styles.muted}>No proposed contracts yet.</Text>
             ) : null}
-            {generatedContracts.map((c) => (
+            {proposedContracts.map((c) => (
               <View key={c.id} style={styles.contractCard}>
                 <View style={styles.contractHeader}>
                   <Text style={styles.contractTitle}>{c.description || 'Contract'}</Text>
@@ -194,24 +359,105 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 </View>
                 <View style={styles.contractActions}>
                   <TouchableOpacity onPress={() => openContract(c)}>
-                    <Text style={styles.actionLink}>View</Text>
+                    <Text
+                      style={styles.actionLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      View
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => startEditContract(c)}>
+                    <Text
+                      style={styles.actionLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      Edit
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteGeneratedContract(c.id)}>
+                    <Text
+                      style={styles.deleteLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      Delete
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             ))}
             <TouchableOpacity style={[styles.button, styles.refreshButton]} onPress={loadContracts}>
-              <Text style={styles.personnelText}>Refresh</Text>
+              <Text
+                style={styles.personnelText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Refresh
+              </Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {role !== 'worker' && approvedContracts.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Approved Contracts</Text>
+            </View>
+            {approvedContracts.map((c) => (
+              <View key={c.id} style={styles.contractCard}>
+                <View style={styles.contractHeader}>
+                  <Text style={styles.contractTitle}>{c.description || 'Contract'}</Text>
+                  <Text style={styles.contractMeta}>
+                    {c.currency} {Number(c.totalBudget || 0).toLocaleString()}
+                  </Text>
+                  <Text style={styles.contractMeta}>
+                    {new Date(c.createdAt).toLocaleDateString()}
+                  </Text>
+                </View>
+                <View style={styles.contractActions}>
+                  <TouchableOpacity onPress={() => openContract(c)}>
+                    <Text
+                      style={styles.actionLink}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      View
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 
         <View style={styles.buttonRow}>
           <TouchableOpacity style={[styles.button, styles.personnelButton]} onPress={goPersonnel}>
-            <Text style={styles.personnelText}>People</Text>
+            <Text
+              style={styles.personnelText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.9}
+            >
+              People
+            </Text>
           </TouchableOpacity>
           {showEdit ? (
             <TouchableOpacity style={[styles.button, styles.editButton]} onPress={handleEdit}>
-              <Text style={styles.buttonText}>Edit</Text>
+              <Text
+                style={styles.buttonText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Edit
+              </Text>
             </TouchableOpacity>
           ) : null}
           {isContractor ? (
@@ -219,7 +465,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               style={[styles.button, styles.contractButton]}
               onPress={() => navigation.navigate('PostWork', { project, role })}
             >
-              <Text style={styles.contractText}>Post Work</Text>
+              <Text
+                style={styles.contractText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Post Work
+              </Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -230,7 +483,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               style={[styles.button, styles.contractButton]}
               onPress={() => setProposeOpen(true)}
             >
-              <Text style={styles.contractText}>Propose Contract</Text>
+              <Text
+                style={styles.contractText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.9}
+              >
+                Propose Contract
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -268,14 +528,28 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
             />
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.secondaryButton} onPress={() => setProposeOpen(false)}>
-                <Text style={styles.secondaryText}>Cancel</Text>
+                <Text
+                  style={styles.secondaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.9}
+                >
+                  Cancel
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.primaryButton, styles.flex1, isSubmitting && styles.disabled]}
+                style={[styles.secondaryButton, isSubmitting && styles.disabled]}
                 onPress={handleProposeContract}
                 disabled={isSubmitting}
               >
-                <Text style={styles.primaryText}>{isSubmitting ? 'Submitting…' : 'Submit'}</Text>
+                <Text
+                  style={styles.secondaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {isSubmitting ? 'Submitting…' : 'Submit'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -303,13 +577,134 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                 <View style={styles.contractBody}>
                   <Text style={styles.contractTextBody}>{viewing?.contractText || ''}</Text>
                 </View>
+                <View style={styles.signatureBlock}>
+                  <Text style={styles.sectionTitle}>Signatures</Text>
+                  {(viewing?.signatures || []).map((sig) => (
+                    <Text key={sig.id} style={styles.signatureText}>
+                      {sig.signerRole ? `${sig.signerRole}: ` : ''}Signed at{' '}
+                      {new Date(sig.signedAt || '').toLocaleString()}
+                    </Text>
+                  ))}
+                  {(() => {
+                    const hasSignatureSection = /signature/i.test(
+                      (viewing?.contractText || '').slice(-600) || viewing?.contractText || ''
+                    );
+                    const isOwnerUser = user?.id && project?.owner?.id === user.id;
+                    const isContractorUser = user?.id && project?.assignedContractor?.id === user.id;
+                    const alreadySigned = (viewing?.signatures || []).some(
+                      (s) => s.userId === user?.id
+                    );
+                    if (!user?.id || !hasSignatureSection || alreadySigned) {
+                      return null;
+                    }
+                    const actions = [];
+                    if (isOwnerUser) {
+                      actions.push('Sign as Homeowner');
+                    }
+                    if (isContractorUser) {
+                      actions.push('Sign as Contractor');
+                    }
+                    return (
+                      <View style={styles.signatureButtons}>
+                        {actions.map((label, idx) => (
+                          <Text
+                            key={idx}
+                            style={styles.signatureText}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.9}
+                            onPress={() =>
+                              label.includes('Homeowner')
+                                ? handleSignGenerated('homeowner')
+                                : handleSignGenerated('contractor')
+                            }
+                          >
+                            {isSigning ? 'Signing…' : label}
+                          </Text>
+                        ))}
+                      </View>
+                    );
+                  })()}
+                </View>
                 <TouchableOpacity style={styles.secondaryButton}>
-                  <Text style={styles.secondaryText}>Download as PDF (coming soon)</Text>
+                  <Text
+                    style={styles.secondaryText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >
+                    Download as PDF (coming soon)
+                  </Text>
                 </TouchableOpacity>
               </>
-            )}
+    )}
           </ScrollView>
         </SafeAreaView>
+      </Modal>
+
+      <Modal visible={Boolean(editingContract)} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Contract</Text>
+            <Text style={styles.label}>Title / Description</Text>
+            <TextInput
+              style={styles.input}
+              value={editFields.description}
+              onChangeText={(text) => setEditFields((prev) => ({ ...prev, description: text }))}
+              placeholder="Contract title"
+              returnKeyType="done"
+              blurOnSubmit
+              onSubmitEditing={handleReturnSave}
+            />
+            <Text style={styles.label}>Contract Text</Text>
+            <TextInput
+              style={[styles.input, styles.multiline, { minHeight: 180 }]}
+              multiline
+              value={editFields.contractText}
+              onChangeText={(text) => setEditFields((prev) => ({ ...prev, contractText: text }))}
+              placeholder="Contract markdown"
+              placeholderTextColor={palette.muted}
+              returnKeyType="done"
+              blurOnSubmit
+              onSubmitEditing={handleReturnSave}
+              onKeyPress={(e) => {
+                if (e.nativeEvent.key === 'Enter') {
+                  handleReturnSave();
+                }
+              }}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => setEditingContract(null)}
+                disabled={isSavingEdit}
+              >
+                <Text
+                  style={styles.secondaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.9}
+                >
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.primaryButton, styles.flex1, isSavingEdit && styles.disabled]}
+                onPress={saveEditContract}
+                disabled={isSavingEdit}
+              >
+                <Text
+                  style={styles.primaryText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {isSavingEdit ? 'Saving…' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -317,86 +712,117 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 14 },
+  content: { padding: 22, gap: 18 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 12,
+    padding: 6,
   },
-  title: { fontSize: 24, fontWeight: '700', color: palette.text, flexShrink: 1 },
+  title: { fontSize: 26, fontWeight: '800', color: palette.text, flexShrink: 1 },
   typeTag: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: 999,
     backgroundColor: palette.primary,
+    shadowColor: '#111827',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  typeText: { color: '#fff', fontWeight: '700' },
+  typeText: { color: '#fff', fontWeight: '700', letterSpacing: 0.3 },
   card: {
     backgroundColor: palette.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
-    gap: 10,
+    gap: 12,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: palette.text },
-  body: { color: palette.text, lineHeight: 20 },
-  detailText: { color: palette.text, lineHeight: 20 },
+  sectionTitle: { fontSize: 20, fontWeight: '700', color: palette.text, letterSpacing: 0.2 },
+  body: { color: palette.text, lineHeight: 22, fontSize: 15 },
+  detailText: { color: palette.text, lineHeight: 22, fontSize: 15 },
+  meta: { color: palette.muted, marginTop: 4 },
   progressBar: {
-    height: 8,
-    backgroundColor: '#EEE7FF',
-    borderRadius: 6,
+    height: 10,
+    backgroundColor: '#E7E9FB',
+    borderRadius: 8,
     overflow: 'hidden',
   },
   progressFill: { height: '100%', backgroundColor: palette.primary },
-  progressValue: { color: palette.primary, fontWeight: '700' },
-  milestoneRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 6 },
+  progressValue: { color: palette.primary, fontWeight: '700', fontSize: 14 },
+  milestoneRow: { flexDirection: 'row', gap: 12, alignItems: 'center', paddingVertical: 8 },
   milestoneBullet: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: palette.primary,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
   },
-  milestoneName: { fontWeight: '700', color: palette.text },
-  milestoneMeta: { color: palette.muted, fontSize: 12 },
-  buttonRow: { flexDirection: 'row', gap: 10 },
+  milestoneName: { fontWeight: '700', color: palette.text, fontSize: 15 },
+  milestoneMeta: { color: palette.muted, fontSize: 13 },
+  buttonRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
   button: {
     flex: 1,
-    padding: 14,
+    paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   editButton: { backgroundColor: palette.primary },
-  personnelButton: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border },
-  buttonText: { color: '#fff', fontWeight: '700' },
-  personnelText: { color: palette.text, fontWeight: '700' },
+  personnelButton: {
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  buttonText: { color: '#fff', fontWeight: '700', fontSize: 15, letterSpacing: 0.2 },
+  personnelText: { color: palette.text, fontWeight: '700', fontSize: 15 },
   muted: { color: palette.muted },
   contractButton: { backgroundColor: palette.primary },
-  contractText: { color: '#fff', fontWeight: '700' },
+  contractText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   contractCard: {
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
-    padding: 12,
-    gap: 10,
-    marginBottom: 10,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+    marginBottom: 12,
     backgroundColor: palette.surface,
+    shadowColor: '#111827',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   contractHeader: { flex: 1, gap: 2 },
-  contractTitle: { fontWeight: '700', color: palette.text, fontSize: 15 },
-  contractMeta: { color: palette.muted, fontSize: 12 },
-  contractActions: { flexDirection: 'row', gap: 16, alignItems: 'center' },
+  contractTitle: { fontWeight: '700', color: palette.text, fontSize: 16 },
+  contractMeta: { color: palette.muted, fontSize: 13 },
+  contractActions: { flexDirection: 'row', gap: 18, alignItems: 'center', marginTop: 6 },
   signButton: { backgroundColor: palette.primary, paddingHorizontal: 14, paddingVertical: 10 },
   refreshButton: {
-    marginTop: 10,
+    marginTop: 12,
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.border,
   },
-  errorText: { color: '#c1121f' },
-  actionLink: { color: palette.primary, fontWeight: '700' },
+
+  errorText: { color: '#c1121f', fontSize: 13 },
+  actionLink: { color: palette.primary, fontWeight: '700', fontSize: 14, letterSpacing: 0.2 },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',
@@ -432,7 +858,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F8FB',
   },
   contractTextBody: { color: palette.text, lineHeight: 20 },
+  signatureBlock: { marginTop: 14, gap: 6 },
+  signatureText: { color: palette.text, fontSize: 13 },
+  signatureButtons: { flexDirection: 'row', gap: 10, marginTop: 8 },
   back: { fontSize: 20, color: palette.text },
+  deleteLink: { color: '#dc2626', fontWeight: '700' },
 });
 
 export default ProjectOverviewScreen;

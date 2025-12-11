@@ -1,4 +1,6 @@
 import {
+    Alert,
+    Linking,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -7,16 +9,25 @@ import {
     View,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
+import CheckInButton from '../../components/CheckInButton';
 import { loadNotifications } from '../../services/notifications';
+import { createConnectAccountLink } from '../../services/payments';
 
 const WorkerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const [isConnectingStripe, setIsConnectingStripe] = useState(false);
+  const isStripeConnected =
+    !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
+  const lastConnectedRef = useRef(false);
 
   const stats = {
     earnings: 0,
@@ -33,6 +44,28 @@ const WorkerDashboard = ({ navigation }) => {
     }
   }, [dispatch, user?.id]);
 
+  const handleConnectBank = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Unavailable', 'Sign in first.');
+      return;
+    }
+    setIsConnectingStripe(true);
+    const res = await createConnectAccountLink(user.id);
+    setIsConnectingStripe(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
+      return;
+    }
+    const url = res.data?.url;
+    if (url) {
+      try {
+        await Linking.openURL(url);
+      } catch (_err) {
+        Alert.alert('Error', 'Could not open Stripe onboarding link');
+      }
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     fetchNotifs();
   }, [fetchNotifs]);
@@ -42,6 +75,29 @@ const WorkerDashboard = ({ navigation }) => {
       fetchNotifs();
     }, [fetchNotifs])
   );
+
+  useEffect(() => {
+    const loadSeenFlag = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen_worker');
+        if (value === 'true') setHasSeenConnected(true);
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeenFlag();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen_worker', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -94,7 +150,14 @@ const WorkerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('BrowseGigs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
-              <Text style={styles.actionText}>Browse Gigs</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Browse Gigs
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -102,23 +165,61 @@ const WorkerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('WorkerGigs')}
             >
               <Text style={styles.actionIcon}>📋</Text>
-              <Text style={styles.actionText}>My Gigs</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Gigs
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => navigation.navigate('WorkerGigApplications')}
             >
               <Text style={styles.actionIcon}>✅</Text>
-              <Text style={styles.actionText}>My Applications</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                My Applications
+              </Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => navigation.navigate('Wallet')}
+              onPress={handleConnectBank}
+              disabled={isConnectingStripe}
             >
-              <Text style={styles.actionIcon}>💰</Text>
-              <Text style={styles.actionText}>My Wallet</Text>
+              <Text style={styles.actionIcon}>🏦</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
+              </Text>
             </TouchableOpacity>
+
+            {isStripeConnected && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => navigation.navigate('Wallet')}
+              >
+                <Text style={styles.actionIcon}>💰</Text>
+                <Text
+                  style={styles.actionText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  My Wallet
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -128,10 +229,29 @@ const WorkerDashboard = ({ navigation }) => {
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateIcon}>📦</Text>
             <Text style={styles.emptyStateText}>No active gigs</Text>
-            <Text style={styles.emptyStateSubtext}>
-              Apply for gigs to get started
-            </Text>
+            <Text style={styles.emptyStateSubtext}>Apply for gigs to get started</Text>
           </View>
+          {/* Example gig card with check-in button. Replace with real gig list when available. */}
+          {/* {activeGigs?.map((gig) => (
+            <View key={gig.id} style={styles.gigCard}>
+              <View style={styles.gigHeader}>
+                <Text style={styles.gigTitle}>{gig.title}</Text>
+                <Text style={styles.gigPay}>${gig.pay}</Text>
+              </View>
+              <Text style={styles.gigContractor}>{gig.contractorName || 'Contractor'}</Text>
+              <View style={styles.gigDetails}>
+                <View style={styles.gigDetail}>
+                  <Text style={styles.gigDetailIcon}>📍</Text>
+                  <Text style={styles.gigDetailText}>{gig.address || 'No address provided'}</Text>
+                </View>
+              </View>
+              <CheckInButton
+                projectId={gig.projectId}
+                userId={user?.id}
+                userType="worker"
+              />
+            </View>
+          ))} */}
         </View>
       </ScrollView>
     </SafeAreaView>

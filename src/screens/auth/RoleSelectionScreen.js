@@ -2,8 +2,8 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useDispatch } from 'react-redux';
-import palette from '../../styles/palette';
 import { setRole } from '../../store/authSlice';
+import palette from '../../styles/palette';
 
 const RoleSelectionScreen = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -52,7 +52,7 @@ const RoleSelectionScreen = ({ navigation }) => {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Choose Your Role</Text>
           <Text style={styles.subtitle}>
-            Select how you'll be using Ninofi to get started
+            Select how you'll be using Ninofi 
           </Text>
         </View>
       </View>
@@ -61,8 +61,9 @@ const RoleSelectionScreen = ({ navigation }) => {
       {roles.map((role) => (
         <TouchableOpacity
           key={role.id}
-          style={[styles.roleCard, { borderLeftColor: role.color, backgroundColor: '#F9F6FF' }]}
+          style={[styles.roleCard, { borderLeftColor: role.color }]}
           onPress={() => selectRole(role.id)}
+          activeOpacity={0.82}
         >
           <View style={styles.roleHeader}>
             <Icon name={role.icon} size={40} color={role.color} />
@@ -97,59 +98,64 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
     backgroundColor: palette.background,
-    paddingTop: 60,
+    paddingTop: 100,
   },
   header: {
-    marginTop: 0,
-    marginBottom: 12,
+    marginBottom: 16,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    minHeight: 48,
+    minHeight: 56,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
   backButton: {
     position: 'absolute',
     left: 0,
-    top: 0,
+    top: -12,
     width: 40,
     height: 40,
     justifyContent: 'center',
   },
   headerCopy: {
     width: '100%',
-    paddingTop: 60,
+    paddingTop: 12,
+    paddingLeft: 48,
+    alignItems: 'flex-start',
   },
   backText: {
     fontSize: 24,
     color: palette.text,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 15,
+    fontSize: 26,
+    fontWeight: '800',
+    marginBottom: 6,
     textAlign: 'left',
     color: palette.text,
+    letterSpacing: 0.2,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: palette.muted,
-    textAlign: 'center',
+    textAlign: 'left',
+    marginLeft: 0,
   },
   cardStack: {
-    marginTop: 14,
+    marginTop: 10,
   },
   roleCard: {
     backgroundColor: palette.surface,
-    padding: 20,
-    marginBottom: 15,
-    borderRadius: 14,
+    padding: 18,
+    marginBottom: 14,
+    borderRadius: 18,
     borderLeftWidth: 4,
     borderColor: palette.border,
-    shadowColor: '#7E4DFF',
+    shadowColor: '#111827',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.08,
     shadowRadius: 12,
-    elevation: 4,
+    elevation: 5,
   },
   roleHeader: {
     flexDirection: 'row',
@@ -157,8 +163,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   roleTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '800',
     marginLeft: 15,
     color: palette.text,
   },
@@ -178,15 +184,15 @@ const styles = StyleSheet.create({
     marginRight: 15,
   },
   loginButton: {
-    marginTop: 30,
-    padding: 15,
+    marginTop: 16,
+    padding: 16,
     alignItems: 'center',
   },
   loginLink: {
     textAlign: 'center',
     color: palette.primary,
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

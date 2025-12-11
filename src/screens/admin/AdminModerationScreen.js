@@ -24,7 +24,7 @@ const AdminModerationScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>User Moderation</Text>
         {users.length === 0 ? (
           <Text style={styles.muted}>No users.</Text>
@@ -49,28 +49,38 @@ const AdminModerationScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 10 },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
-  muted: { color: palette.muted },
+  content: { padding: 22, gap: 14 },
+  title: { fontSize: 26, fontWeight: '800', color: palette.text },
+  muted: { color: palette.muted, fontSize: 14 },
   row: {
     backgroundColor: palette.surface,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: palette.border,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
-  name: { fontWeight: '700', color: palette.text },
-  meta: { color: palette.muted },
+  name: { fontWeight: '700', color: palette.text, fontSize: 16 },
+  meta: { color: palette.muted, fontSize: 13 },
   button: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: '#EF4444',
-    borderRadius: 10,
+    borderRadius: 12,
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  buttonText: { color: '#fff', fontWeight: '700' },
+  buttonText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });
 
 export default AdminModerationScreen;

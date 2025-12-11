@@ -1,5 +1,9 @@
-import React, { useCallback, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
+  Linking,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -7,11 +11,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSelector, useDispatch } from 'react-redux';
-import { useFocusEffect } from '@react-navigation/native';
-import palette from '../../styles/palette';
-import { loadProjectsForUser } from '../../services/projects';
+import { useDispatch, useSelector } from 'react-redux';
 import { loadNotifications } from '../../services/notifications';
+import { createConnectAccountLink } from '../../services/payments';
+import { loadProjectsForUser } from '../../services/projects';
+import palette from '../../styles/palette';
 
 const HomeownerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -19,6 +23,12 @@ const HomeownerDashboard = ({ navigation }) => {
   const { projects, isLoading } = useSelector((state) => state.projects);
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const [isConnectingStripe, setIsConnectingStripe] = useState(false);
+  const isStripeConnected =
+    !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
+  const lastConnectedRef = useRef(false);
 
   const fetchProjects = useCallback(() => {
     if (user?.id) {
@@ -31,11 +41,56 @@ const HomeownerDashboard = ({ navigation }) => {
     fetchProjects();
   }, [fetchProjects]);
 
+  useEffect(() => {
+    const loadSeen = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen_homeowner');
+        if (value === 'true') setHasSeenConnected(true);
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeen();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen_homeowner', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
+
   useFocusEffect(
     useCallback(() => {
       fetchProjects();
     }, [fetchProjects])
   );
+
+  const handleConnectBank = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Unavailable', 'Sign in first.');
+      return;
+    }
+    setIsConnectingStripe(true);
+    const res = await createConnectAccountLink(user.id);
+    setIsConnectingStripe(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
+      return;
+    }
+    const url = res.data?.url;
+    if (url) {
+      try {
+        await Linking.openURL(url);
+      } catch (_err) {
+        Alert.alert('Error', 'Could not open Stripe onboarding link');
+      }
+    }
+  }, [user?.id]);
 
   const stats = {
     activeProjects: projects?.length || 0,
@@ -95,7 +150,14 @@ const HomeownerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('CreateProject')}
             >
               <Text style={styles.actionIcon}>➕</Text>
-              <Text style={styles.actionText}>New Project</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                New Project
+              </Text>
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -103,15 +165,60 @@ const HomeownerDashboard = ({ navigation }) => {
               onPress={() => navigation.navigate('ContractorSearch')}
             >
               <Text style={styles.actionIconOutline}>🔍</Text>
-              <Text style={styles.actionTextOutline}>Find Contractors</Text>
+              <Text
+                style={styles.actionTextOutline}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Find Contractors
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => navigation.navigate('Contracts')}
             >
               <Text style={styles.actionIcon}>📝</Text>
-              <Text style={styles.actionText}>Contracts</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                Contracts
+              </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleConnectBank}
+              disabled={isConnectingStripe}
+            >
+              <Text style={styles.actionIcon}>🏦</Text>
+              <Text
+                style={styles.actionText}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
+              </Text>
+            </TouchableOpacity>
+            {isStripeConnected && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => navigation.navigate('Wallet')}
+              >
+                <Text style={styles.actionIcon}>💰</Text>
+                <Text
+                  style={styles.actionText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  My Wallet
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -196,11 +303,11 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
-    shadowColor: '#1E293B',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   headerButtons: {
     flexDirection: 'row',
@@ -208,9 +315,10 @@ const styles = StyleSheet.create({
   },
   greeting: {
     fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 5,
+    fontWeight: '800',
+    marginBottom: 6,
     color: palette.text,
+    letterSpacing: 0.2,
   },
   role: {
     fontSize: 16,
@@ -248,21 +356,21 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     padding: 20,
-    gap: 15,
+    gap: 16,
   },
   statCard: {
     flex: 1,
     backgroundColor: '#EEF2FF',
     padding: 20,
-    borderRadius: 16,
+    borderRadius: 18,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E0E7FF',
-    shadowColor: '#1E293B',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   statIcon: {
     fontSize: 32,
@@ -270,7 +378,7 @@ const styles = StyleSheet.create({
   },
   statValue: {
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: '800',
     marginBottom: 6,
     color: palette.primaryDark,
   },
@@ -280,7 +388,7 @@ const styles = StyleSheet.create({
   },
   section: {
     padding: 20,
-    paddingTop: 10,
+    paddingTop: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -289,9 +397,9 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 15,
+    fontSize: 21,
+    fontWeight: '800',
+    marginBottom: 14,
     color: palette.text,
   },
   viewAll: {
@@ -301,11 +409,13 @@ const styles = StyleSheet.create({
   },
   quickActions: {
     flexDirection: 'row',
-    gap: 10,
+    flexWrap: 'wrap',
+    gap: 12,
     marginTop: 6,
   },
   actionButton: {
-    flex: 1,
+    flexBasis: '48%',
+    flexGrow: 1,
     backgroundColor: palette.primary,
     padding: 18,
     borderRadius: 16,
@@ -323,10 +433,12 @@ const styles = StyleSheet.create({
   actionText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   actionButtonOutline: {
-    flex: 1,
+    flexBasis: '48%',
+    flexGrow: 1,
     backgroundColor: palette.surface,
     padding: 18,
     borderRadius: 16,
@@ -346,7 +458,8 @@ const styles = StyleSheet.create({
   actionTextOutline: {
     color: palette.primary,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   projectCard: {
     backgroundColor: palette.surface,
@@ -369,7 +482,7 @@ const styles = StyleSheet.create({
   },
   projectTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '800',
     flex: 1,
     color: palette.text,
   },
@@ -379,7 +492,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#EEF2FF',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 12,
+    borderRadius: 14,
+    fontWeight: '700',
   },
   projectContractor: {
     fontSize: 14,
@@ -406,18 +520,19 @@ const styles = StyleSheet.create({
   },
   progressValue: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: palette.text,
   },
   progressBar: {
     height: 8,
     backgroundColor: '#E0E7FF',
-    borderRadius: 4,
+    borderRadius: 6,
     marginBottom: 15,
   },
   progressFill: {
     height: '100%',
     backgroundColor: palette.primary,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   projectFooter: {
     flexDirection: 'row',

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -14,7 +15,9 @@ import {
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { saveProject, removeProject } from '../../services/projects';
+import palette from '../../styles/palette';
 
 const CreateProjectScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
@@ -31,6 +34,19 @@ const CreateProjectScreen = ({ navigation, route }) => {
     timeline: existingProject?.timeline || '',
     address: existingProject?.address || '',
   });
+  const [jobSiteLatitude, setJobSiteLatitude] = useState(
+    existingProject?.job_site_latitude ?? existingProject?.jobSiteLatitude ?? null
+  );
+  const [jobSiteLongitude, setJobSiteLongitude] = useState(
+    existingProject?.job_site_longitude ?? existingProject?.jobSiteLongitude ?? null
+  );
+  const [locationVerified, setLocationVerified] = useState(
+    Boolean(
+      (existingProject?.job_site_latitude ?? existingProject?.jobSiteLatitude) &&
+        (existingProject?.job_site_longitude ?? existingProject?.jobSiteLongitude)
+    )
+  );
+  const [verifyingLocation, setVerifyingLocation] = useState(false);
   const [milestones, setMilestones] = useState([
     ...(existingProject?.milestones?.length
       ? existingProject.milestones.map((m, idx) => ({
@@ -62,6 +78,11 @@ const CreateProjectScreen = ({ navigation, route }) => {
 
   const updateField = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    if (field === 'address') {
+      setLocationVerified(false);
+      setJobSiteLatitude(null);
+      setJobSiteLongitude(null);
+    }
   };
 
   const addMilestone = () => {
@@ -106,6 +127,17 @@ const CreateProjectScreen = ({ navigation, route }) => {
     } else if (step === 2) {
       if (!formData.timeline || !formData.address) {
         Alert.alert('Required', 'Please fill in all required fields');
+        return;
+      }
+      if (!locationVerified) {
+        Alert.alert(
+          'Location not verified',
+          'Recommended: Verify location for GPS check-ins.',
+          [
+            { text: 'Verify now', style: 'cancel' },
+            { text: 'Continue', onPress: () => setStep(3) },
+          ]
+        );
         return;
       }
       setStep(3);
@@ -183,6 +215,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
       estimatedBudget: budgetValue,
       timeline: formData.timeline,
       address: formData.address,
+      job_site_latitude: jobSiteLatitude,
+      job_site_longitude: jobSiteLongitude,
+      check_in_radius: 200,
       milestones: milestones.map((milestone, index) => ({
         name: milestone.name,
         amount: parseFloat(milestone.amount) || null,
@@ -215,6 +250,58 @@ const CreateProjectScreen = ({ navigation, route }) => {
       Alert.alert('Error', 'Failed to save project');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const verifyLocation = async () => {
+    const address = formData.address.trim();
+    if (!address) {
+      Alert.alert('Address required', 'Enter an address to verify.');
+      return;
+    }
+    setVerifyingLocation(true);
+    try {
+      const results = await Location.geocodeAsync(address);
+      const first = results?.[0];
+      if (!first?.latitude || !first?.longitude) {
+        throw new Error('Could not find coordinates for this address.');
+      }
+      setJobSiteLatitude(first.latitude);
+      setJobSiteLongitude(first.longitude);
+      setLocationVerified(true);
+    } catch (error) {
+      console.error('verifyLocation:error', error);
+      setLocationVerified(false);
+      Alert.alert('Location not found', error?.message || 'Could not verify this address.');
+    } finally {
+      setVerifyingLocation(false);
+    }
+  };
+
+  const useCurrentLocation = async () => {
+    setVerifyingLocation(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'Allow location access to use your current location.');
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const coords = position?.coords;
+      if (!coords?.latitude || !coords?.longitude) {
+        throw new Error('Could not read current location.');
+      }
+      setJobSiteLatitude(coords.latitude);
+      setJobSiteLongitude(coords.longitude);
+      setLocationVerified(true);
+    } catch (error) {
+      console.error('useCurrentLocation:error', error);
+      setLocationVerified(false);
+      Alert.alert('Error', error?.message || 'Could not fetch current location.');
+    } finally {
+      setVerifyingLocation(false);
     }
   };
 
@@ -286,12 +373,43 @@ const CreateProjectScreen = ({ navigation, route }) => {
       />
 
       <Text style={styles.label}>Project Address *</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Enter project location"
-        value={formData.address}
-        onChangeText={(value) => updateField('address', value)}
-      />
+      <View style={styles.addressRow}>
+        <TextInput
+          style={[styles.input, styles.addressInput]}
+          placeholder="Enter project location"
+          value={formData.address}
+          onChangeText={(value) => updateField('address', value)}
+        />
+        <TouchableOpacity
+          style={[
+            styles.verifyButton,
+            (!formData.address || verifyingLocation) && styles.verifyButtonDisabled,
+          ]}
+          onPress={verifyLocation}
+          disabled={!formData.address || verifyingLocation}
+        >
+          {verifyingLocation ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.verifyButtonText}>Verify</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+      <View style={styles.locationStatusRow}>
+        {verifyingLocation ? (
+          <>
+            <ActivityIndicator size="small" color={palette.primary} />
+            <Text style={styles.statusText}>Verifying location...</Text>
+          </>
+        ) : locationVerified ? (
+          <Text style={styles.verifiedText}>✓ Location verified</Text>
+        ) : (
+          <Text style={styles.warningText}>Recommended: Verify location for GPS check-ins</Text>
+        )}
+      </View>
+      <TouchableOpacity style={styles.useCurrentButton} onPress={useCurrentLocation}>
+        <Text style={styles.useCurrentText}>Use Current Location</Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -509,7 +627,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: palette.background,
   },
   flex: {
     flex: 1,
@@ -518,8 +636,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
+    padding: 16,
+    backgroundColor: palette.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   backButton: {
     width: 40,
@@ -528,85 +653,152 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 24,
-    color: '#333',
+    color: palette.text,
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '800',
+    color: palette.text,
   },
   placeholder: {
     width: 40,
   },
   progressContainer: {
-    padding: 20,
-    paddingTop: 10,
-    backgroundColor: '#FFFFFF',
+    padding: 16,
+    paddingTop: 12,
+    backgroundColor: palette.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
   },
   progressBar: {
     height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
+    backgroundColor: palette.border,
+    borderRadius: 6,
     marginBottom: 10,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#1976D2',
-    borderRadius: 4,
+    backgroundColor: palette.primary,
+    borderRadius: 6,
   },
   stepIndicator: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
   },
   stepContainer: {
     padding: 20,
   },
   stepTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '800',
     marginBottom: 10,
+    color: palette.text,
   },
   stepSubtitle: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
+    color: palette.muted,
+    marginBottom: 16,
   },
   label: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     marginBottom: 8,
     marginTop: 10,
+    color: palette.text,
   },
   input: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 15,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    borderRadius: 12,
+    padding: 14,
     fontSize: 16,
-    marginBottom: 15,
+    marginBottom: 14,
+    color: palette.text,
   },
   textArea: {
     height: 100,
     textAlignVertical: 'top',
   },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  addressInput: {
+    flex: 1,
+  },
+  verifyButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+    minWidth: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  verifyButtonDisabled: {
+    backgroundColor: palette.border,
+  },
+  verifyButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  locationStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  statusText: {
+    color: palette.muted,
+  },
+  verifiedText: {
+    color: palette.success,
+    fontWeight: '700',
+  },
+  useCurrentButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  useCurrentText: {
+    color: palette.text,
+    fontWeight: '700',
+  },
   typeGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   typeCard: {
     width: '48%',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    padding: 18,
+    backgroundColor: palette.surface,
+    borderRadius: 14,
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   typeCardActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#1976D2',
+    backgroundColor: '#EEF2FF',
+    borderColor: palette.primary,
   },
   typeIcon: {
     fontSize: 32,
@@ -614,17 +806,24 @@ const styles = StyleSheet.create({
   },
   typeLabel: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
   },
   typeLabelActive: {
-    color: '#1976D2',
-    fontWeight: '600',
+    color: palette.primary,
+    fontWeight: '700',
   },
   milestoneCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
+    backgroundColor: palette.surface,
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   milestoneHeader: {
     flexDirection: 'row',
@@ -634,42 +833,53 @@ const styles = StyleSheet.create({
   },
   milestoneTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
+    color: palette.text,
   },
   removeButton: {
     fontSize: 20,
-    color: '#f44336',
+    color: '#FF6B6B',
   },
   addButton: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: '#EEF2FF',
     padding: 15,
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   addButtonText: {
-    color: '#1976D2',
-    fontSize: 16,
-    fontWeight: '600',
+    color: palette.primary,
+    fontSize: 15,
+    fontWeight: '700',
   },
   totalContainer: {
-    backgroundColor: '#FFFFFF',
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: palette.surface,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   totalLabel: {
     fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 5,
+    fontWeight: '700',
+    marginBottom: 6,
+    color: palette.text,
   },
   budgetLabel: {
     fontSize: 14,
-    color: '#666',
+    color: palette.muted,
   },
   warningText: {
-    color: '#FF9800',
-    fontSize: 14,
-    marginTop: 5,
+    color: '#FF6B6B',
+    fontSize: 13,
+    marginTop: 6,
   },
   attachmentsHeader: {
     marginTop: 10,
@@ -678,33 +888,43 @@ const styles = StyleSheet.create({
   buttonContainer: {
     flexDirection: 'row',
     padding: 20,
-    gap: 10,
+    gap: 12,
   },
   primaryButton: {
     flex: 1,
-    backgroundColor: '#1976D2',
+    backgroundColor: palette.primary,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   primaryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   secondaryButton: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   secondaryButtonText: {
-    color: '#333',
+    color: palette.text,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   fullWidth: {
     flex: 1,
@@ -716,13 +936,18 @@ const styles = StyleSheet.create({
   deleteButton: {
     marginTop: 10,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: '#FEE2E2',
     alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   deleteButtonText: {
     color: '#B91C1C',
-    fontWeight: '700',
+    fontWeight: '800',
   },
 });
 

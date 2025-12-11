@@ -132,6 +132,16 @@ export const projectAPI = {
   listGeneratedContracts: async (projectId) => api.get(`/projects/${projectId}/contracts`),
   getGeneratedContract: async (projectId, contractId) =>
     api.get(`/projects/${projectId}/contracts/${contractId}`),
+  updateGeneratedContract: async (projectId, contractId, payload) =>
+    api.put(`/projects/${projectId}/contracts/${contractId}`, payload),
+  listApprovedContractsForContractor: async (contractorId) =>
+    api.get(`/contracts/approved/${contractorId}`),
+  listApprovedContractsForUser: async (userId) => api.get(`/contracts/approved/user/${userId}`),
+  deleteGeneratedContract: async (projectId, contractId, payload) =>
+    api.delete(`/projects/${projectId}/contracts/${contractId}`, { data: payload }),
+  signGeneratedContract: async (projectId, contractId, payload) =>
+    api.post(`/projects/${projectId}/contracts/${contractId}/sign`, payload),
+  getUserContracts: async (userId) => api.get(`/contracts/user/${userId}`),
   createContract: async (payload) => api.post('/contracts', payload),
   deleteContract: async (contractId, payload) =>
     api.delete(`/contracts/${contractId}`, { data: payload }),
@@ -162,8 +172,30 @@ export const projectAPI = {
   getAdminDisputes: async (headers) => api.get('/admin/disputes', { headers }),
   resolveDispute: async (id, payload, headers) =>
     api.post(`/admin/disputes/${id}/resolve`, payload, { headers }),
+  getAdminPendingTasks: async () => api.get('/admin/tasks/pending'),
+  postAdminTaskDecision: async (taskId, payload) => api.post(`/admin/tasks/${taskId}/decision`, payload),
+  submitGigWork: async (projectId, payload) => api.post(`/gigs/${projectId}/submit-work`, payload),
+  assignTask: async (projectId, payload) => api.post(`/projects/${projectId}/assign-task`, payload),
+  listWorkerTasks: async (workerId) => api.get(`/gigs/worker/${workerId}/tasks`),
+  submitTaskProof: async (taskId, payload) => api.post(`/tasks/${taskId}/submit`, payload),
   searchContractors: async (params) => api.get('/contractors/search', { params }),
   getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
+};
+
+export const paymentsAPI = {
+  createStripeAccountLink: async (contractorId) =>
+    api.post('/stripe/connect/account-link', { contractorId, userId: contractorId }),
+  getStripeStatus: async (contractorId) =>
+    api.get('/stripe/connect/status', { params: { contractorId, userId: contractorId } }),
+};
+
+export const walletAPI = {
+  getBalance: async () => api.get('/wallet/balance'),
+  addTestFunds: async () => api.post('/wallet/add-test-funds'),
+  addDemoFunds: async () => api.post('/wallet/add-demo-funds'),
+  getStatus: async () => api.get('/wallet/status'),
+  getTransactions: async () => api.get('/wallet/transactions'),
+  sendPayment: async (payload) => api.post('/wallet/send-payment', payload),
 };
 
 export const messageAPI = {

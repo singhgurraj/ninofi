@@ -4,13 +4,21 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const Stripe = require('stripe');
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
+const { getDistance } = require('geolib');
 const { runGeminiPrompt } = require('./geminiClient');
 require('dotenv').config();
 const asyncHandler = require('./utils/asyncHandler');
 const { ensureUuid } = require('./utils/validation');
+const {
+  buildCenteredNameLine,
+  applySignature,
+  renderSignaturesSection,
+  SIGNATURE_SECTION_LINE_COUNT,
+} = require('./utils/signatures');
 
 const app = express();
 console.log('[server] Starting server...');
@@ -40,6 +48,10 @@ const ENV_VARIABLES = [
   { key: 'RAILWAY_PROJECT_ID', label: 'Railway project id' },
   { key: 'RAILWAY_SERVICE_NAME', label: 'Railway service name' },
   { key: 'RAILWAY_STATIC_URL', label: 'Railway static URL' },
+  { key: 'STRIPE_SECRET_KEY', label: 'Stripe secret key (Connect Standard)' },
+  { key: 'STRIPE_WEBHOOK_SECRET', label: 'Stripe webhook signing secret' },
+  { key: 'STRIPE_ONBOARDING_RETURN_URL', label: 'Stripe onboarding return URL' },
+  { key: 'STRIPE_ONBOARDING_REFRESH_URL', label: 'Stripe onboarding refresh URL' },
 ];
 
 const SERVER_START_TIME = Date.now();
@@ -66,9 +78,63 @@ const logError = (tag, payload, error) => {
   }
 };
 
+let stripeClient = null;
+const getStripeClient = () => {
+  const secret = process.env.STRIPE_SECRET_KEY;
+  if (!secret) {
+    throw new Error('STRIPE_SECRET_KEY env var is not set');
+  }
+  if (!stripeClient) {
+    try {
+      const stripe = require('stripe');
+      stripeClient = stripe(secret);
+    } catch (err) {
+      console.error('stripe:init:error', err);
+      throw new Error('Stripe SDK is not installed on the server');
+    }
+  }
+  return stripeClient;
+};
+
+const defaultStripeHost =
+  (process.env.STRIPE_ONBOARDING_RETURN_URL &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL.startsWith('http') &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL.split('/').slice(0, 3).join('/')) ||
+  (process.env.RAILWAY_STATIC_URL && process.env.RAILWAY_STATIC_URL.startsWith('http')
+    ? process.env.RAILWAY_STATIC_URL
+    : process.env.EXPO_PUBLIC_API_URL?.startsWith('http')
+    ? process.env.EXPO_PUBLIC_API_URL
+    : 'https://ninofi-production.up.railway.app');
+
+const STRIPE_RETURN_URL =
+  (process.env.STRIPE_ONBOARDING_RETURN_URL &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL.startsWith('http') &&
+    process.env.STRIPE_ONBOARDING_RETURN_URL) ||
+  `${defaultStripeHost.replace(/\/$/, '')}/stripe/return`;
+const STRIPE_REFRESH_URL =
+  (process.env.STRIPE_ONBOARDING_REFRESH_URL &&
+    process.env.STRIPE_ONBOARDING_REFRESH_URL.startsWith('http') &&
+    process.env.STRIPE_ONBOARDING_REFRESH_URL) ||
+  `${defaultStripeHost.replace(/\/$/, '')}/stripe/refresh`;
+
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// Stripe webhooks require the raw body, so bypass JSON parsing for that route only.
+const jsonParser = express.json({ limit: '20mb' });
+const urlEncodedParser = express.urlencoded({ extended: true, limit: '20mb' });
+const RAW_WEBHOOK_PATHS = ['/webhooks/stripe', '/api/stripe/webhook']; // support legacy + current
+app.use((req, res, next) => {
+  if (req.originalUrl && RAW_WEBHOOK_PATHS.some((p) => req.originalUrl.startsWith(p))) {
+    return next();
+  }
+  return jsonParser(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.originalUrl && RAW_WEBHOOK_PATHS.some((p) => req.originalUrl.startsWith(p))) {
+    return next();
+  }
+  return urlEncodedParser(req, res, next);
+});
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOAD_DIR));
 
@@ -411,6 +477,42 @@ const initDb = async () => {
       ) THEN
         ALTER TABLE users ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT false;
       END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'stripe_account_id'
+      ) THEN
+        ALTER TABLE users ADD COLUMN stripe_account_id TEXT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'stripe_charges_enabled'
+      ) THEN
+        ALTER TABLE users ADD COLUMN stripe_charges_enabled BOOLEAN NOT NULL DEFAULT false;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'stripe_payouts_enabled'
+      ) THEN
+        ALTER TABLE users ADD COLUMN stripe_payouts_enabled BOOLEAN NOT NULL DEFAULT false;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'wallet_balance_cents'
+      ) THEN
+        ALTER TABLE users ADD COLUMN wallet_balance_cents BIGINT NOT NULL DEFAULT 0;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'user_role'
+      ) THEN
+        ALTER TABLE users ADD COLUMN user_role TEXT NOT NULL DEFAULT 'USER';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'users'::regclass AND attname = 'is_stripe_connected'
+      ) THEN
+        ALTER TABLE users ADD COLUMN is_stripe_connected BOOLEAN NOT NULL DEFAULT false;
+      END IF;
     END
     $$;
   `);
@@ -423,11 +525,19 @@ const initDb = async () => {
       project_type TEXT,
       description TEXT,
       estimated_budget NUMERIC,
+      job_site_latitude NUMERIC,
+      job_site_longitude NUMERIC,
+      check_in_radius INTEGER NOT NULL DEFAULT 200,
       timeline TEXT,
       address TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_site_latitude NUMERIC');
+  await pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_site_longitude NUMERIC');
+  await pool.query(
+    'ALTER TABLE projects ADD COLUMN IF NOT EXISTS check_in_radius INTEGER NOT NULL DEFAULT 200'
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS milestones (
@@ -584,6 +694,24 @@ const initDb = async () => {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS check_ins (
+      id UUID PRIMARY KEY,
+      project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      user_type TEXT,
+      check_in_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      latitude NUMERIC,
+      longitude NUMERIC,
+      distance_from_site INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS check_ins_project_idx ON check_ins (project_id, check_in_time DESC)'
+  );
+  await pool.query('CREATE INDEX IF NOT EXISTS check_ins_user_idx ON check_ins (user_id)');
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS project_applications (
       id UUID PRIMARY KEY,
       project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -662,6 +790,47 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS notifications_project_idx ON notifications ((data->>\'projectId\'))'
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id UUID PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      title TEXT NOT NULL,
+      description TEXT,
+      project_id UUID,
+      creator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      worker_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      escrow_amount_cents BIGINT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      proof_image_url TEXT,
+      verified_at TIMESTAMPTZ,
+      denied_at TIMESTAMPTZ,
+      admin_message TEXT,
+      stripe_payment_intent_id TEXT,
+      stripe_transfer_id TEXT
+    )
+  `);
+  await pool.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date TEXT");
+  await pool.query('CREATE INDEX IF NOT EXISTS tasks_creator_idx ON tasks (creator_id, status)');
+  await pool.query('CREATE INDEX IF NOT EXISTS tasks_worker_idx ON tasks (worker_id, status)');
+  await pool.query('CREATE INDEX IF NOT EXISTS tasks_project_idx ON tasks (project_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id UUID PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      payer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount_cents BIGINT NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'usd',
+      status TEXT NOT NULL,
+      stripe_payment_intent_id TEXT,
+      stripe_transfer_id TEXT,
+      description TEXT
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS wallet_txn_user_idx ON wallet_transactions (payer_id, recipient_id, created_at DESC)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS expenses (
@@ -885,6 +1054,22 @@ const initDb = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS generated_contracts_project_idx ON generated_contracts (project_id, created_at DESC)'
   );
+  await pool.query("ALTER TABLE generated_contracts ADD COLUMN IF NOT EXISTS homeowner_signed BOOLEAN NOT NULL DEFAULT false");
+  await pool.query("ALTER TABLE generated_contracts ADD COLUMN IF NOT EXISTS contractor_signed BOOLEAN NOT NULL DEFAULT false");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS generated_contract_signatures (
+      id UUID PRIMARY KEY,
+      contract_id UUID NOT NULL REFERENCES generated_contracts(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      signature_data TEXT NOT NULL,
+      signer_role TEXT,
+      signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS gen_contract_signatures_unique ON generated_contract_signatures (contract_id, user_id)'
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS flags (
@@ -940,6 +1125,9 @@ const mapDbUser = (row = {}) => ({
   profilePhotoUrl: row.profile_photo_url || '',
   rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  stripeAccountId: row.stripe_account_id || null,
+  stripeChargesEnabled: !!row.stripe_charges_enabled,
+  stripePayoutsEnabled: !!row.stripe_payouts_enabled,
 });
 
 const getUserByEmail = async (email) => {
@@ -1789,7 +1977,7 @@ const mapComplianceRow = (row = {}) => ({
   createdAt: row.created_at,
 });
 
-const mapGeneratedContractRow = (row = {}) => ({
+const mapGeneratedContractRow = (row = {}, signatures = []) => ({
   id: row.id,
   projectId: row.project_id,
   description: row.description || '',
@@ -1799,6 +1987,13 @@ const mapGeneratedContractRow = (row = {}) => ({
   contractText: row.contract_text || '',
   createdByUserId: row.created_by_user_id || null,
   createdAt: row.created_at,
+  signatures: signatures.map((sig) => ({
+    id: sig.id,
+    userId: sig.user_id,
+    signerRole: sig.signer_role || null,
+    signatureData: sig.signature_data,
+    signedAt: sig.signed_at instanceof Date ? sig.signed_at.toISOString() : sig.signed_at,
+  })),
 });
 
 const fetchContractWithProject = async (contractId) => {
@@ -1880,6 +2075,69 @@ const signJwt = (userId) => {
   return jwt.sign({ sub: userId }, secret, { expiresIn });
 };
 
+const authMiddleware = (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const payload = jwt.verify(token, getJwtSecret());
+    if (!payload?.sub || !isUuid(payload.sub)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.userId = payload.sub;
+    req.user = { id: payload.sub };
+    return next();
+  } catch (error) {
+    console.error('auth:verify:error', error);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+};
+
+const requireAuth = (req, res, next) => authMiddleware(req, res, next);
+
+const requireAdmin = async (req, res, next) => {
+  try {
+    authMiddleware(req, res, () => {});
+    if (!req.userId) return; // authMiddleware already responded
+    await assertDbReady();
+    const userRes = await pool.query('SELECT user_role, email_normalized FROM users WHERE id = $1 LIMIT 1', [req.userId]);
+    const role = (userRes.rows[0]?.user_role || '').toUpperCase();
+    const emailNormalized = (userRes.rows[0]?.email_normalized || '').toLowerCase();
+    const allowlist = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const isAllowlisted = emailNormalized && allowlist.includes(emailNormalized);
+    if (role !== 'ADMIN' && !isAllowlisted) {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    return next();
+  } catch (error) {
+    console.error('auth:admin:error', error);
+    return res.status(500).json({ message: 'Auth check failed' });
+  }
+};
+
+const sendNotification = async (userId, title, message, data = {}) => {
+  if (!userId || !title || !message) return;
+  try {
+    await assertDbReady();
+    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO notifications (id, user_id, title, body, data, read, created_at)
+        VALUES ($1, $2, $3, $4, $5, false, NOW())
+      `,
+      [id, userId, title, message, data || {}]
+    );
+  } catch (err) {
+    console.error('notify:error', err);
+  }
+};
+
 const redactValue = (value = '') => {
   const normalized = value.trim();
   if (!normalized) return '';
@@ -1923,6 +2181,29 @@ const extractBase64Payload = (raw = '') => {
   if (!isDataUri(raw)) return raw;
   const [, data] = raw.split(',');
   return data || '';
+};
+
+// Remove only the existing signatures block (header until next markdown header), preserving surrounding content.
+const stripExistingSignaturesSection = (text = '') => {
+  if (!text) return '';
+  const lines = text.split('\n');
+  const isSignatureHeader = (line = '') => /\*\*[^*]*signatures[^*]*\*\*:*/i.test(line);
+  const headerIndex = lines.findIndex((line) => isSignatureHeader(line));
+  if (headerIndex === -1) return text.trimEnd();
+
+  // Find the next markdown header after the signatures header
+  let endIndex = lines.length;
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    if (/^\s*\*\*.+\*\*/.test(lines[i])) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  const before = lines.slice(0, headerIndex).join('\n').trimEnd();
+  const after = lines.slice(endIndex).join('\n').trimStart();
+  if (before && after) return `${before}\n\n${after}`.trimEnd();
+  return (before || after).trimEnd();
 };
 
 const persistMedia = async (projectId, mediaItems = []) => {
@@ -2066,7 +2347,7 @@ const isAdminRequest = (req) => {
   return false;
 };
 
-const requireAdmin = (req, res) => {
+const requireAdminKey = (req, res) => {
   if (!isAdminRequest(req)) {
     res.status(403).json({ message: 'Admin access required' });
     return false;
@@ -3293,25 +3574,39 @@ app.post('/api/projects/:projectId/leave', async (req, res) => {
       appRow.owner_id,
     ]);
 
-    const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
-    await client.query(
-      `
-        INSERT INTO notifications (id, user_id, title, body, data)
-        VALUES ($1, $2, $3, $4, $5)
-      `,
-      [
-        notificationId,
-        appRow.owner_id,
-        `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}`,
-        `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}.`,
-        JSON.stringify({
-          contractorId,
-          projectId,
-          applicationId: appRow.id,
-          status: 'withdrawn',
-        }),
-      ]
-    );
+    const participants = await getProjectParticipants(projectId);
+    const notifyIds = new Set();
+    if (participants?.ownerId) notifyIds.add(participants.ownerId);
+    if (participants?.contractorId && participants.contractorId !== participants.ownerId) {
+      notifyIds.add(participants.contractorId);
+    }
+    (participants?.workers || []).forEach((wid) => {
+      if (wid && wid !== contractorId) notifyIds.add(wid);
+    });
+    const notifTitle = `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}`;
+    const notifBody = `${appRow.contractor_full_name || 'Contractor'} has left ${appRow.project_title}.`;
+    for (const uid of notifyIds) {
+      const notificationId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          notificationId,
+          uid,
+          notifTitle,
+          notifBody,
+          JSON.stringify({
+            contractorId,
+            projectId,
+            applicationId: appRow.id,
+            status: 'withdrawn',
+            type: 'contractor-left',
+          }),
+        ]
+      );
+    }
 
     await client.query('COMMIT');
     return res.json({ status: 'withdrawn', projectId, applicationId: appRow.id });
@@ -3690,6 +3985,18 @@ app.delete('/api/projects/:projectId', async (req, res) => {
     );
     personnelRes.rows.forEach((r) => r.user_id && participants.add(r.user_id));
 
+    // Include any contract signers
+    const contractSignerRes = await client.query(
+      `
+        SELECT DISTINCT gcs.user_id
+        FROM generated_contract_signatures gcs
+        JOIN generated_contracts gc ON gc.id = gcs.contract_id
+        WHERE gc.project_id = $1
+      `,
+      [projectId]
+    );
+    contractSignerRes.rows.forEach((r) => r.user_id && participants.add(r.user_id));
+
     const gigApplicantsRes = await client.query(
       `
         SELECT contractor_id
@@ -3701,14 +4008,34 @@ app.delete('/api/projects/:projectId', async (req, res) => {
       [projectId]
     );
     gigApplicantsRes.rows.forEach((r) => r.contractor_id && participants.add(r.contractor_id));
+    const taskWorkersRes = await client.query(
+      `
+        SELECT DISTINCT worker_id
+        FROM tasks
+        WHERE project_id = $1 AND worker_id IS NOT NULL
+      `,
+      [projectId]
+    );
+    taskWorkersRes.rows.forEach((r) => r.worker_id && participants.add(r.worker_id));
 
     await client.query('BEGIN');
-    // Remove old notifications tied to this project
-    await client.query('DELETE FROM notifications WHERE data->>\'projectId\' = $1', [projectId]);
-    // Delete project (dependent tables assumed ON DELETE CASCADE)
+    // Remove old notifications tied to this project (except the upcoming project-deleted notice)
+    await client.query(
+      `
+        DELETE FROM notifications
+        WHERE data->>'projectId' = $1
+          AND COALESCE(data->>'type','') <> 'project-deleted'
+      `,
+      [projectId]
+    );
+    // Delete dependent tasks (no FK cascade) then project
+    await client.query('DELETE FROM tasks WHERE project_id = $1', [projectId]);
     await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
 
-    // Notify everyone involved (except duplicates)
+    // Notify everyone involved (except the actor)
+    if (participants.has(userId)) {
+      participants.delete(userId);
+    }
     for (const uid of participants) {
       if (!uid) continue;
       const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
@@ -3721,7 +4048,7 @@ app.delete('/api/projects/:projectId', async (req, res) => {
           notifId,
           uid,
           'Project deleted',
-          `${projectRes.rows[0].title || 'A project'} has been deleted by the owner.`,
+          `${projectRes.rows[0].title || 'A project'} has been deleted by a team member.`,
           JSON.stringify({ type: 'project-deleted', projectId }),
         ]
       );
@@ -4571,6 +4898,905 @@ app.post('/api/accounting/callback', async (req, res) => {
   }
 });
 
+// Stripe Connect: create/reuse Standard account and generate onboarding link
+app.post('/api/stripe/connect/account-link', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { contractorId, userId } = req.body || {};
+    if (!contractorId || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    if (!userId || userId !== contractorId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    await assertDbReady();
+    const userRow = await getUserById(contractorId);
+    const userRole = (userRow.role || '').toLowerCase();
+    if (!userRow || !['contractor', 'worker'].includes(userRole)) {
+      return res.status(404).json({ message: 'User not eligible for payouts' });
+    }
+
+    const stripe = getStripeClient();
+    let accountId = userRow.stripe_account_id;
+
+    // Prevent duplicates: reuse existing account if present
+    if (!accountId) {
+      const account = await stripe.accounts.create({
+        type: 'standard',
+        email: userRow.email,
+        business_type: 'individual',
+        metadata: { appUserId: contractorId, role: userRow.role },
+      });
+      accountId = account.id;
+      await client.query(
+        `
+          UPDATE users
+          SET stripe_account_id = $1,
+              stripe_charges_enabled = COALESCE($2, false),
+              stripe_payouts_enabled = COALESCE($3, false)
+          WHERE id = $4
+        `,
+        [accountId, !!account.charges_enabled, !!account.payouts_enabled, contractorId]
+      );
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account: accountId,
+      refresh_url: STRIPE_REFRESH_URL,
+      return_url: STRIPE_RETURN_URL,
+      type: 'account_onboarding',
+    });
+
+    return res.json({
+      success: true,
+      url: accountLink.url,
+      accountId,
+      chargesEnabled: !!userRow.stripe_charges_enabled,
+      payoutsEnabled: !!userRow.stripe_payouts_enabled,
+      charges_enabled: !!userRow.stripe_charges_enabled,
+      payouts_enabled: !!userRow.stripe_payouts_enabled,
+    });
+  } catch (error) {
+    console.error('stripe:connect:error', error);
+    const messageText = error?.message || 'Failed to create Stripe account link';
+    if (
+      error?.type === 'StripeInvalidRequestError' &&
+      messageText.includes("signed up for Connect")
+    ) {
+      return res
+        .status(502)
+        .json({
+          message:
+            'Stripe Connect is not enabled for this platform key. Add a Connect-enabled secret key to STRIPE_SECRET_KEY and retry.',
+        });
+    }
+    return res.status(500).json({ message: messageText });
+  } finally {
+    client.release();
+  }
+});
+
+// Stripe Connect: fetch current status for a contractor
+app.get('/api/stripe/connect/status', async (req, res) => {
+  try {
+    const { contractorId, userId } = req.query || {};
+    if (!contractorId || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    if (!userId || userId !== contractorId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    await assertDbReady();
+    const userRow = await getUserById(contractorId);
+    const role = (userRow?.role || '').toLowerCase();
+    if (!userRow || !['contractor', 'worker'].includes(role)) {
+      return res.status(404).json({ message: 'User not eligible for payouts' });
+    }
+    if (!userRow.stripe_account_id) {
+      return res.status(400).json({ message: 'Stripe account not connected' });
+    }
+
+    const stripe = getStripeClient();
+    let account = null;
+    try {
+      account = await stripe.accounts.retrieve(userRow.stripe_account_id);
+      await pool.query(
+        `
+          UPDATE users
+          SET stripe_charges_enabled = $1,
+              stripe_payouts_enabled = $2
+          WHERE id = $3
+        `,
+        [!!account.charges_enabled, !!account.payouts_enabled, contractorId]
+      );
+    } catch (err) {
+      console.error('stripe:status:retrieve:error', err);
+    }
+
+    const chargesEnabled = account ? !!account.charges_enabled : !!userRow.stripe_charges_enabled;
+    const payoutsEnabled = account ? !!account.payouts_enabled : !!userRow.stripe_payouts_enabled;
+
+    return res.json({
+      success: true,
+      accountId: userRow.stripe_account_id || null,
+      chargesEnabled,
+      payoutsEnabled,
+      charges_enabled: chargesEnabled,
+      payouts_enabled: payoutsEnabled,
+    });
+  } catch (error) {
+    console.error('stripe:status:error', error);
+    const message = pool ? 'Failed to load Stripe status' : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+const TASK_STATUSES = {
+  PENDING: 'PENDING',
+  FUNDED: 'FUNDED',
+  ASSIGNED: 'ASSIGNED',
+  SUBMITTED: 'SUBMITTED',
+  UNDER_REVIEW: 'UNDER_REVIEW',
+  VERIFIED: 'VERIFIED',
+  PAID_OUT: 'PAID_OUT',
+  DENIED: 'DENIED',
+  CANCELLED: 'CANCELLED',
+};
+
+app.post('/api/tasks', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { title, description, projectId, escrowAmountCents } = req.body || {};
+    if (!title || !escrowAmountCents || Number(escrowAmountCents) <= 0) {
+      return res.status(400).json({ message: 'title and escrowAmountCents are required' });
+    }
+    const taskId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO tasks (id, title, description, project_id, creator_id, escrow_amount_cents, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [taskId, title, description || null, projectId || null, req.userId, Number(escrowAmountCents), TASK_STATUSES.PENDING]
+    );
+    return res.status(201).json({ id: taskId });
+  } catch (error) {
+    console.error('tasks:create:error', error);
+    return res.status(500).json({ message: 'Failed to create task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tasks/:taskId/claim', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    if (!taskId) return res.status(400).json({ message: 'taskId is required' });
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (task.worker_id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'Task already claimed' });
+    }
+    if (![TASK_STATUSES.PENDING, TASK_STATUSES.FUNDED].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task cannot be claimed' });
+    }
+    const newStatus = task.status === TASK_STATUSES.FUNDED ? TASK_STATUSES.ASSIGNED : TASK_STATUSES.PENDING;
+    await client.query(
+      'UPDATE tasks SET worker_id = $1, status = $2, updated_at = NOW() WHERE id = $3',
+      [req.userId, newStatus, taskId]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:claim:error', error);
+    return res.status(500).json({ message: 'Failed to claim task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tasks/:taskId/fund', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (task.creator_id !== req.userId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (![TASK_STATUSES.PENDING, TASK_STATUSES.ASSIGNED].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not fundable' });
+    }
+    if (!task.escrow_amount_cents || Number(task.escrow_amount_cents) <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Invalid escrow amount' });
+    }
+    const stripe = getStripeClient();
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Number(task.escrow_amount_cents),
+      currency: 'usd',
+      automatic_payment_methods: { enabled: true },
+      metadata: {
+        ninofi_type: 'task_escrow',
+        task_id: task.id,
+        creator_user_id: task.creator_id,
+        worker_user_id: task.worker_id || '',
+      },
+    });
+    await client.query(
+      'UPDATE tasks SET stripe_payment_intent_id = $1, updated_at = NOW() WHERE id = $2',
+      [paymentIntent.id, taskId]
+    );
+    await client.query('COMMIT');
+    return res.json({ paymentIntentClientSecret: paymentIntent.client_secret, taskId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:fund:error', error);
+    return res.status(500).json({ message: 'Failed to fund task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/tasks/:taskId/submit', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    const { proofImageUrl } = req.body || {};
+    if (!proofImageUrl) return res.status(400).json({ message: 'proofImageUrl is required' });
+    await assertDbReady();
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (task.worker_id !== req.userId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (![TASK_STATUSES.ASSIGNED, TASK_STATUSES.FUNDED].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not in a submittable state' });
+    }
+    await client.query(
+      `
+        UPDATE tasks
+        SET status = $1,
+            proof_image_url = $2,
+            updated_at = NOW()
+        WHERE id = $3
+      `,
+      [TASK_STATUSES.SUBMITTED, proofImageUrl, taskId]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:submit:error', error);
+    return res.status(500).json({ message: 'Failed to submit task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/projects/:projectId/assign-task', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { workerId, description, dueDate, pay, title } = req.body || {};
+    if (!projectId || !workerId || !pay) {
+      return res.status(400).json({ message: 'projectId, workerId, and pay are required' });
+    }
+    await assertDbReady();
+    const payCents = Math.round(Number(pay) * 100);
+    if (Number.isNaN(payCents) || payCents <= 0) {
+      return res.status(400).json({ message: 'pay must be positive' });
+    }
+    await client.query('BEGIN');
+    const projectRes = await client.query('SELECT * FROM projects WHERE id = $1', [projectId]);
+    if (!projectRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const taskId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO tasks (id, title, description, project_id, creator_id, worker_id, escrow_amount_cents, status, due_date, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+      `,
+      [
+        taskId,
+        title || 'Assigned Work',
+        description || projectRes.rows[0].description || null,
+        projectId,
+        req.userId,
+        workerId,
+        payCents,
+        TASK_STATUSES.ASSIGNED,
+        dueDate || null,
+      ]
+    );
+    await client.query('COMMIT');
+    await sendNotification(
+      workerId,
+      'New work assigned',
+      `You have new work on ${projectRes.rows[0].title || 'a project'}. Pay: $${(payCents / 100).toFixed(2)}`,
+      { type: 'task-assigned', projectId, projectTitle: projectRes.rows[0].title, taskId }
+    );
+    return res.json({ success: true, taskId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('assign-task:error', error);
+    return res.status(500).json({ message: 'Failed to assign task' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/gigs/worker/:workerId/tasks', requireAuth, async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    if (!workerId || workerId !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    await assertDbReady();
+    const rows = await pool.query(
+      `
+        SELECT t.*, p.title AS project_title, p.description AS project_description
+        FROM tasks t
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.worker_id = $1
+        ORDER BY t.created_at DESC
+        LIMIT 100
+      `,
+      [workerId]
+    );
+      const tasks = rows.rows.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        projectId: t.project_id,
+        projectTitle: t.project_title,
+        projectDescription: t.project_description,
+        pay: Number(t.escrow_amount_cents || 0) / 100,
+        status: t.status,
+        proofImageUrl: t.proof_image_url || null,
+        dueDate: t.due_date || null,
+        createdAt: t.created_at,
+      }));
+    return res.json({ tasks });
+  } catch (error) {
+    console.error('gigs:worker:tasks:error', error);
+    return res.status(500).json({ message: 'Failed to load tasks' });
+  }
+});
+
+app.post('/api/gigs/:projectId/submit-work', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { projectId } = req.params;
+    const { proofImageUrl, amountCents, title, description } = req.body || {};
+    if (!projectId) return res.status(400).json({ message: 'projectId is required' });
+    if (!proofImageUrl) return res.status(400).json({ message: 'proofImageUrl is required' });
+    if (!amountCents || Number(amountCents) <= 0) {
+      return res.status(400).json({ message: 'amountCents must be greater than 0' });
+    }
+    await client.query('BEGIN');
+    const projectRes = await client.query('SELECT * FROM projects WHERE id = $1 LIMIT 1', [projectId]);
+    if (!projectRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const project = projectRes.rows[0];
+    const taskId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await client.query(
+      `
+        INSERT INTO tasks (id, title, description, project_id, creator_id, worker_id, escrow_amount_cents, status, proof_image_url)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `,
+      [
+        taskId,
+        title || project.title || 'Gig Submission',
+        description || project.description || null,
+        projectId,
+        project.user_id,
+        req.userId,
+        Number(amountCents),
+        TASK_STATUSES.SUBMITTED,
+        proofImageUrl,
+      ]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true, taskId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('gigs:submit-work:error', error);
+    return res.status(500).json({ message: 'Failed to submit work' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/admin/tasks/pending', requireAdmin, async (_req, res) => {
+  try {
+    await assertDbReady();
+    const rows = await pool.query(
+      `
+        SELECT t.*, 
+               uc.full_name AS creator_name, uc.email AS creator_email,
+               uw.full_name AS worker_name, uw.email AS worker_email
+        FROM tasks t
+        LEFT JOIN users uc ON uc.id = t.creator_id
+        LEFT JOIN users uw ON uw.id = t.worker_id
+        WHERE t.status IN ($1, $2)
+        ORDER BY t.created_at DESC
+      `,
+      [TASK_STATUSES.SUBMITTED, TASK_STATUSES.UNDER_REVIEW]
+    );
+    const tasks = rows.rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      escrowAmountCents: Number(t.escrow_amount_cents || 0),
+      status: t.status,
+      proofImageUrl: t.proof_image_url || null,
+      creator: { id: t.creator_id, name: t.creator_name, email: t.creator_email },
+      worker: t.worker_id ? { id: t.worker_id, name: t.worker_name, email: t.worker_email } : null,
+      createdAt: t.created_at,
+    }));
+    return res.json({ tasks });
+  } catch (error) {
+    console.error('admin:tasks:pending:error', error);
+    return res.status(500).json({ message: 'Failed to load tasks' });
+  }
+});
+
+app.post('/api/admin/tasks/:taskId/decision', requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    const { decision, message } = req.body || {};
+    if (!['APPROVE', 'DENY'].includes((decision || '').toUpperCase())) {
+      return res.status(400).json({ message: 'decision must be APPROVE or DENY' });
+    }
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    if (![TASK_STATUSES.SUBMITTED, TASK_STATUSES.UNDER_REVIEW].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not ready for decision' });
+    }
+    if ((decision || '').toUpperCase() === 'DENY') {
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1, denied_at = NOW(), admin_message = $2, updated_at = NOW()
+          WHERE id = $3
+        `,
+        [TASK_STATUSES.ASSIGNED, message || null, taskId]
+      );
+      if (task.worker_id) {
+        const projectTitleRes = task.project_id
+          ? await client.query('SELECT title FROM projects WHERE id = $1 LIMIT 1', [task.project_id])
+          : null;
+        const projectTitle = projectTitleRes?.rows?.[0]?.title || null;
+        await sendNotification(
+          task.worker_id,
+          'Task denied',
+          `Support has denied your claim: ${message || 'No reason provided.'}`,
+          { type: 'task-decision', decision: 'DENY', projectId: task.project_id, taskId: task.id, projectTitle }
+        );
+      }
+      await client.query('COMMIT');
+      return res.json({ success: true, status: TASK_STATUSES.DENIED });
+    }
+
+    if (!task.worker_id || !task.escrow_amount_cents || task.escrow_amount_cents <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task missing worker or amount' });
+    }
+    const workerRes = await client.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [task.worker_id]);
+    const projectTitleRes = task.project_id
+      ? await client.query('SELECT title FROM projects WHERE id = $1 LIMIT 1', [task.project_id])
+      : null;
+    const projectTitle = projectTitleRes?.rows?.[0]?.title || null;
+    const worker = workerRes.rows[0];
+    if (!worker?.stripe_account_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Worker missing Stripe account' });
+    }
+    const stripe = getStripeClient();
+    try {
+      const transfer = await stripe.transfers.create({
+        amount: Number(task.escrow_amount_cents),
+        currency: 'usd',
+        destination: worker.stripe_account_id,
+        metadata: {
+          ninofi_type: 'task_payout',
+          task_id: task.id,
+          worker_user_id: worker.id,
+        },
+      });
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1,
+              verified_at = NOW(),
+              admin_message = $2,
+              stripe_transfer_id = $3,
+              updated_at = NOW()
+          WHERE id = $4
+        `,
+        [TASK_STATUSES.VERIFIED, message || null, transfer.id, taskId]
+      );
+      await client.query('COMMIT');
+      await sendNotification(
+        worker.id,
+        'Task approved',
+        `$${Number(task.escrow_amount_cents / 100).toFixed(2)} earned for ${task.title}.`,
+        { type: 'task-decision', decision: 'APPROVE', projectId: task.project_id, taskId: task.id, projectTitle }
+      );
+      return res.json({ success: true, status: TASK_STATUSES.VERIFIED, transferId: transfer.id });
+    } catch (stripeErr) {
+      console.error('admin:tasks:decision:transfer:error', stripeErr);
+      // Fallback: mark as paid out and credit wallet balance without Stripe transfer
+      const txnId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1,
+              verified_at = NOW(),
+              admin_message = $2,
+              stripe_transfer_id = NULL,
+              updated_at = NOW()
+          WHERE id = $3
+        `,
+        [TASK_STATUSES.PAID_OUT, message || null, taskId]
+      );
+      await client.query(
+        `
+          INSERT INTO wallet_transactions (id, payer_id, recipient_id, amount_cents, currency, status, description, created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+        `,
+        [
+          txnId,
+          task.creator_id,
+          task.worker_id,
+          Number(task.escrow_amount_cents),
+          'usd',
+          'SUCCEEDED',
+          `Task payout (manual): ${task.title}`,
+        ]
+      );
+      await client.query(
+        `
+          UPDATE users
+          SET wallet_balance_cents = COALESCE(wallet_balance_cents, 0) + $1
+          WHERE id = $2
+        `,
+        [Number(task.escrow_amount_cents), task.worker_id]
+      );
+      await client.query('COMMIT');
+      await sendNotification(
+        worker.id,
+        'Task approved',
+        `$${Number(task.escrow_amount_cents / 100).toFixed(2)} earned for ${task.title}.`,
+        {
+          type: 'task-decision',
+          decision: 'APPROVE',
+          projectId: task.project_id,
+          taskId: task.id,
+          projectTitle,
+          transferFallback: true,
+        }
+      );
+      return res.json({
+        success: true,
+        status: TASK_STATUSES.PAID_OUT,
+        transferId: null,
+        fallback: true,
+        message: 'Stripe transfer failed; wallet credited directly.',
+      });
+    }
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('admin:tasks:decision:error', error);
+    return res.status(500).json({ message: 'Failed to process decision' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/wallet/send-payment', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { recipientUserId, recipientEmail, amountCents, description } = req.body || {};
+    const payerId = req.userId;
+    const amount = Number(amountCents);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'amountCents must be greater than 0' });
+    }
+
+    await assertDbReady();
+    let recipientId = recipientUserId;
+    if (!recipientId && recipientEmail) {
+      const recRes = await pool.query(
+        'SELECT id FROM users WHERE email_normalized = lower($1) LIMIT 1',
+        [recipientEmail]
+      );
+      recipientId = recRes.rows[0]?.id;
+    }
+    if (!recipientId) {
+      return res.status(400).json({ message: 'recipientUserId or recipientEmail required' });
+    }
+    if (recipientId === payerId) {
+      return res.status(400).json({ message: 'Cannot pay yourself' });
+    }
+
+    const payerRes = await pool.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [payerId]);
+    const recipientRes = await pool.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [recipientId]);
+    const payer = payerRes.rows[0];
+    const recipient = recipientRes.rows[0];
+    if (!payer || !recipient) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (!recipient.stripe_account_id) {
+      return res.status(400).json({ message: 'Recipient not connected to Stripe' });
+    }
+
+    const stripe = getStripeClient();
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount,
+      currency: 'usd',
+      payment_method: 'pm_card_visa',
+      confirm: true,
+      metadata: {
+        ninofi_transaction_type: 'p2p',
+        payer_user_id: payerId,
+        recipient_user_id: recipientId,
+      },
+    });
+
+    const txnId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `
+        INSERT INTO wallet_transactions (id, payer_id, recipient_id, amount_cents, currency, status, stripe_payment_intent_id, description, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+      `,
+      [
+        txnId,
+        payerId,
+        recipientId,
+        amount,
+        'usd',
+        'PENDING',
+        paymentIntent.id,
+        description || '',
+      ]
+    );
+
+    return res.json({ paymentIntentClientSecret: paymentIntent.client_secret, transactionId: txnId });
+  } catch (error) {
+    console.error('wallet:send-payment:error', error);
+    return res.status(500).json({ message: 'Failed to start payment' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/wallet/balance', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await assertDbReady();
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!user.stripe_account_id) {
+      return res.status(400).json({ error: 'No connected Stripe account' });
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    const balance = await stripe.balance.retrieve({
+      stripeAccount: user.stripe_account_id,
+    });
+
+    const availableUsd = (balance.available || []).find(
+      (entry) => (entry.currency || '').toLowerCase() === 'usd'
+    );
+    const pendingUsd = (balance.pending || []).find(
+      (entry) => (entry.currency || '').toLowerCase() === 'usd'
+    );
+
+    const available = Number((availableUsd?.amount || 0) / 100);
+    const pending = Number((pendingUsd?.amount || 0) / 100);
+
+    return res.status(200).json({
+      currency: 'usd',
+      available,
+      pending,
+    });
+  } catch (error) {
+    console.error('wallet:balance:error', error);
+    return res.status(500).json({ error: 'Failed to fetch wallet balance' });
+  }
+});
+
+app.post('/api/wallet/add-test-funds', authMiddleware, async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Not allowed in production' });
+    }
+
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await assertDbReady();
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!user.stripe_account_id) {
+      return res.status(400).json({ error: 'No connected Stripe account' });
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    await stripe.transfers.create({
+      amount: 5000,
+      currency: 'usd',
+      destination: user.stripe_account_id,
+    });
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error('wallet:add-test-funds:error', error);
+    return res.status(500).json({ error: 'Failed to add test funds' });
+  }
+});
+
+app.post('/api/wallet/add-demo-funds', authMiddleware, async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Not allowed in production' });
+    }
+
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await assertDbReady();
+    const user = await getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const role = (user.role || '').toLowerCase();
+    if (role !== 'contractor') {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    if (!user.stripe_account_id) {
+      return res.status(400).json({ error: 'No connected Stripe account' });
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    let paymentIntent = null;
+    try {
+      paymentIntent = await stripe.paymentIntents.create({
+        amount: 1300,
+        currency: 'usd',
+        payment_method: 'pm_card_visa',
+        confirm: true,
+        transfer_data: {
+          destination: user.stripe_account_id,
+        },
+      });
+    } catch (err) {
+      console.error('wallet:add-demo-funds:destination:error', err);
+      paymentIntent = await stripe.paymentIntents.create(
+        {
+          amount: 1300,
+          currency: 'usd',
+          payment_method: 'pm_card_visa',
+          confirm: true,
+        },
+        {
+          stripeAccount: user.stripe_account_id,
+        }
+      );
+    }
+
+    return res.status(200).json({ ok: true, paymentIntentId: paymentIntent?.id || null });
+  } catch (error) {
+    console.error('wallet:add-demo-funds:error', error);
+    return res.status(500).json({ error: 'Failed to add demo funds' });
+  }
+});
+
+app.get('/api/wallet/status', requireAuth, async (req, res) => {
+  try {
+    await assertDbReady();
+    const user = await getUserById(req.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const availableCents = Number(user.wallet_balance_cents || 0);
+    return res.json({
+      isStripeConnected: !!user.stripe_account_id,
+      availableBalance: Number((availableCents / 100).toFixed(2)),
+      availableBalanceCents: availableCents,
+    });
+  } catch (error) {
+    console.error('wallet:status:error', error);
+    return res.status(500).json({ message: 'Failed to load wallet status' });
+  }
+});
+
+app.get('/api/wallet/transactions', requireAuth, async (req, res) => {
+  try {
+    await assertDbReady();
+    const rows = await pool.query(
+      `
+        SELECT wt.*, 
+               payer.full_name AS payer_name, payer.email AS payer_email,
+               recip.full_name AS recipient_name, recip.email AS recipient_email
+        FROM wallet_transactions wt
+        JOIN users payer ON payer.id = wt.payer_id
+        JOIN users recip ON recip.id = wt.recipient_id
+        WHERE wt.payer_id = $1 OR wt.recipient_id = $1
+        ORDER BY wt.created_at DESC
+        LIMIT 20
+      `,
+      [req.userId]
+    );
+    const transactions = rows.rows.map((t) => {
+      const direction = t.recipient_id === req.userId ? 'in' : 'out';
+      const counterpartyName = direction === 'in' ? t.payer_name : t.recipient_name;
+      const counterpartyEmail = direction === 'in' ? t.payer_email : t.recipient_email;
+      const amountCents = Number(t.amount_cents || 0);
+      return {
+        id: t.id,
+        createdAt: t.created_at instanceof Date ? t.created_at.toISOString() : t.created_at,
+        amountCents,
+        amount: Number((amountCents / 100).toFixed(2)),
+        status: t.status,
+        direction,
+        description: t.description || '',
+        counterpartyName: counterpartyName || '',
+        counterpartyEmail: counterpartyEmail || '',
+      };
+    });
+    return res.json({ transactions });
+  } catch (error) {
+    console.error('wallet:transactions:error', error);
+    return res.status(500).json({ message: 'Failed to load transactions' });
+  }
+});
+
 // Start ID verification session
 app.post('/api/verification/start', async (req, res) => {
   const client = await pool.connect();
@@ -4614,6 +5840,145 @@ app.post('/api/verification/start', async (req, res) => {
     client.release();
   }
 });
+
+// Stripe webhook listener for Connect account updates
+const handleStripeWebhook = async (req, res) => {
+  let event = req.body;
+  try {
+    const signature = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (webhookSecret) {
+      const stripe = getStripeClient();
+      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+    } else if (Buffer.isBuffer(req.body)) {
+      event = JSON.parse(req.body.toString('utf8'));
+    } else if (typeof req.body === 'string') {
+      event = JSON.parse(req.body);
+    }
+  } catch (error) {
+    console.error('stripe:webhook:verify:error', error);
+    return res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+
+  try {
+    await assertDbReady();
+    switch (event?.type) {
+      case 'account.updated': {
+        if (event.data?.object) {
+          const account = event.data.object;
+          const accountId = account.id;
+          const chargesEnabled = !!account.charges_enabled;
+          const payoutsEnabled = !!account.payouts_enabled;
+          await pool.query(
+            `
+              UPDATE users
+              SET stripe_charges_enabled = $1,
+                  stripe_payouts_enabled = $2,
+                  stripe_account_id = COALESCE(stripe_account_id, $3)
+              WHERE stripe_account_id = $3
+            `,
+            [chargesEnabled, payoutsEnabled, accountId]
+          );
+        }
+        break;
+      }
+      case 'payment_intent.succeeded': {
+        const pi = event.data?.object;
+        const meta = pi?.metadata || {};
+        if ((meta.ninofi_type || '').toLowerCase() === 'task_escrow' && meta.task_id) {
+          await pool.query(
+            'UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND status IN ($3, $4)',
+            [TASK_STATUSES.FUNDED, meta.task_id, TASK_STATUSES.PENDING, TASK_STATUSES.ASSIGNED]
+          );
+        } else if ((meta.ninofi_transaction_type || '').toLowerCase() === 'p2p') {
+          const payerId = meta.payer_user_id;
+          const recipientId = meta.recipient_user_id;
+          const amount = Number(pi.amount || 0);
+          if (payerId && recipientId && amount > 0) {
+            await pool.query(
+              'UPDATE wallet_transactions SET status = $1 WHERE stripe_payment_intent_id = $2',
+              ['SUCCEEDED', pi.id]
+            );
+            await pool.query(
+              'UPDATE users SET wallet_balance_cents = COALESCE(wallet_balance_cents,0) + $1 WHERE id = $2',
+              [amount, recipientId]
+            );
+          }
+        }
+        break;
+      }
+      case 'payment_intent.payment_failed': {
+        const pi = event.data?.object;
+        const meta = pi?.metadata || {};
+        if ((meta.ninofi_type || '').toLowerCase() === 'task_escrow' && meta.task_id) {
+          await pool.query('UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2', [TASK_STATUSES.PENDING, meta.task_id]);
+        } else if ((meta.ninofi_transaction_type || '').toLowerCase() === 'p2p') {
+          await pool.query(
+            'UPDATE wallet_transactions SET status = $1 WHERE stripe_payment_intent_id = $2',
+            ['FAILED', pi.id]
+          );
+        }
+        break;
+      }
+      case 'transfer.paid': {
+        const transfer = event.data?.object;
+        const meta = transfer?.metadata || {};
+        if ((meta.ninofi_type || '').toLowerCase() === 'task_payout' && meta.task_id) {
+          const taskId = meta.task_id;
+          const workerId = meta.worker_user_id || null;
+          const taskRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+          const task = taskRes.rows[0];
+          if (task) {
+            await pool.query(
+              'UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND status <> $1',
+              [TASK_STATUSES.PAID_OUT, taskId]
+            );
+            if (workerId) {
+              const txnId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+              await pool.query(
+                `
+                  INSERT INTO wallet_transactions (id, payer_id, recipient_id, amount_cents, currency, status, stripe_transfer_id, description, created_at)
+                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+                  ON CONFLICT (id) DO NOTHING
+                `,
+                [
+                  txnId,
+                  task.creator_id,
+                  workerId,
+                  task.escrow_amount_cents || 0,
+                  'usd',
+                  'SUCCEEDED',
+                  transfer.id,
+                  `Task payout: ${task.title || 'Task'}`,
+                ]
+              );
+              await pool.query(
+                'UPDATE users SET wallet_balance_cents = COALESCE(wallet_balance_cents,0) + $1 WHERE id = $2',
+                [task.escrow_amount_cents || 0, workerId]
+              );
+            }
+          }
+        }
+        break;
+      }
+      case 'transfer.created':
+      case 'balance.available':
+      case 'payout.paid':
+      case 'payout.failed':
+        // Supported but unused events; acknowledge to avoid retries.
+        break;
+      default:
+        // Ignore other events
+        break;
+    }
+    return res.json({ received: true });
+  } catch (error) {
+    console.error('stripe:webhook:error', error);
+    return res.status(500).json({ message: 'Failed to process webhook' });
+  }
+};
+app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook); // legacy path
 
 // Verification provider webhook/callback
 app.post('/webhooks/verification', async (req, res) => {
@@ -5627,8 +6992,188 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
     return res.status(500).json({ message });
   }
 });
+  
+  app.post('/api/check-in', async (req, res) => {
+    try {
+      const { projectId, userId, userType, latitude, longitude } = req.body || {};
+      if (!projectId || !isUuid(projectId)) {
+        return res.status(400).json({ success: false, message: 'Valid projectId is required' });
+      }
+      if (!userId || !isUuid(userId)) {
+        return res.status(400).json({ success: false, message: 'Valid userId is required' });
+      }
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Valid latitude and longitude are required' });
+      }
 
-app.get('/api/projects/:projectId/messages', async (req, res) => {
+      await assertDbReady();
+      const projectResult = await pool.query(
+        `
+          SELECT job_site_latitude, job_site_longitude, check_in_radius
+          FROM projects
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [projectId]
+      );
+      if (projectResult.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Project not found' });
+      }
+      const projectRow = projectResult.rows[0];
+      const siteLat = Number(projectRow.job_site_latitude);
+      const siteLon = Number(projectRow.job_site_longitude);
+      if (!Number.isFinite(siteLat) || !Number.isFinite(siteLon)) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Project has no job site coordinates set' });
+      }
+      const allowedRadius = Number(projectRow.check_in_radius) || 200;
+
+      const distance = getDistance(
+        { latitude: lat, longitude: lon },
+        { latitude: siteLat, longitude: siteLon }
+      );
+      if (!Number.isFinite(distance)) {
+        return res.status(400).json({ success: false, message: 'Could not calculate distance' });
+      }
+      if (distance > allowedRadius) {
+        return res.status(403).json({
+          success: false,
+          message: 'User is outside the allowed check-in radius',
+          distance,
+          allowedRadius,
+        });
+      }
+
+      const checkInId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const insertResult = await pool.query(
+        `
+          INSERT INTO check_ins (id, project_id, user_id, user_type, latitude, longitude, distance_from_site)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING check_in_time
+        `,
+        [checkInId, projectId, userId, userType || null, lat, lon, distance]
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: 'Check-in recorded',
+        checkInId,
+        checkInTime: insertResult.rows?.[0]?.check_in_time || new Date().toISOString(),
+        distance,
+        allowedRadius,
+      });
+    } catch (error) {
+      logError('check-in:create:error', { body: req.body }, error);
+      const message = pool ? 'Failed to record check-in' : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ success: false, message });
+    }
+  });
+
+  app.get('/api/check-ins/:projectId', async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      if (!projectId || !isUuid(projectId)) {
+        return res.status(400).json({ message: 'Invalid projectId' });
+      }
+
+      await assertDbReady();
+      const project = await getProjectById(projectId);
+      if (!project) {
+        return res.status(404).json({ message: 'Project not found' });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT
+            ci.id,
+            ci.user_type,
+            ci.check_in_time,
+            ci.distance_from_site,
+            ci.latitude,
+            ci.longitude,
+            u.full_name AS user_name
+          FROM check_ins ci
+          LEFT JOIN users u ON u.id = ci.user_id
+          WHERE ci.project_id = $1
+          ORDER BY ci.check_in_time DESC
+        `,
+        [projectId]
+      );
+
+      const rows = result.rows.map((row) => ({
+        id: row.id,
+        userName: row.user_name || 'Unknown',
+        userType: row.user_type || '',
+        checkInTime:
+          row.check_in_time instanceof Date ? row.check_in_time.toISOString() : row.check_in_time,
+        distance:
+          row.distance_from_site !== null && row.distance_from_site !== undefined
+            ? Number(row.distance_from_site)
+            : null,
+        latitude:
+          row.latitude !== null && row.latitude !== undefined ? Number(row.latitude) : null,
+        longitude:
+          row.longitude !== null && row.longitude !== undefined ? Number(row.longitude) : null,
+      }));
+
+      return res.json(rows);
+    } catch (error) {
+      logError('check-ins:list:error', { projectId: req.params?.projectId }, error);
+      const message = pool ? 'Failed to fetch check-ins' : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.get('/api/check-in-status/:projectId/:userId', async (req, res) => {
+    try {
+      const { projectId, userId } = req.params;
+      if (!projectId || !isUuid(projectId) || !userId || !isUuid(userId)) {
+        return res.status(400).json({ message: 'projectId and userId are required' });
+      }
+
+      await assertDbReady();
+      const startOfDay = new Date();
+      startOfDay.setUTCHours(0, 0, 0, 0);
+
+      const result = await pool.query(
+        `
+          SELECT check_in_time, distance_from_site
+          FROM check_ins
+          WHERE project_id = $1
+            AND user_id = $2
+            AND check_in_time >= $3
+          ORDER BY check_in_time DESC
+          LIMIT 1
+        `,
+        [projectId, userId, startOfDay.toISOString()]
+      );
+
+      const row = result.rows[0];
+      return res.json({
+        checkedIn: !!row,
+        lastCheckIn: row?.check_in_time || null,
+        distance:
+          row?.distance_from_site !== undefined && row?.distance_from_site !== null
+            ? Number(row.distance_from_site)
+            : null,
+      });
+    } catch (error) {
+      logError(
+        'check-in-status:error',
+        { projectId: req.params?.projectId, userId: req.params?.userId },
+        error
+      );
+      const message = pool ? 'Failed to check status' : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.get('/api/projects/:projectId/messages', async (req, res) => {
     try {
       const { projectId } = req.params;
       const { userId } = req.query || {};
@@ -6552,19 +8097,29 @@ app.get('/api/contractors/:contractorId/portfolio', async (req, res) => {
 
 app.post('/api/portfolio', async (req, res) => {
   try {
-    const { contractorId, title, bio, specialties = [], hourlyRate, serviceArea, media = [] } =
-      req.body || {};
+    const {
+      contractorId,
+      title,
+      bio,
+      specialties = [],
+      hourlyRate,
+      serviceArea,
+      media: mediaFromRequest,
+    } = req.body || {};
     if (!contractorId) {
       return res.status(400).json({ message: 'contractorId is required' });
     }
     await assertDbReady();
+    const hasMedia = Array.isArray(mediaFromRequest);
+    const media = hasMedia ? mediaFromRequest : [];
 
     const existing = await pool.query('SELECT * FROM portfolios WHERE contractor_id = $1', [
       contractorId,
     ]);
     const portfolioId =
       existing.rows[0]?.id || crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
-    const savedMedia = media?.length ? await persistPortfolioMedia(portfolioId, media) : [];
+    const savedMedia =
+      hasMedia && media.length ? await persistPortfolioMedia(portfolioId, media) : [];
 
     if (existing.rows.length) {
       await pool.query(
@@ -6593,13 +8148,17 @@ app.post('/api/portfolio', async (req, res) => {
       );
     }
 
-    if (savedMedia.length) {
-      for (const item of savedMedia) {
-        const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
-        await pool.query(
-          'INSERT INTO portfolio_media (id, portfolio_id, type, url, caption) VALUES ($1,$2,$3,$4,$5)',
-          [id, portfolioId, item.type || 'general', item.url, item.caption || '']
-        );
+    if (hasMedia) {
+      await pool.query('DELETE FROM portfolio_media WHERE portfolio_id = $1', [portfolioId]);
+
+      if (savedMedia.length) {
+        for (const item of savedMedia) {
+          const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+          await pool.query(
+            'INSERT INTO portfolio_media (id, portfolio_id, type, url, caption) VALUES ($1,$2,$3,$4,$5)',
+            [id, portfolioId, item.type || 'general', item.url, item.caption || '']
+          );
+        }
       }
     }
 
@@ -6901,7 +8460,7 @@ app.post('/api/compliance/check-expiry', async (_req, res) => {
 
 app.get('/api/admin/analytics', async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const projects = await pool.query('SELECT COUNT(*) FROM projects');
     const users = await pool.query('SELECT COUNT(*) FROM users');
@@ -6922,7 +8481,7 @@ app.get('/api/admin/analytics', async (req, res) => {
 
 app.get('/api/admin/users', async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const result = await pool.query('SELECT id, full_name, email, role, created_at, profile_photo_url FROM users ORDER BY created_at DESC LIMIT 200');
     return res.json(result.rows.map(mapDbUser));
@@ -6935,7 +8494,7 @@ app.get('/api/admin/users', async (req, res) => {
 
 app.get('/api/admin/disputes', async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const result = await pool.query('SELECT * FROM disputes ORDER BY created_at DESC LIMIT 200');
     return res.json(result.rows.map(mapDisputeRow));
@@ -6948,7 +8507,7 @@ app.get('/api/admin/disputes', async (req, res) => {
 
 app.post('/api/admin/disputes/:id/resolve', async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdminKey(req, res)) return;
     const { id } = req.params;
     const { status, resolutionNotes } = req.body || {};
     if (!id || !status) {
@@ -7111,7 +8670,7 @@ app.get('/api/contractors/:contractorId/profile', async (req, res) => {
 
 app.get('/api/admin/flags', async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const result = await pool.query('SELECT * FROM flags ORDER BY created_at DESC LIMIT 200');
     return res.json(result.rows);
@@ -7124,7 +8683,7 @@ app.get('/api/admin/flags', async (req, res) => {
 
 app.post('/api/admin/flags/:id/resolve', async (req, res) => {
   try {
-    if (!requireAdmin(req, res)) return;
+    if (!requireAdminKey(req, res)) return;
     const { id } = req.params;
     await assertDbReady();
     await pool.query("UPDATE flags SET status = 'resolved', updated_at = NOW() WHERE id = $1", [id]);
@@ -7167,15 +8726,27 @@ app.post('/api/projects/:projectId/contracts/propose', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // If a userId is provided, ensure they are owner or assigned contractor
+    // If a userId is provided, ensure they are owner, assigned contractor, or in personnel
     if (userId) {
-      const contractorId = await getAssignedContractorId(projectId);
-      if (project.user_id !== userId && contractorId !== userId) {
+      const participants = await getProjectParticipants(projectId);
+      const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+      let allowed = project.user_id === userId || contractorId === userId;
+      if (!allowed) {
+        const personnelRow = await pool.query(
+          'SELECT personnel_role FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+          [projectId, userId]
+        );
+        if (personnelRow.rows.length) {
+          const role = normalizeRole(personnelRow.rows[0].personnel_role || '');
+          allowed = role ? ['contractor', 'owner', 'foreman', 'manager'].includes(role) : true;
+        }
+      }
+      if (!allowed) {
         return res.status(403).json({ message: 'Not authorized to propose for this project' });
       }
     }
 
-    const prompt = `
+  const prompt = `
 You are drafting a residential construction contract for a home renovation escrow platform.
 Use the following data:
 
@@ -7199,17 +8770,49 @@ Include sections like:
 Output the contract as clean markdown text only.
 `.trim();
 
+    const buildFallbackContract = () => {
+      return `
+# Construction Contract for ${project.title || 'Project'}
+
+**Parties**  
+Homeowner: ${project.owner_name || 'Homeowner'}  
+Contractor: Assigned contractor
+
+**Scope of Work**  
+${description}
+
+**Milestones & Payments (total ${budgetNum} ${currency})**  
+1. Mobilization – 20%  
+2. Rough-In / Framing – 30%  
+3. Finishes – 30%  
+4. Final Inspection & Handover – 20%
+
+**Change Orders**  
+All changes must be in writing and approved by both parties with cost/time impacts noted.
+
+**Warranties**  
+Contractor warrants workmanship and materials for 1 year unless otherwise stated.
+
+**Dispute Resolution**  
+Good-faith negotiation, then mediation, then binding arbitration in the project jurisdiction.
+
+**Termination**  
+Either party may terminate for cause with written notice; contractor paid for work performed to date.
+
+**Signatures**  
+Homeowner and Contractor agree to the above terms.
+      `.trim();
+    };
+
     let draft1;
     try {
       draft1 = await runGeminiPrompt(prompt);
     } catch (err) {
       logError('gemini:contract:prompt1', { projectId }, err);
-      return res
-        .status(502)
-        .json({ error: 'GEMINI_ERROR', message: 'Failed to generate contract' });
+      draft1 = '';
     }
 
-    let contractText = draft1 || '';
+    let contractText = draft1 || buildFallbackContract();
     const tooShort = !contractText || contractText.length < 800;
     const missingKeywords =
       !/scope of work/i.test(contractText) || !/payment/i.test(contractText);
@@ -7227,24 +8830,59 @@ ${contractText}
         }
       } catch (err) {
         logError('gemini:contract:prompt2', { projectId }, err);
+        if (!contractText || contractText.length < 200) {
+          contractText = buildFallbackContract();
+        }
       }
     }
 
-    const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
-    const insert = await pool.query(
-      `
-        INSERT INTO generated_contracts (id, project_id, description, total_budget, currency, contract_text, created_by_user_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
-        RETURNING *
-      `,
-      [id, projectId, description.trim(), budgetNum, currency.trim(), contractText, userId || null]
-    );
+  const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+  const insert = await pool.query(
+    `
+      INSERT INTO generated_contracts (id, project_id, description, total_budget, currency, contract_text, created_by_user_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      RETURNING *
+    `,
+    [id, projectId, description.trim(), budgetNum, currency.trim(), contractText, userId || null]
+  );
 
-    const row = insert.rows[0];
-    return res.status(201).json({
-      id: row.id,
-      projectId,
-      description: row.description,
+  // Notify the non-creator participant (owner or contractor) to sign
+  try {
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    const targetIds = new Set();
+    if (participants?.ownerId && participants.ownerId !== userId) targetIds.add(participants.ownerId);
+    if (contractorId && contractorId !== userId) targetIds.add(contractorId);
+    for (const targetId of targetIds) {
+      const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        `
+          INSERT INTO notifications (id, user_id, title, body, data)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          notifId,
+          targetId,
+          'New contract to sign',
+          `${description.trim() || 'A contract'} is ready for your signature.`,
+          JSON.stringify({
+            type: 'contract-created',
+            projectId,
+            contractId: id,
+            contractTitle: description.trim() || 'Contract',
+          }),
+        ]
+      );
+    }
+  } catch (notifErr) {
+    logError('contracts:propose:notify:error', { projectId }, notifErr);
+  }
+
+  const row = insert.rows[0];
+  return res.status(201).json({
+    id: row.id,
+    projectId,
+    description: row.description,
       totalBudget: Number(row.total_budget),
       currency: row.currency,
       contractText,
@@ -7252,9 +8890,41 @@ ${contractText}
     });
   } catch (error) {
     logError('contracts:propose:error', { projectId: req.params?.projectId }, error);
-    return res
-      .status(500)
-      .json({ error: 'GEMINI_ERROR', message: 'Failed to generate contract' });
+    try {
+      const id = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const fallbackText = 'Contract generation unavailable. Please try again.';
+      const insert = await pool.query(
+        `
+          INSERT INTO generated_contracts (id, project_id, description, total_budget, currency, contract_text, created_by_user_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+          RETURNING *
+        `,
+        [
+          crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex'),
+          req.params?.projectId,
+          'Contract draft (fallback)',
+          0,
+          'usd',
+          fallbackText,
+          req.body?.userId || null,
+        ]
+      );
+      const row = insert.rows[0];
+      return res.status(201).json({
+        id: row.id,
+        projectId: row.project_id,
+        description: row.description,
+        totalBudget: Number(row.total_budget),
+        currency: row.currency,
+        contractText: fallbackText,
+        createdAt: row.created_at,
+      });
+    } catch (err2) {
+      logError('contracts:propose:fallback:error', { projectId: req.params?.projectId }, err2);
+      return res
+        .status(500)
+        .json({ error: 'GEMINI_ERROR', message: 'Failed to generate contract' });
+    }
   }
 });
 
@@ -7299,18 +8969,463 @@ app.get('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
       return res.status(400).json({ message: 'projectId and contractId are required' });
     }
     await assertDbReady();
-    const result = await pool.query(
+    const contractResult = await pool.query(
       'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
       [contractId, projectId]
     );
-    if (!result.rows.length) {
+    if (!contractResult.rows.length) {
       return res.status(404).json({ message: 'Contract not found' });
     }
-    return res.json(mapGeneratedContractRow(result.rows[0]));
+    const signatureResult = await pool.query(
+      `
+        SELECT gcs.*, u.full_name AS signer_name, u.role AS signer_role_db
+        FROM generated_contract_signatures gcs
+        LEFT JOIN users u ON u.id = gcs.user_id
+        WHERE gcs.contract_id = $1
+        ORDER BY gcs.signed_at ASC
+      `,
+      [contractId]
+    );
+    return res.json(mapGeneratedContractRow(contractResult.rows[0], signatureResult.rows));
   } catch (error) {
     logError('contracts:get-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
     const message = pool
       ? 'Failed to fetch contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Approved generated contracts for a contractor (fully signed)
+app.get('/api/contracts/approved/:contractorId', async (req, res) => {
+  try {
+    const { contractorId } = req.params;
+    if (!contractorId || !isUuid(contractorId)) {
+      return res.status(400).json({ message: 'contractorId is required' });
+    }
+    await assertDbReady();
+
+    const result = await pool.query(
+      `
+        SELECT gc.*
+        FROM generated_contracts gc
+        JOIN generated_contract_signatures gcs ON gcs.contract_id = gc.id
+        WHERE gcs.user_id = $1
+          AND gc.homeowner_signed = true
+          AND gc.contractor_signed = true
+      `,
+      [contractorId]
+    );
+
+    const ids = result.rows.map((r) => r.id);
+    let signatures = [];
+    if (ids.length) {
+      const sigs = await pool.query(
+        `
+          SELECT gcs.*, u.full_name, u.role AS signer_role
+          FROM generated_contract_signatures gcs
+          LEFT JOIN users u ON u.id = gcs.user_id
+          WHERE gcs.contract_id = ANY($1::uuid[])
+        `,
+        [ids]
+      );
+      signatures = sigs.rows;
+    }
+
+    const groupedSigs = signatures.reduce((acc, row) => {
+      acc[row.contract_id] = acc[row.contract_id] || [];
+      acc[row.contract_id].push(row);
+      return acc;
+    }, {});
+
+    const payload = result.rows.map((row) => mapGeneratedContractRow(row, groupedSigs[row.id] || []));
+    return res.json(payload);
+  } catch (error) {
+    logError('contracts:list-approved-contractor:error', { contractorId: req.params?.contractorId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Approved generated contracts for any signed user (fully signed)
+app.get('/api/contracts/approved/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId || !isUuid(userId)) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
+    await assertDbReady();
+
+    const result = await pool.query(
+      `
+        SELECT DISTINCT gc.*
+        FROM generated_contracts gc
+        JOIN generated_contract_signatures gcs ON gcs.contract_id = gc.id
+        WHERE gcs.user_id = $1
+          AND gc.homeowner_signed = true
+          AND gc.contractor_signed = true
+      `,
+      [userId]
+    );
+
+    const ids = result.rows.map((r) => r.id);
+    let signatures = [];
+    if (ids.length) {
+      const sigs = await pool.query(
+        `
+          SELECT gcs.*, u.full_name, u.role AS signer_role
+          FROM generated_contract_signatures gcs
+          LEFT JOIN users u ON u.id = gcs.user_id
+          WHERE gcs.contract_id = ANY($1::uuid[])
+        `,
+        [ids]
+      );
+      signatures = sigs.rows;
+    }
+
+    const groupedSigs = signatures.reduce((acc, row) => {
+      acc[row.contract_id] = acc[row.contract_id] || [];
+      acc[row.contract_id].push(row);
+      return acc;
+    }, {});
+
+    const payload = result.rows.map((row) => mapGeneratedContractRow(row, groupedSigs[row.id] || []));
+    return res.json(payload);
+  } catch (error) {
+    logError('contracts:list-approved-user:error', { userId: req.params?.userId }, error);
+    const message = pool
+      ? 'Failed to fetch contracts'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Update a generated contract (either party)
+app.put('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const { userId, description, contractText, totalBudget, currency } = req.body || {};
+    if (!projectId || !contractId || !userId) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, contractId, and userId are required' });
+    }
+    await assertDbReady();
+
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const project = await getProjectById(projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    const allowed =
+      project.user_id === userId ||
+      contractorId === userId ||
+      contractResult.rows[0].created_by_user_id === userId;
+    if (!allowed) {
+      return res.status(403).json({ message: 'Not authorized to update this contract' });
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (description !== undefined) {
+      fields.push(`description = $${idx++}`);
+      values.push(description);
+    }
+    if (contractText !== undefined) {
+      fields.push(`contract_text = $${idx++}`);
+      values.push(contractText);
+    }
+    if (totalBudget !== undefined) {
+      fields.push(`total_budget = $${idx++}`);
+      values.push(totalBudget);
+    }
+    if (currency !== undefined) {
+      fields.push(`currency = $${idx++}`);
+      values.push(currency);
+    }
+    if (!fields.length) {
+      return res.status(400).json({ message: 'No update fields provided' });
+    }
+
+    values.push(contractId);
+    const updated = await pool.query(
+      `
+        UPDATE generated_contracts
+        SET ${fields.join(', ')}
+        WHERE id = $${idx}
+        RETURNING *
+      `,
+      values
+    );
+
+    const signatureResult = await pool.query(
+      `
+        SELECT gcs.*, u.full_name, u.role AS signer_role
+        FROM generated_contract_signatures gcs
+        LEFT JOIN users u ON u.id = gcs.user_id
+        WHERE gcs.contract_id = $1
+        ORDER BY gcs.signed_at ASC
+      `,
+      [contractId]
+    );
+
+    // Notify involved parties
+    try {
+      const actor = await getUserById(userId);
+      const targets = new Set();
+      if (participants?.ownerId && participants.ownerId !== userId) targets.add(participants.ownerId);
+      if (contractorId && contractorId !== userId) targets.add(contractorId);
+      const title = 'Contract updated';
+      const body = `${actor?.full_name || 'A user'} has updated ${description || updated.rows[0].description || 'a contract'}.`;
+      for (const targetId of targets) {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            targetId,
+            title,
+            body,
+            JSON.stringify({
+              type: 'contract-updated',
+              projectId,
+              contractId,
+              contractTitle: description || updated.rows[0].description || 'Contract',
+            }),
+          ]
+        );
+      }
+    } catch (notifErr) {
+      logError('contracts:update:notify:error', { contractId, projectId }, notifErr);
+    }
+
+    return res.json(mapGeneratedContractRow(updated.rows[0], signatureResult.rows));
+  } catch (error) {
+    logError('contracts:update:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to update contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Delete a generated contract
+app.delete('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const { userId } = req.body || {};
+    if (!projectId || !contractId || !userId) {
+      return res.status(400).json({ message: 'projectId, contractId, and userId are required' });
+    }
+    await assertDbReady();
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const project = await getProjectById(projectId);
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    const allowed =
+      project?.user_id === userId ||
+      contractorId === userId ||
+      contractResult.rows[0].created_by_user_id === userId;
+    if (!allowed) {
+      return res.status(403).json({ message: 'Not authorized to delete this contract' });
+    }
+    await pool.query('DELETE FROM generated_contracts WHERE id = $1', [contractId]);
+    return res.status(204).send();
+  } catch (error) {
+    logError('contracts:delete-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to delete contract'
+      : 'Database is not configured (set DATABASE_URL)';
+    return res.status(500).json({ message });
+  }
+});
+
+// Sign a generated contract (store signature data)
+app.post('/api/projects/:projectId/contracts/:contractId/sign', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const { userId, signatureData, signerRole } = req.body || {};
+    if (!projectId || !contractId || !userId || !signatureData) {
+      return res
+        .status(400)
+        .json({ message: 'projectId, contractId, userId, and signatureData are required' });
+    }
+
+    await assertDbReady();
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+
+    const participants = await getProjectParticipants(projectId);
+    const contractorId = participants?.contractorId || (await getAssignedContractorId(projectId));
+    let allowed = contractResult.rows[0].created_by_user_id === userId;
+    if (!allowed) {
+      allowed = projectId && (participants?.ownerId === userId || contractorId === userId);
+    }
+    if (!allowed) {
+      // allow project personnel with elevated role
+      const personnelRow = await pool.query(
+        'SELECT personnel_role FROM project_personnel WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+        [projectId, userId]
+      );
+      if (personnelRow.rows.length) {
+        const role = normalizeRole(personnelRow.rows[0].personnel_role || '');
+        allowed = ['contractor', 'owner', 'foreman', 'manager'].includes(role);
+      }
+    }
+    if (!allowed) {
+      return res.status(403).json({ message: 'Not authorized to sign this contract' });
+    }
+
+    // Snapshot roles before signing
+    const beforeRes = await pool.query(
+      'SELECT signer_role FROM generated_contract_signatures WHERE contract_id = $1',
+      [contractId]
+    );
+    const rolesBefore = new Set(
+      beforeRes.rows.map((r) => normalizeRole(r.signer_role || '')).filter(Boolean)
+    );
+
+    const signerUser = await getUserById(userId);
+
+    const sigId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+    const signerRoleValue =
+      normalizeRole(signerRole) ||
+      (participants?.ownerId === userId ? 'homeowner' : 'contractor');
+    const result = await pool.query(
+      `
+        INSERT INTO generated_contract_signatures (id, contract_id, user_id, signature_data, signer_role)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (contract_id, user_id)
+        DO UPDATE SET signature_data = EXCLUDED.signature_data, signer_role = EXCLUDED.signer_role, signed_at = NOW()
+        RETURNING *
+      `,
+      [sigId, contractId, userId, signatureData, signerRoleValue]
+    );
+
+    // Build signature state from all signatures on this contract
+    const sigRows = await pool.query(
+      `
+        SELECT gcs.*, u.full_name, u.role AS user_role
+        FROM generated_contract_signatures gcs
+        LEFT JOIN users u ON u.id = gcs.user_id
+        WHERE gcs.contract_id = $1
+      `,
+      [contractId]
+    );
+
+    let signatureState = {};
+    for (const row of sigRows.rows) {
+      const role = normalizeRole(row.signer_role || row.user_role || '');
+      if (!role) continue;
+      const fullName = row.full_name || '';
+      if (!fullName) continue;
+      signatureState = applySignature(
+        signatureState,
+        role === 'homeowner' ? 'homeowner' : 'contractor',
+        fullName
+      );
+    }
+    if (signerUser?.full_name) {
+      signatureState = applySignature(
+        signatureState,
+        signerRoleValue === 'homeowner' ? 'homeowner' : 'contractor',
+        signerUser.full_name
+      );
+    }
+
+    const homeownerSigned = !!signatureState.homeownerName;
+    const contractorSigned = !!signatureState.contractorName;
+    const isFullySigned = homeownerSigned && contractorSigned;
+    const wasFullySigned = rolesBefore.has('homeowner') && rolesBefore.has('contractor');
+
+    // Update contract flags
+    await pool.query(
+      `
+        UPDATE generated_contracts
+        SET homeowner_signed = $1, contractor_signed = $2
+        WHERE id = $3
+      `,
+      [homeownerSigned, contractorSigned, contractId]
+    );
+
+    // Update contract text to reflect signature lines
+    const baseText = stripExistingSignaturesSection(contractResult.rows[0].contract_text || '');
+    const updatedText =
+      baseText + '\n\n**Signatures**\n\n' + renderSignaturesSection(signatureState);
+    await pool.query('UPDATE generated_contracts SET contract_text = $1 WHERE id = $2', [
+      updatedText,
+      contractId,
+    ]);
+
+    // Notify all signers when fully signed
+    if (!wasFullySigned && isFullySigned) {
+      const signerIds = new Set(sigRows.rows.map((r) => r.user_id).filter(Boolean));
+      signerIds.add(userId);
+      for (const uid of signerIds) {
+        const notifId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `
+            INSERT INTO notifications (id, user_id, title, body, data)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            notifId,
+            uid,
+            'Contract fully signed',
+            `${contractResult.rows[0].description || 'Contract'} is fully signed.`,
+            JSON.stringify({
+              type: 'contract-fully-signed',
+              projectId,
+              contractId,
+              contractTitle: contractResult.rows[0].description || 'Contract',
+            }),
+          ]
+        );
+      }
+    }
+
+    return res.status(201).json({
+      signature: {
+        id: result.rows[0].id,
+        userId: result.rows[0].user_id,
+        signerRole: result.rows[0].signer_role,
+        signatureData: result.rows[0].signature_data,
+        signedAt:
+          result.rows[0].signed_at instanceof Date
+            ? result.rows[0].signed_at.toISOString()
+            : result.rows[0].signed_at,
+      },
+      contractText: updatedText,
+    });
+  } catch (error) {
+    logError('contracts:sign-generated:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    const message = pool
+      ? 'Failed to sign contract'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
   }
@@ -7519,6 +9634,46 @@ app.get('/api/monitoring/stats', (_req, res) => {
     logError('monitoring:stats:error', {}, error);
     return res.status(500).json({ message: 'Failed to fetch stats' });
   }
+});
+
+app.get('/stripe/return', (req, res) => {
+  console.log('stripe:return', req.query || {});
+  const deeplink =
+    process.env.MOBILE_DEEPLINK_URL ||
+    process.env.EXPO_PUBLIC_MOBILE_DEEPLINK_URL ||
+    process.env.EXPO_PUBLIC_DEEPLINK_URL;
+  if (deeplink) {
+    return res.send(`<!doctype html>
+    <html>
+      <head><meta charset="utf-8"><title>Connected</title></head>
+      <body>
+        <p>You’re all set. Returning to the app…</p>
+        <script>
+          window.location.href = ${JSON.stringify(deeplink)};
+        </script>
+      </body>
+    </html>`);
+  }
+  return res.send(`<!doctype html>
+  <html>
+    <head><meta charset="utf-8"><title>Stripe Connected</title></head>
+    <body>
+      <h1>Bank account connected</h1>
+      <p>You can now return to the Ninofi app.</p>
+    </body>
+  </html>`);
+});
+
+app.get('/stripe/refresh', (req, res) => {
+  console.log('stripe:refresh', req.query || {});
+  return res.send(`<!doctype html>
+  <html>
+    <head><meta charset="utf-8"><title>Try again</title></head>
+    <body>
+      <h1>Let’s try that again</h1>
+      <p>Your Stripe onboarding wasn’t completed. Please go back to the app and restart the Connect Bank process.</p>
+    </body>
+  </html>`);
 });
 
 // Legacy endpoints retained for compatibility

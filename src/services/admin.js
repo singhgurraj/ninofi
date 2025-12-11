@@ -46,3 +46,23 @@ export const resolveDispute = async (id, status, resolutionNotes) => {
     return { success: false, error: message };
   }
 };
+
+export const fetchAdminPendingTasks = async () => {
+  try {
+    const res = await projectAPI.getAdminPendingTasks();
+    return { success: true, data: res.data?.tasks || [] };
+  } catch (error) {
+    const message = error.response?.data?.message || 'Failed to load tasks';
+    return { success: false, error: message };
+  }
+};
+
+export const decideAdminTask = async (taskId, decision, message) => {
+  try {
+    const res = await projectAPI.postAdminTaskDecision(taskId, { decision, message });
+    return { success: true, data: res.data };
+  } catch (error) {
+    const msg = error.response?.data?.message || 'Failed to update task';
+    return { success: false, error: msg };
+  }
+};

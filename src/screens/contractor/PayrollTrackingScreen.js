@@ -1,3 +1,4 @@
+import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -11,10 +12,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { useSelector } from 'react-redux';
-import palette from '../../styles/palette';
 import { expenseAPI } from '../../services/expenses';
+import palette from '../../styles/palette';
 
 const initialFormState = {
   hours: '',

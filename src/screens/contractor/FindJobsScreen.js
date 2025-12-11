@@ -76,26 +76,31 @@ const FindJobsScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
-  content: { padding: 20, gap: 12 },
+  content: { padding: 20, gap: 14, paddingBottom: 32 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  title: { fontSize: 22, fontWeight: '700', color: palette.text },
-  refresh: { color: palette.primary, fontWeight: '600' },
-  muted: { color: palette.muted },
+  title: { fontSize: 24, fontWeight: '800', color: palette.text },
+  refresh: { color: palette.primary, fontWeight: '700', fontSize: 14 },
+  muted: { color: palette.muted, fontSize: 13.5 },
   card: {
     backgroundColor: palette.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   cardHeader: { flexDirection: 'row', gap: 12 },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: palette.text },
-  cardMeta: { color: palette.muted, marginTop: 4 },
-  thumb: { width: 72, height: 72, borderRadius: 12, backgroundColor: '#eee' },
+  cardTitle: { fontSize: 18, fontWeight: '800', color: palette.text },
+  cardMeta: { color: palette.muted, marginTop: 4, fontSize: 13.5 },
+  thumb: { width: 78, height: 78, borderRadius: 14, backgroundColor: '#EEF2FF' },
 });
 
 export default FindJobsScreen;

@@ -1,6 +1,10 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  Alert,
+  AppState,
+  Linking,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -10,8 +14,10 @@ import {
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import VerificationBadge from '../../components/VerificationBadge';
+import CheckInButton from '../../components/CheckInButton';
 import { loadNotifications } from '../../services/notifications';
 import { loadContractorProjects, loadOpenProjects } from '../../services/projects';
+import { createConnectAccountLink, fetchStripeStatus } from '../../services/payments';
 import palette from '../../styles/palette';
 import { shadowCard } from '../../styles/ui';
 
@@ -21,11 +27,57 @@ const ContractorDashboard = ({ navigation }) => {
   const { openProjects, isLoadingOpen, contractorProjects, isLoadingContractor } = useSelector((state) => state.projects);
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const [stripeStatus, setStripeStatus] = useState(null);
+  const [stripeStatusLoading, setStripeStatusLoading] = useState(true);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
+  const [isConnectingStripe, setIsConnectingStripe] = useState(false);
   const stats = {
     earnings: 8450,
     activeProjects: 0,
     rating: 4.8,
   };
+  const isStripeConnected =
+    !!((stripeStatus?.accountId || user?.stripeAccountId) &&
+    ((stripeStatus?.payoutsEnabled ?? user?.stripePayoutsEnabled) ||
+      (stripeStatus?.chargesEnabled ?? user?.stripeChargesEnabled)));
+  const lastConnectedRef = useRef(isStripeConnected);
+
+  const loadStripeStatus = useCallback(async () => {
+    if (!user?.id) {
+      setStripeStatusLoading(false);
+      return;
+    }
+    setStripeStatusLoading(true);
+    const res = await fetchStripeStatus(user.id);
+    if (res.success) {
+      setStripeStatus(res.data);
+    }
+    setStripeStatusLoading(false);
+  }, [user?.id]);
+
+  const handleConnectBank = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Unavailable', 'Sign in first.');
+      return;
+    }
+    setIsConnectingStripe(true);
+    const res = await createConnectAccountLink(user.id);
+    setIsConnectingStripe(false);
+    if (!res.success) {
+      Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
+      return;
+    }
+    const url = res.data?.url;
+    if (url) {
+      try {
+        await Linking.openURL(url);
+      } catch (err) {
+        Alert.alert('Error', 'Could not open Stripe onboarding link');
+      }
+    }
+    loadStripeStatus();
+  }, [user?.id, loadStripeStatus]);
 
   const loadProjects = useCallback(() => {
     if (user?.id) {
@@ -35,10 +87,49 @@ const ContractorDashboard = ({ navigation }) => {
     }
   }, [dispatch, user?.id]);
 
+  const handleWalletPress = useCallback(() => {
+    navigation.navigate('Wallet');
+  }, [navigation]);
+
+  useEffect(() => {
+    const loadSeenFlag = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen');
+        if (value === 'true') {
+          setHasSeenConnected(true);
+        }
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeenFlag();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadStripeStatus();
+      }
+    });
+    return () => sub.remove();
+  }, [loadStripeStatus]);
+
   useFocusEffect(
     useCallback(() => {
       loadProjects();
-    }, [loadProjects])
+      loadStripeStatus();
+    }, [loadProjects, loadStripeStatus])
   );
 
   return (
@@ -80,7 +171,7 @@ const ContractorDashboard = ({ navigation }) => {
           </View>
           <TouchableOpacity
             style={styles.heroButton}
-            onPress={() => navigation.navigate('Wallet')}
+            onPress={handleWalletPress}
             activeOpacity={0.9}
           >
             <Text style={styles.heroButtonText}>View Wallet</Text>
@@ -110,95 +201,157 @@ const ContractorDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.cardGrid}>
+            {!stripeStatusLoading && !isStripeConnected && (
+              <TouchableOpacity 
+                style={[styles.actionCard, shadowCard]}
+                onPress={handleConnectBank}
+                disabled={isConnectingStripe}
+              >
+                <Text style={styles.actionIcon}>🏦</Text>
+                <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  Connect Bank
+                </Text>
+                <Text style={styles.actionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {isConnectingStripe
+                    ? 'Opening…'
+                    : stripeStatus?.payoutsEnabled
+                    ? 'Ready for payouts'
+                    : 'Required for payouts'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('FindJobs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
-              <Text style={styles.actionTitle}>Find Jobs</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Find Jobs
+              </Text>
               <Text style={styles.actionText}>Browse nearby gigs</Text>
             </TouchableOpacity>
+
+            {isStripeConnected && (
+              <TouchableOpacity 
+                style={[styles.actionCard, shadowCard]}
+                onPress={handleWalletPress}
+              >
+                <Text style={styles.actionIcon}>💰</Text>
+                <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  My Wallet
+                </Text>
+                <Text style={styles.actionText}>Balance & transfers</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Applications')}
             >
               <Text style={styles.actionIcon}>📄</Text>
-              <Text style={styles.actionTitle}>My Applications</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                My Applications
+              </Text>
               <Text style={styles.actionText}>Manage/withdraw</Text>
             </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
-onPress={() => navigation.navigate('Portfolio')}
+              onPress={() => navigation.navigate('Portfolio')}
             >
               <Text style={styles.actionIcon}>🖼️</Text>
-              <Text style={styles.actionTitle}>Portfolio</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Portfolio
+              </Text>
               <Text style={styles.actionText}>Showcase work</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
-              onPress={() => navigation.navigate('SubmitMilestone', {
-                project: projects[0],
-                milestone: { name: projects[0].nextMilestone, amount: projects[0].amount }
-            })}
+              disabled={!contractorProjects || contractorProjects.length === 0}
+              onPress={() => {
+                if (!contractorProjects || contractorProjects.length === 0) {
+                  Alert.alert('No projects', 'You have no active projects to submit work for yet.');
+                  return;
+                }
+                const project = contractorProjects[0];
+                const milestone =
+                  (project.milestones && project.milestones[0]) ||
+                  { name: project.nextMilestone || 'Milestone', amount: project.amount || 0 };
+                navigation.navigate('SubmitMilestone', { project, milestone });
+              }}
             >
               <Text style={styles.actionIcon}>📸</Text>
-              <Text style={styles.actionTitle}>Submit Work</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Submit Work
+              </Text>
               <Text style={styles.actionText}>Send milestone evidence</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.actionCard, shadowCard]}
-              onPress={() => navigation.navigate('Wallet')}
-            >
-              <Text style={styles.actionIcon}>💰</Text>
-              <Text style={styles.actionTitle}>My Wallet</Text>
-              <Text style={styles.actionText}>Balance & transfers</Text>
-            </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Compliance')}
             >
               <Text style={styles.actionIcon}>📑</Text>
-              <Text style={styles.actionTitle}>Compliance</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Compliance
+              </Text>
               <Text style={styles.actionText}>Licenses & insurance</Text>
             </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('AuditLog')}
             >
               <Text style={styles.actionIcon}>🕑</Text>
-              <Text style={styles.actionTitle}>Activity</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Activity
+              </Text>
               <Text style={styles.actionText}>Recent actions</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('RegisterWorker')}
             >
               <Text style={styles.actionIcon}>➕</Text>
-              <Text style={styles.actionTitle}>Register Worker</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Register Worker
+              </Text>
               <Text style={styles.actionText}>Add employees to your team</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('ExpenseTracking')}
             >
               <Text style={styles.actionIcon}>💰</Text>
-              <Text style={styles.actionTitle}>Expenses</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Expenses
+              </Text>
               <Text style={styles.actionText}>Track project costs</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('PayrollTracking')}
             >
               <Text style={styles.actionIcon}>⏱️</Text>
-              <Text style={styles.actionTitle}>Work Hours</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Work Hours
+              </Text>
               <Text style={styles.actionText}>Log time & earnings</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Contracts')}
             >
               <Text style={styles.actionIcon}>📝</Text>
-              <Text style={styles.actionTitle}>Contracts</Text>
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                Contracts
+              </Text>
               <Text style={styles.actionText}>View & sign docs</Text>
             </TouchableOpacity>
           </View>
@@ -225,6 +378,7 @@ onPress={() => navigation.navigate('Portfolio')}
                   onPress={() =>
                     navigation.navigate('ProjectOverview', { project, role: 'contractor' })
                   }
+                  activeOpacity={0.9}
                 >
                   <View style={styles.projectHeader}>
                     <Text style={styles.projectTitle}>{project.title}</Text>
@@ -237,8 +391,15 @@ onPress={() => navigation.navigate('Portfolio')}
                   <Text style={styles.projectMeta}>
                     Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
                   </Text>
-              </TouchableOpacity>
-            ))}
+                  <View style={styles.checkInContainer}>
+                    <CheckInButton
+                      projectId={project.id}
+                      userId={user?.id}
+                      userType="contractor"
+                    />
+                  </View>
+                </TouchableOpacity>
+              ))}
         </View>
 
         {/* Recent Payments */}
@@ -263,18 +424,18 @@ const styles = StyleSheet.create({
   },
   heroCard: {
     marginHorizontal: 16,
-    marginTop: 8,
-    padding: 18,
+    marginTop: 12,
+    padding: 20,
     borderRadius: 22,
     overflow: 'hidden',
-    shadowColor: '#2E2A54',
-    shadowOpacity: 0.15,
+    shadowColor: '#111827',
+    shadowOpacity: 0.16,
     shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 8,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 10,
     backgroundColor: palette.primary,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   heroHeader: {
     flexDirection: 'row',
@@ -295,21 +456,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 14,
-    padding: 12,
-    gap: 8,
+    borderRadius: 16,
+    padding: 14,
+    gap: 10,
   },
   heroStat: {
     flex: 1,
   },
   heroStatLabel: {
-    color: 'rgba(255,255,255,0.78)',
+    color: 'rgba(255,255,255,0.82)',
     fontSize: 13,
+    letterSpacing: 0.2,
   },
   heroStatValue: {
     color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
     marginTop: 4,
   },
   heroDivider: {
@@ -320,14 +482,14 @@ const styles = StyleSheet.create({
   heroButton: {
     backgroundColor: '#FFFFFF',
     paddingVertical: 14,
-    borderRadius: 14,
+    borderRadius: 16,
     alignItems: 'center',
     marginTop: 14,
-    shadowColor: '#2E2A54',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowColor: '#111827',
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
     borderWidth: 1,
     borderColor: '#EEF2FF',
   },
@@ -381,16 +543,16 @@ const styles = StyleSheet.create({
   },
   verificationCard: {
     margin: 20,
-    marginTop: 12,
+    marginTop: 14,
     backgroundColor: palette.surface,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
-    shadowColor: '#3B2A68',
+    shadowColor: '#111827',
     shadowOpacity: 0.08,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
     elevation: 6,
   },
   verificationHeader: {
@@ -408,7 +570,7 @@ const styles = StyleSheet.create({
   },
   verificationTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     color: palette.text,
     marginBottom: 4,
   },
@@ -420,9 +582,14 @@ const styles = StyleSheet.create({
   verificationButton: {
     backgroundColor: palette.primary,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
     marginTop: 4,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   verificationButtonText: {
     color: '#FFFFFF',
@@ -481,7 +648,7 @@ const styles = StyleSheet.create({
   },
   section: {
     padding: 20,
-    paddingTop: 10,
+    paddingTop: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -490,9 +657,9 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 12,
+    fontSize: 21,
+    fontWeight: '800',
+    marginBottom: 14,
     color: palette.text,
   },
   viewAll: {
@@ -508,23 +675,23 @@ const styles = StyleSheet.create({
   },
   actionCard: {
     flexBasis: '48%',
-    padding: 16,
+    padding: 18,
     borderRadius: 18,
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.border,
-    shadowColor: '#1E293B',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 5,
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
   },
   actionIcon: {
     fontSize: 22,
     marginBottom: 8,
   },
   actionTitle: {
-    fontWeight: '700',
+    fontWeight: '800',
     color: palette.text,
     fontSize: 15,
   },
@@ -532,20 +699,21 @@ const styles = StyleSheet.create({
     color: palette.muted,
     marginTop: 6,
     fontSize: 13,
+    letterSpacing: 0.1,
   },
   projectCard: {
     backgroundColor: palette.surface,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
     borderColor: palette.border,
     marginBottom: 12,
     gap: 6,
-    shadowColor: '#1E293B',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   projectHeader: {
     flexDirection: 'row',
@@ -555,7 +723,7 @@ const styles = StyleSheet.create({
   },
   projectTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '800',
     flex: 1,
     color: palette.text,
   },
@@ -573,6 +741,9 @@ const styles = StyleSheet.create({
   projectMeta: {
     color: palette.muted,
     fontSize: 13,
+  },
+  checkInContainer: {
+    marginTop: 10,
   },
   progressBar: {
     height: 6,

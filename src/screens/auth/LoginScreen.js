@@ -64,11 +64,7 @@ const LoginScreen = ({ navigation }) => {
           contentContainerStyle={scrollContentStyle}
           bounces={false}
         >
-          <View style={[
-            styles.header,
-            isSmallScreen && styles.headerSmall,
-            isExtraSmallScreen && styles.headerExtraSmall
-          ]}>
+          <View style={styles.headerShell}>
             <TouchableOpacity 
               style={styles.backButton}
               onPress={() => navigation.goBack()}
@@ -286,6 +282,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 20,
+    paddingHorizontal: 20,
   },
   scrollContentSmall: {
     paddingBottom: 12,
@@ -293,19 +290,10 @@ const styles = StyleSheet.create({
   scrollContentExtraSmall: {
     paddingBottom: 8,
   },
-  header: {
-    padding: 20,
-    paddingTop: 10,
-  },
-  headerSmall: {
-    paddingHorizontal: 16,
-    paddingTop: 6,
+  headerShell: {
+    paddingHorizontal: 2,
+    paddingTop: 2,
     paddingBottom: 6,
-  },
-  headerExtraSmall: {
-    paddingHorizontal: 12,
-    paddingTop: 0,
-    paddingBottom: 4,
   },
   backButton: {
     width: 40,
@@ -323,11 +311,15 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginTop: 20,
-    marginBottom: 10,
+    fontSize: 28,
+    fontWeight: '800',
+    marginTop: 16,
+    marginBottom: 6,
     color: palette.text,
+    letterSpacing: 0.2,
+    textAlign: 'center',
+    width: '100%',
+    alignSelf: 'center',
   },
   titleSmall: {
     fontSize: 28,
@@ -340,8 +332,11 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: palette.muted,
+    textAlign: 'center',
+    width: '100%',
+    alignSelf: 'center',
   },
   subtitleSmall: {
     fontSize: 15,
@@ -350,18 +345,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   form: {
-    padding: 20,
+    marginTop: 20,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 24,
+    backgroundColor: palette.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   formSmall: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 20,
   },
   formExtraSmall: {
-    paddingHorizontal: 12,
-    paddingTop: 4,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 18,
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   inputContainerSmall: {
     marginBottom: 16,
@@ -370,8 +379,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   label: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
     marginBottom: 8,
     color: palette.text,
   },
@@ -384,12 +393,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   input: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: palette.border,
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 15,
     fontSize: 16,
-    backgroundColor: '#F9F6FF',
+    backgroundColor: '#F8F9FA',
     color: palette.text,
   },
   inputSmall: {
@@ -403,10 +412,10 @@ const styles = StyleSheet.create({
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: palette.border,
-    borderRadius: 8,
-    backgroundColor: '#F9F6FF',
+    borderRadius: 12,
+    backgroundColor: '#F8F9FA',
   },
   passwordContainerSmall: {
     borderRadius: 6,
@@ -448,7 +457,7 @@ const styles = StyleSheet.create({
   },
   forgotButton: {
     alignSelf: 'flex-end',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   forgotButtonSmall: {
     marginBottom: 16,
@@ -459,6 +468,7 @@ const styles = StyleSheet.create({
   forgotText: {
     color: palette.primary,
     fontSize: 14,
+    fontWeight: '600',
   },
   forgotTextSmall: {
     fontSize: 13,
@@ -471,7 +481,12 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 18,
+    shadowColor: '#111827',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   loginButtonSmall: {
     paddingVertical: 14,
@@ -482,12 +497,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   loginButtonDisabled: {
-    backgroundColor: '#CBB5FF',
+    backgroundColor: '#A5B4FC',
   },
   loginButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   loginButtonTextSmall: {
     fontSize: 17,
@@ -498,7 +513,7 @@ const styles = StyleSheet.create({
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 18,
   },
   dividerSmall: {
     marginVertical: 16,
@@ -514,7 +529,8 @@ const styles = StyleSheet.create({
   dividerText: {
     marginHorizontal: 10,
     color: palette.muted,
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '600',
   },
   dividerTextSmall: {
     fontSize: 13,
@@ -532,6 +548,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginBottom: 12,
     backgroundColor: palette.surface,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   socialButtonSmall: {
     paddingVertical: 12,
@@ -568,9 +589,9 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
   },
   socialButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     color: palette.text,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   socialButtonTextSmall: {
     fontSize: 15,
@@ -581,7 +602,7 @@ const styles = StyleSheet.create({
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20,
+    marginTop: 16,
   },
   signupContainerSmall: {
     marginTop: 16,
@@ -591,7 +612,7 @@ const styles = StyleSheet.create({
   },
   signupText: {
     color: palette.muted,
-    fontSize: 16,
+    fontSize: 15,
   },
   signupTextSmall: {
     fontSize: 15,
@@ -601,8 +622,8 @@ const styles = StyleSheet.create({
   },
   signupLink: {
     color: palette.primary,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
   signupLinkSmall: {
     fontSize: 15,

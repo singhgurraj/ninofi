@@ -12,10 +12,12 @@ const RegisterWorkerScreen = ({ navigation }) => {
         <Text style={styles.title}>Register Worker</Text>
       </View>
       <View style={styles.body}>
-        <Text style={styles.subtitle}>Worker registration flow coming soon.</Text>
-        <Text style={styles.note}>
-          You’ll be able to add employees here and then assign them to projects as personnel.
-        </Text>
+        <View style={styles.card}>
+          <Text style={styles.subtitle}>Worker registration flow coming soon.</Text>
+          <Text style={styles.note}>
+            You’ll be able to add employees here and then assign them to projects as personnel.
+          </Text>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -27,14 +29,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    padding: 20,
+    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
+    backgroundColor: palette.surface,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  backText: { fontSize: 22, color: palette.text },
-  title: { fontSize: 20, fontWeight: '700', color: palette.text },
+  backText: { fontSize: 24, color: palette.text },
+  title: { fontSize: 22, fontWeight: '800', color: palette.text },
   body: { padding: 20, gap: 12 },
-  subtitle: { fontSize: 16, fontWeight: '700', color: palette.text },
+  card: {
+    backgroundColor: palette.surface,
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+    gap: 8,
+  },
+  subtitle: { fontSize: 16, fontWeight: '800', color: palette.text },
   note: { color: palette.muted, lineHeight: 20 },
 });
 
