@@ -5336,7 +5336,7 @@ app.post('/api/admin/tasks/:taskId/decision', requireAdmin, async (req, res) => 
           SET status = $1, denied_at = NOW(), admin_message = $2, updated_at = NOW()
           WHERE id = $3
         `,
-        [TASK_STATUSES.DENIED, message || null, taskId]
+        [TASK_STATUSES.ASSIGNED, message || null, taskId]
       );
       if (task.worker_id) {
         const projectTitleRes = task.project_id

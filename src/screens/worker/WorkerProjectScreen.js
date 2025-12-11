@@ -67,7 +67,9 @@ const WorkerProjectScreen = ({ route, navigation }) => {
   }, [user?.id, projectId]);
 
   const assigned = assignments.filter(
-    (a) => a.workerId === user?.id && !['SUBMITTED', 'UNDER_REVIEW'].includes((a.status || '').toUpperCase())
+    (a) =>
+      a.workerId === user?.id &&
+      !['SUBMITTED', 'UNDER_REVIEW'].includes((a.status || '').toUpperCase())
   );
   const pending = assignments.filter((a) =>
     ['SUBMITTED', 'UNDER_REVIEW'].includes((a.status || '').toUpperCase())
