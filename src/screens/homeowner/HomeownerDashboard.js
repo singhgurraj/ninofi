@@ -3,6 +3,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Linking,
   SafeAreaView,
   ScrollView,
@@ -52,6 +53,15 @@ const HomeownerDashboard = ({ navigation }) => {
     fetchProjects();
     loadStripeStatus();
   }, [fetchProjects, loadStripeStatus]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadStripeStatus();
+      }
+    });
+    return () => sub.remove();
+  }, [loadStripeStatus]);
 
   useEffect(() => {
     const loadSeen = async () => {

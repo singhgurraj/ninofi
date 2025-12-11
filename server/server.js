@@ -9692,19 +9692,31 @@ app.get('/api/monitoring/stats', (_req, res) => {
 
 app.get('/stripe/return', (req, res) => {
   console.log('stripe:return', req.query || {});
-  const deeplink =
+  const envDeeplink =
     process.env.MOBILE_DEEPLINK_URL ||
     process.env.EXPO_PUBLIC_MOBILE_DEEPLINK_URL ||
-    process.env.EXPO_PUBLIC_DEEPLINK_URL;
-  if (deeplink) {
+    process.env.EXPO_PUBLIC_DEEPLINK_URL ||
+    process.env.EXPO_PUBLIC_SCHEME ||
+    process.env.SCHEME;
+  const deeplinkUrl = (() => {
+    if (!envDeeplink) return null;
+    // If only a scheme was provided, expand to scheme://
+    if (!envDeeplink.includes('://')) return `${envDeeplink}://`;
+    return envDeeplink;
+  })();
+  if (deeplinkUrl) {
     return res.send(`<!doctype html>
     <html>
       <head><meta charset="utf-8"><title>Connected</title></head>
       <body>
         <p>You’re all set. Returning to the app…</p>
         <script>
-          window.location.href = ${JSON.stringify(deeplink)};
+          window.location.href = ${JSON.stringify(deeplinkUrl)};
+          setTimeout(() => {
+            window.location.href = ${JSON.stringify(deeplinkUrl)};
+          }, 400);
         </script>
+        <p>If you are not redirected, tap <a href=${JSON.stringify(deeplinkUrl)}>Return to app</a>.</p>
       </body>
     </html>`);
   }

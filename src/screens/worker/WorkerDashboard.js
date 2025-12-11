@@ -11,6 +11,7 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
 import CheckInButton from '../../components/CheckInButton';
@@ -83,6 +84,15 @@ const WorkerDashboard = ({ navigation }) => {
     fetchNotifs();
     loadStripeStatus();
   }, [fetchNotifs, loadStripeStatus]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadStripeStatus();
+      }
+    });
+    return () => sub.remove();
+  }, [loadStripeStatus]);
 
   useFocusEffect(
     useCallback(() => {
