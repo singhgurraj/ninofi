@@ -21,6 +21,18 @@ export default function TabLayout() {
       : 'app-tabs-user'
     : 'guest-tabs';
 
+  const adminTabOptions = isAdmin
+    ? {
+        title: 'Admin',
+        tabBarIcon: ({ color, size }) => (
+          <Ionicons name="shield-checkmark" color={color} size={size ?? 24} />
+        ),
+      }
+    : {
+        href: null,
+        tabBarButton: () => null,
+      };
+
   return (
     <Tabs
       key={tabKey}
@@ -39,17 +51,9 @@ export default function TabLayout() {
           ),
         }}
       />
-      {isAuthenticated && isAdmin && (
+      {isAuthenticated && (
         <>
-          <Tabs.Screen
-            name="admin"
-            options={{
-              title: 'Admin',
-              tabBarIcon: ({ color, size }) => (
-                <Ionicons name="shield-checkmark" color={color} size={size ?? 24} />
-              ),
-            }}
-          />
+          <Tabs.Screen name="admin" options={adminTabOptions} />
           <Tabs.Screen
             name="invoices"
             options={{
