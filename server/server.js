@@ -4008,6 +4008,15 @@ app.delete('/api/projects/:projectId', async (req, res) => {
       [projectId]
     );
     gigApplicantsRes.rows.forEach((r) => r.contractor_id && participants.add(r.contractor_id));
+    const taskWorkersRes = await client.query(
+      `
+        SELECT DISTINCT worker_id
+        FROM tasks
+        WHERE project_id = $1 AND worker_id IS NOT NULL
+      `,
+      [projectId]
+    );
+    taskWorkersRes.rows.forEach((r) => r.worker_id && participants.add(r.worker_id));
 
     await client.query('BEGIN');
     // Remove old notifications tied to this project
@@ -5244,7 +5253,7 @@ app.get('/api/gigs/worker/:workerId/tasks', requireAuth, async (req, res) => {
       `
         SELECT t.*, p.title AS project_title, p.description AS project_description
         FROM tasks t
-        LEFT JOIN projects p ON p.id = t.project_id
+        JOIN projects p ON p.id = t.project_id
         WHERE t.worker_id = $1
         ORDER BY t.created_at DESC
         LIMIT 100
