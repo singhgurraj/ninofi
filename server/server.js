@@ -5369,36 +5369,98 @@ app.post('/api/admin/tasks/:taskId/decision', requireAdmin, async (req, res) => 
       return res.status(400).json({ message: 'Worker missing Stripe account' });
     }
     const stripe = getStripeClient();
-    const transfer = await stripe.transfers.create({
-      amount: Number(task.escrow_amount_cents),
-      currency: 'usd',
-      destination: worker.stripe_account_id,
-      metadata: {
-        ninofi_type: 'task_payout',
-        task_id: task.id,
-        worker_user_id: worker.id,
-      },
-    });
-    await client.query(
-      `
-        UPDATE tasks
-        SET status = $1,
-            verified_at = NOW(),
-            admin_message = $2,
-            stripe_transfer_id = $3,
-            updated_at = NOW()
-        WHERE id = $4
-      `,
-      [TASK_STATUSES.VERIFIED, message || null, transfer.id, taskId]
-    );
-    await client.query('COMMIT');
-    await sendNotification(
-      worker.id,
-      'Task approved',
-      `$${Number(task.escrow_amount_cents / 100).toFixed(2)} earned for ${task.title}.`,
-      { type: 'task-decision', decision: 'APPROVE', projectId: task.project_id, taskId: task.id, projectTitle }
-    );
-    return res.json({ success: true, status: TASK_STATUSES.VERIFIED, transferId: transfer.id });
+    try {
+      const transfer = await stripe.transfers.create({
+        amount: Number(task.escrow_amount_cents),
+        currency: 'usd',
+        destination: worker.stripe_account_id,
+        metadata: {
+          ninofi_type: 'task_payout',
+          task_id: task.id,
+          worker_user_id: worker.id,
+        },
+      });
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1,
+              verified_at = NOW(),
+              admin_message = $2,
+              stripe_transfer_id = $3,
+              updated_at = NOW()
+          WHERE id = $4
+        `,
+        [TASK_STATUSES.VERIFIED, message || null, transfer.id, taskId]
+      );
+      await client.query('COMMIT');
+      await sendNotification(
+        worker.id,
+        'Task approved',
+        `$${Number(task.escrow_amount_cents / 100).toFixed(2)} earned for ${task.title}.`,
+        { type: 'task-decision', decision: 'APPROVE', projectId: task.project_id, taskId: task.id, projectTitle }
+      );
+      return res.json({ success: true, status: TASK_STATUSES.VERIFIED, transferId: transfer.id });
+    } catch (stripeErr) {
+      console.error('admin:tasks:decision:transfer:error', stripeErr);
+      // Fallback: mark as paid out and credit wallet balance without Stripe transfer
+      const txnId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1,
+              verified_at = NOW(),
+              admin_message = $2,
+              stripe_transfer_id = NULL,
+              updated_at = NOW()
+          WHERE id = $3
+        `,
+        [TASK_STATUSES.PAID_OUT, message || null, taskId]
+      );
+      await client.query(
+        `
+          INSERT INTO wallet_transactions (id, payer_id, recipient_id, amount_cents, currency, status, description, created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+        `,
+        [
+          txnId,
+          task.creator_id,
+          task.worker_id,
+          Number(task.escrow_amount_cents),
+          'usd',
+          'SUCCEEDED',
+          `Task payout (manual): ${task.title}`,
+        ]
+      );
+      await client.query(
+        `
+          UPDATE users
+          SET wallet_balance_cents = COALESCE(wallet_balance_cents, 0) + $1
+          WHERE id = $2
+        `,
+        [Number(task.escrow_amount_cents), task.worker_id]
+      );
+      await client.query('COMMIT');
+      await sendNotification(
+        worker.id,
+        'Task approved',
+        `$${Number(task.escrow_amount_cents / 100).toFixed(2)} earned for ${task.title}.`,
+        {
+          type: 'task-decision',
+          decision: 'APPROVE',
+          projectId: task.project_id,
+          taskId: task.id,
+          projectTitle,
+          transferFallback: true,
+        }
+      );
+      return res.json({
+        success: true,
+        status: TASK_STATUSES.PAID_OUT,
+        transferId: null,
+        fallback: true,
+        message: 'Stripe transfer failed; wallet credited directly.',
+      });
+    }
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('admin:tasks:decision:error', error);
