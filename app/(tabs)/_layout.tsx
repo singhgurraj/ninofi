@@ -38,17 +38,17 @@ export default function TabLayout() {
       />
       {isAuthenticated && (
         <>
-          {isAdmin && (
-            <Tabs.Screen
-              name="admin"
-              options={{
-                title: 'Admin',
-                tabBarIcon: ({ color, size }) => (
-                  <Ionicons name="shield-checkmark" color={color} size={size ?? 24} />
-                ),
-              }}
-            />
-          )}
+          <Tabs.Screen
+            name="admin"
+            options={{
+              title: 'Admin',
+              href: isAdmin ? undefined : null,
+              tabBarButton: isAdmin ? undefined : () => null,
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="shield-checkmark" color={color} size={size ?? 24} />
+              ),
+            }}
+          />
           <Tabs.Screen
             name="invoices"
             options={{
