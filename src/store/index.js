@@ -18,7 +18,8 @@ const storage = typeof window === 'undefined' ? createNoopStorage() : AsyncStora
 const authPersistConfig = {
   key: 'auth',
   storage,
-  whitelist: ['user', 'token', 'isAuthenticated', 'role'],
+  // Do not persist auth to avoid stale admin state across sessions.
+  whitelist: [],
 };
 
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);

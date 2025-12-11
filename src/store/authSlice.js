@@ -25,6 +25,10 @@ const authSlice = createSlice({
     loginStart: (state) => {
       state.isLoading = true;
       state.error = null;
+      state.user = null;
+      state.token = null;
+      state.role = null;
+      state.isAuthenticated = false;
       state.isAdmin = false;
     },
     loginSuccess: (state, action) => {
@@ -39,10 +43,20 @@ const authSlice = createSlice({
     loginFailure: (state, action) => {
       state.isLoading = false;
       state.error = action.payload;
+      state.user = null;
+      state.token = null;
+      state.isAuthenticated = false;
+      state.role = null;
+      state.isAdmin = false;
     },
     registerStart: (state) => {
       state.isLoading = true;
       state.error = null;
+      state.user = null;
+      state.token = null;
+      state.role = null;
+      state.isAuthenticated = false;
+      state.isAdmin = false;
     },
     registerSuccess: (state, action) => {
       state.isLoading = false;
@@ -56,6 +70,11 @@ const authSlice = createSlice({
     registerFailure: (state, action) => {
       state.isLoading = false;
       state.error = action.payload;
+      state.user = null;
+      state.token = null;
+      state.isAuthenticated = false;
+      state.role = null;
+      state.isAdmin = false;
     },
     logout: (state) => {
       state.user = null;
