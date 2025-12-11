@@ -260,7 +260,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
-    maxWidth: '60%',
+    maxWidth: '75%',
+    flexShrink: 1,
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
   milestonePillText: {
     color: palette.primary,
@@ -268,6 +272,7 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     textAlign: 'center',
     flexShrink: 1,
+    flexWrap: 'wrap',
   },
   mediaRow: { marginTop: 10, gap: 10 },
   media: {
