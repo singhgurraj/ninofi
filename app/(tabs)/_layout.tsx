@@ -15,10 +15,15 @@ export default function TabLayout() {
     isAuthenticated &&
     auth.isAdmin === true &&
     (auth.user?.userRole || auth.user?.role || '').toUpperCase() === 'ADMIN';
+  const tabKey = isAuthenticated
+    ? isAdmin
+      ? 'app-tabs-admin'
+      : 'app-tabs-user'
+    : 'guest-tabs';
 
   return (
     <Tabs
-      key={isAuthenticated ? 'app-tabs' : 'guest-tabs'}
+      key={tabKey}
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
