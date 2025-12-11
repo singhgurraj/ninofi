@@ -104,11 +104,12 @@ Set `EXPO_PUBLIC_API_URL` to your API (e.g., `http://localhost:8081/api` or the 
 ---
 
 ## Contributing
-1. Fork/branch from `main`.
-2. Install deps: `npm install` (and `cd server && npm install` for API).
-3. Set `EXPO_PUBLIC_API_URL` for the Expo app; set DB/Stripe env vars for the server.
-4. Run `npm start` (app) and `npm start` in `server/` (API) for local testing.
-5. Submit PRs with a clear summary and test notes.
+
+**Team Members:**
+- **Gurraj Singh** (gsingh62@wisc.edu)
+- **Kunal Singh** (kdsingh@wisc.edu) 
+- **Arjun Bharadhwaj** (bharadhwaj@wisc.edu) 
+- **Rohit Sriram** (rsriram2@wisc.edu) 
 
 ---
 
