@@ -3710,6 +3710,9 @@ app.post('/api/projects', async (req, res) => {
       address,
       milestones,
       media,
+      job_site_latitude,
+      job_site_longitude,
+      check_in_radius,
     } = req.body || {};
 
     if (!userId || !title) {
@@ -3734,8 +3737,20 @@ app.post('/api/projects', async (req, res) => {
     await client.query('BEGIN');
     const projectResult = await client.query(
       `
-        INSERT INTO projects (id, user_id, title, project_type, description, estimated_budget, timeline, address)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO projects (
+          id,
+          user_id,
+          title,
+          project_type,
+          description,
+          estimated_budget,
+          timeline,
+          address,
+          job_site_latitude,
+          job_site_longitude,
+          check_in_radius
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
       `,
       [
@@ -3747,6 +3762,9 @@ app.post('/api/projects', async (req, res) => {
         Number.isFinite(budgetNumber) ? budgetNumber : null,
         timeline || '',
         address || '',
+        job_site_latitude !== undefined && job_site_latitude !== null ? Number(job_site_latitude) : null,
+        job_site_longitude !== undefined && job_site_longitude !== null ? Number(job_site_longitude) : null,
+        Number.isFinite(Number(check_in_radius)) ? Number(check_in_radius) : 200,
       ]
     );
 
@@ -3834,6 +3852,9 @@ app.put('/api/projects/:projectId', async (req, res) => {
       address,
       milestones,
       media,
+      job_site_latitude,
+      job_site_longitude,
+      check_in_radius,
     } = req.body || {};
 
     if (!projectId || !userId || !title) {
@@ -3866,8 +3887,11 @@ app.put('/api/projects/:projectId', async (req, res) => {
             description = $3,
             estimated_budget = $4,
             timeline = $5,
-            address = $6
-        WHERE id = $7
+            address = $6,
+            job_site_latitude = $7,
+            job_site_longitude = $8,
+            check_in_radius = $9
+        WHERE id = $10
         RETURNING *
       `,
       [
@@ -3877,6 +3901,9 @@ app.put('/api/projects/:projectId', async (req, res) => {
         Number.isFinite(budgetNumber) ? budgetNumber : null,
         timeline || '',
         address || '',
+        job_site_latitude !== undefined && job_site_latitude !== null ? Number(job_site_latitude) : null,
+        job_site_longitude !== undefined && job_site_longitude !== null ? Number(job_site_longitude) : null,
+        Number.isFinite(Number(check_in_radius)) ? Number(check_in_radius) : 200,
         projectId,
       ]
     );
@@ -7024,8 +7051,15 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         return res.status(404).json({ success: false, message: 'Project not found' });
       }
       const projectRow = projectResult.rows[0];
-      const siteLat = Number(projectRow.job_site_latitude);
-      const siteLon = Number(projectRow.job_site_longitude);
+      const rawLat = projectRow.job_site_latitude;
+      const rawLon = projectRow.job_site_longitude;
+      if (rawLat === null || rawLat === undefined || rawLon === null || rawLon === undefined) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Project has no job site coordinates set' });
+      }
+      const siteLat = Number(rawLat);
+      const siteLon = Number(rawLon);
       if (!Number.isFinite(siteLat) || !Number.isFinite(siteLon)) {
         return res
           .status(400)
