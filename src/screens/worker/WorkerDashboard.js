@@ -11,6 +11,7 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useEffect, useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
 import { loadNotifications } from '../../services/notifications';
 import { createConnectAccountLink } from '../../services/payments';
@@ -23,6 +24,9 @@ const WorkerDashboard = ({ navigation }) => {
   const [isConnectingStripe, setIsConnectingStripe] = useState(false);
   const isStripeConnected =
     !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
+  const lastConnectedRef = useRef(false);
 
   const stats = {
     earnings: 0,
@@ -70,6 +74,29 @@ const WorkerDashboard = ({ navigation }) => {
       fetchNotifs();
     }, [fetchNotifs])
   );
+
+  useEffect(() => {
+    const loadSeenFlag = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen_worker');
+        if (value === 'true') setHasSeenConnected(true);
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeenFlag();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen_worker', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
 
   return (
     <SafeAreaView style={styles.container}>

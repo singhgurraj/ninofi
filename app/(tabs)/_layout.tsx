@@ -16,7 +16,9 @@ export default function TabLayout() {
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  const isAdmin = userEmail ? adminEmails.includes(userEmail.toLowerCase()) : false;
+  const isAdmin =
+    (userEmail ? adminEmails.includes(userEmail.toLowerCase()) : false) ||
+    useSelector((state: any) => (state.auth?.user?.role || '').toUpperCase() === 'ADMIN');
 
   return (
     <Tabs

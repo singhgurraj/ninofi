@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
 import { loadProjectsForUser } from '../../services/projects';
 import { loadNotifications } from '../../services/notifications';
@@ -25,6 +26,9 @@ const HomeownerDashboard = ({ navigation }) => {
   const [isConnectingStripe, setIsConnectingStripe] = useState(false);
   const isStripeConnected =
     !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
+  const lastConnectedRef = useRef(false);
 
   const fetchProjects = useCallback(() => {
     if (user?.id) {
@@ -36,6 +40,29 @@ const HomeownerDashboard = ({ navigation }) => {
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  useEffect(() => {
+    const loadSeen = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen_homeowner');
+        if (value === 'true') setHasSeenConnected(true);
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeen();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen_homeowner', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
 
   useFocusEffect(
     useCallback(() => {
