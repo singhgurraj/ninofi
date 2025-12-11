@@ -62,6 +62,21 @@ const NotificationsScreen = ({ navigation }) => {
         return;
       }
 
+      if (data?.type === 'task-assigned' && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
+      if (data?.type === 'task-decision' && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
+      if (data?.taskId && data.projectId) {
+        navigation.navigate('WorkerProject', { projectId: data.projectId });
+        return;
+      }
+
       // Contractor application/worker gig application: go to detail for accept/deny
       if (data?.applicationId || (data?.projectId && data?.contractorId)) {
         navigation.navigate('NotificationDetail', { notification: n });

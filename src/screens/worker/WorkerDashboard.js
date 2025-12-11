@@ -9,8 +9,9 @@ import {
     View,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
 import CheckInButton from '../../components/CheckInButton';
 import { loadNotifications } from '../../services/notifications';
@@ -22,6 +23,11 @@ const WorkerDashboard = ({ navigation }) => {
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
   const [isConnectingStripe, setIsConnectingStripe] = useState(false);
+  const isStripeConnected =
+    !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
+  const lastConnectedRef = useRef(false);
 
   const stats = {
     earnings: 0,
@@ -69,6 +75,29 @@ const WorkerDashboard = ({ navigation }) => {
       fetchNotifs();
     }, [fetchNotifs])
   );
+
+  useEffect(() => {
+    const loadSeenFlag = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen_worker');
+        if (value === 'true') setHasSeenConnected(true);
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeenFlag();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen_worker', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -175,20 +204,22 @@ const WorkerDashboard = ({ navigation }) => {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => navigation.navigate('Wallet')}
-            >
-              <Text style={styles.actionIcon}>💰</Text>
-              <Text
-                style={styles.actionText}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
+            {isStripeConnected && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => navigation.navigate('Wallet')}
               >
-                My Wallet
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.actionIcon}>💰</Text>
+                <Text
+                  style={styles.actionText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  My Wallet
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 

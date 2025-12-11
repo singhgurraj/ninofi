@@ -116,15 +116,29 @@ const projectSlice = createSlice({
       state.contractorError = action.payload;
     },
     addWorkerAssignment: (state, action) => {
-      state.workerAssignments.push({
+      const existing = state.workerAssignments.find((a) => a.id === action.payload.id);
+      const base = {
         id: action.payload.id,
         projectId: action.payload.projectId,
         workerId: action.payload.workerId,
         description: action.payload.description,
         dueDate: action.payload.dueDate,
         pay: action.payload.pay,
-        createdAt: new Date().toISOString(),
-      });
+        status: action.payload.status,
+        proofImageUrl: action.payload.proofImageUrl,
+        createdAt: action.payload.createdAt || new Date().toISOString(),
+      };
+      if (existing) {
+        Object.assign(existing, base);
+      } else {
+        state.workerAssignments.push(base);
+      }
+    },
+    updateWorkerAssignment: (state, action) => {
+      const existing = state.workerAssignments.find((a) => a.id === action.payload.id);
+      if (existing) {
+        Object.assign(existing, action.payload);
+      }
     },
     addWorkerProject: (state, action) => {
       if (!action.payload?.id) return;
@@ -162,6 +176,7 @@ export const {
   fetchContractorProjectsSuccess,
   fetchContractorProjectsFailure,
   addWorkerAssignment,
+  updateWorkerAssignment,
   addWorkerProject,
   removeWorkerProject,
 } = projectSlice.actions;

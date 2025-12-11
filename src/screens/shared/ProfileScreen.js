@@ -14,12 +14,18 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '../../services/auth';
 import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import palette from '../../styles/palette';
 
 const ProfileScreen = ({ navigation: propNavigation }) => {
   const navigation = propNavigation || useNavigation();
   const router = useRouter();
   const { user, role, isAuthenticated } = useSelector((state) => state.auth);
+  const adminEmails = (Constants.expoConfig?.extra?.adminEmails || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isAdmin = user?.email ? adminEmails.includes(user.email.toLowerCase()) : false;
   const dispatch = useDispatch();
   const hasNavigation = Boolean(navigation);
 
@@ -228,25 +234,35 @@ const ProfileScreen = ({ navigation: propNavigation }) => {
         </View>
 
         {/* Account Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Admin Tools</Text>
-          <TouchableOpacity
-            style={styles.adminButton}
-            onPress={() => navigation.navigate('FeatureFlags')}
-          >
-            <Text style={styles.adminButtonIcon}>🧭</Text>
-            <Text style={styles.adminButtonText}>Feature Flags</Text>
-            <Text style={styles.actionArrow}>→</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.adminButton}
-            onPress={() => navigation.navigate('SystemMonitoring')}
-          >
-            <Text style={styles.adminButtonIcon}>📈</Text>
-            <Text style={styles.adminButtonText}>System Monitoring</Text>
-            <Text style={styles.actionArrow}>→</Text>
-          </TouchableOpacity>
-        </View>
+        {isAdmin && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Admin Tools</Text>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate('FeatureFlags')}
+            >
+              <Text style={styles.adminButtonIcon}>🧭</Text>
+              <Text style={styles.adminButtonText}>Feature Flags</Text>
+              <Text style={styles.actionArrow}>→</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate('SystemMonitoring')}
+            >
+              <Text style={styles.adminButtonIcon}>📈</Text>
+              <Text style={styles.adminButtonText}>System Monitoring</Text>
+              <Text style={styles.actionArrow}>→</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.adminButton}
+              onPress={() => navigation.navigate('AdminTasks')}
+            >
+              <Text style={styles.adminButtonIcon}>🗂️</Text>
+              <Text style={styles.adminButtonText}>Task Reviews</Text>
+              <Text style={styles.actionArrow}>→</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Account Actions */}
         <View style={styles.section}>

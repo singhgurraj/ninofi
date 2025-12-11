@@ -1,7 +1,9 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Alert,
+  AppState,
   Linking,
   SafeAreaView,
   ScrollView,
@@ -26,6 +28,9 @@ const ContractorDashboard = ({ navigation }) => {
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
   const [stripeStatus, setStripeStatus] = useState(null);
+  const [stripeStatusLoading, setStripeStatusLoading] = useState(true);
+  const [hasSeenConnected, setHasSeenConnected] = useState(false);
+  const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
   const [isConnectingStripe, setIsConnectingStripe] = useState(false);
   const stats = {
     earnings: 8450,
@@ -36,13 +41,19 @@ const ContractorDashboard = ({ navigation }) => {
     !!((stripeStatus?.accountId || user?.stripeAccountId) &&
     ((stripeStatus?.payoutsEnabled ?? user?.stripePayoutsEnabled) ||
       (stripeStatus?.chargesEnabled ?? user?.stripeChargesEnabled)));
+  const lastConnectedRef = useRef(isStripeConnected);
 
   const loadStripeStatus = useCallback(async () => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      setStripeStatusLoading(false);
+      return;
+    }
+    setStripeStatusLoading(true);
     const res = await fetchStripeStatus(user.id);
     if (res.success) {
       setStripeStatus(res.data);
     }
+    setStripeStatusLoading(false);
   }, [user?.id]);
 
   const handleConnectBank = useCallback(async () => {
@@ -77,12 +88,42 @@ const ContractorDashboard = ({ navigation }) => {
   }, [dispatch, user?.id]);
 
   const handleWalletPress = useCallback(() => {
-    if (!isStripeConnected) {
-      handleConnectBank();
-      return;
-    }
     navigation.navigate('Wallet');
-  }, [handleConnectBank, isStripeConnected, navigation]);
+  }, [navigation]);
+
+  useEffect(() => {
+    const loadSeenFlag = async () => {
+      try {
+        const value = await AsyncStorage.getItem('stripe_connected_seen');
+        if (value === 'true') {
+          setHasSeenConnected(true);
+        }
+      } catch (_err) {
+        // ignore
+      } finally {
+        setHasSeenLoaded(true);
+      }
+    };
+    loadSeenFlag();
+  }, []);
+
+  useEffect(() => {
+    if (!lastConnectedRef.current && isStripeConnected && hasSeenLoaded && !hasSeenConnected) {
+      Alert.alert('Success', 'Successfully connected bank');
+      setHasSeenConnected(true);
+      AsyncStorage.setItem('stripe_connected_seen', 'true').catch(() => {});
+    }
+    lastConnectedRef.current = isStripeConnected;
+  }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadStripeStatus();
+      }
+    });
+    return () => sub.remove();
+  }, [loadStripeStatus]);
 
   useFocusEffect(
     useCallback(() => {
@@ -160,78 +201,72 @@ const ContractorDashboard = ({ navigation }) => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <View style={styles.cardGrid}>
-            <TouchableOpacity 
-              style={[styles.actionCard, shadowCard]}
-              onPress={handleConnectBank}
-              disabled={isConnectingStripe}
-            >
-              <Text style={styles.actionIcon}>🏦</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
+            {!stripeStatusLoading && !isStripeConnected && (
+              <TouchableOpacity 
+                style={[styles.actionCard, shadowCard]}
+                onPress={handleConnectBank}
+                disabled={isConnectingStripe}
               >
-                Connect Bank
-              </Text>
-              <Text
-                style={styles.actionText}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.8}
-              >
-                {isConnectingStripe
-                  ? 'Opening…'
-                  : stripeStatus?.payoutsEnabled
-                  ? 'Ready for payouts'
-                  : 'Required for payouts'}
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.actionIcon}>🏦</Text>
+                <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  Connect Bank
+                </Text>
+                <Text style={styles.actionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {isConnectingStripe
+                    ? 'Opening…'
+                    : stripeStatus?.payoutsEnabled
+                    ? 'Ready for payouts'
+                    : 'Required for payouts'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('FindJobs')}
             >
               <Text style={styles.actionIcon}>🔍</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Find Jobs
               </Text>
               <Text style={styles.actionText}>Browse nearby gigs</Text>
             </TouchableOpacity>
+
+            {isStripeConnected && (
+              <TouchableOpacity 
+                style={[styles.actionCard, shadowCard]}
+                onPress={handleWalletPress}
+              >
+                <Text style={styles.actionIcon}>💰</Text>
+                <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  My Wallet
+                </Text>
+                <Text style={styles.actionText}>Balance & transfers</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Applications')}
             >
               <Text style={styles.actionIcon}>📄</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 My Applications
               </Text>
               <Text style={styles.actionText}>Manage/withdraw</Text>
             </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
-onPress={() => navigation.navigate('Portfolio')}
+              onPress={() => navigation.navigate('Portfolio')}
             >
               <Text style={styles.actionIcon}>🖼️</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Portfolio
               </Text>
               <Text style={styles.actionText}>Showcase work</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               disabled={!contractorProjects || contractorProjects.length === 0}
@@ -248,117 +283,73 @@ onPress={() => navigation.navigate('Portfolio')}
               }}
             >
               <Text style={styles.actionIcon}>📸</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Submit Work
               </Text>
               <Text style={styles.actionText}>Send milestone evidence</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.actionCard, shadowCard]}
-              onPress={handleWalletPress}
-            >
-              <Text style={styles.actionIcon}>💰</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
-                My Wallet
-              </Text>
-              <Text style={styles.actionText}>Balance & transfers</Text>
-            </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Compliance')}
             >
               <Text style={styles.actionIcon}>📑</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Compliance
               </Text>
               <Text style={styles.actionText}>Licenses & insurance</Text>
             </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('AuditLog')}
             >
               <Text style={styles.actionIcon}>🕑</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Activity
               </Text>
               <Text style={styles.actionText}>Recent actions</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('RegisterWorker')}
             >
               <Text style={styles.actionIcon}>➕</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Register Worker
               </Text>
               <Text style={styles.actionText}>Add employees to your team</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('ExpenseTracking')}
             >
               <Text style={styles.actionIcon}>💰</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Expenses
               </Text>
               <Text style={styles.actionText}>Track project costs</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('PayrollTracking')}
             >
               <Text style={styles.actionIcon}>⏱️</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Work Hours
               </Text>
               <Text style={styles.actionText}>Log time & earnings</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.actionCard, shadowCard]}
               onPress={() => navigation.navigate('Contracts')}
             >
               <Text style={styles.actionIcon}>📝</Text>
-              <Text
-                style={styles.actionTitle}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
-              >
+              <Text style={styles.actionTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
                 Contracts
               </Text>
               <Text style={styles.actionText}>View & sign docs</Text>

@@ -3,6 +3,7 @@ import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, Touchable
 import { useDispatch } from 'react-redux';
 import palette from '../../styles/palette';
 import { addWorkerAssignment } from '../../store/projectSlice';
+import { projectAPI } from '../../services/api';
 
 const AssignWorkScreen = ({ route, navigation }) => {
   const dispatch = useDispatch();
@@ -11,24 +12,36 @@ const AssignWorkScreen = ({ route, navigation }) => {
   const [dueDate, setDueDate] = useState('');
   const [pay, setPay] = useState('');
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!description.trim() || !dueDate.trim() || !pay.trim()) {
       Alert.alert('Missing info', 'Please fill description, date, and pay.');
       return;
     }
-    const id = `assign-${Date.now()}`;
-    dispatch(
-      addWorkerAssignment({
-        id,
-        projectId: project?.id,
+    try {
+      const res = await projectAPI.assignTask(project?.id, {
         workerId: worker?.id,
         description: description.trim(),
         dueDate: dueDate.trim(),
         pay: Number(pay) || 0,
-      })
-    );
-    Alert.alert('Saved', 'Work assigned to worker.');
-    navigation.goBack();
+        title: `Work for ${project?.title || 'Project'}`,
+      });
+      const id = res?.data?.taskId || `assign-${Date.now()}`;
+      dispatch(
+        addWorkerAssignment({
+          id,
+          projectId: project?.id,
+          workerId: worker?.id,
+          description: description.trim(),
+          dueDate: dueDate.trim(),
+          pay: Number(pay) || 0,
+          status: 'ASSIGNED',
+        })
+      );
+      Alert.alert('Saved', 'Work assigned to worker.');
+      navigation.goBack();
+    } catch (err) {
+      Alert.alert('Error', err?.response?.data?.message || 'Failed to assign work');
+    }
   };
 
   return (

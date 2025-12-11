@@ -172,6 +172,12 @@ export const projectAPI = {
   getAdminDisputes: async (headers) => api.get('/admin/disputes', { headers }),
   resolveDispute: async (id, payload, headers) =>
     api.post(`/admin/disputes/${id}/resolve`, payload, { headers }),
+  getAdminPendingTasks: async () => api.get('/admin/tasks/pending'),
+  postAdminTaskDecision: async (taskId, payload) => api.post(`/admin/tasks/${taskId}/decision`, payload),
+  submitGigWork: async (projectId, payload) => api.post(`/gigs/${projectId}/submit-work`, payload),
+  assignTask: async (projectId, payload) => api.post(`/projects/${projectId}/assign-task`, payload),
+  listWorkerTasks: async (workerId) => api.get(`/gigs/worker/${workerId}/tasks`),
+  submitTaskProof: async (taskId, payload) => api.post(`/tasks/${taskId}/submit`, payload),
   searchContractors: async (params) => api.get('/contractors/search', { params }),
   getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
 };
@@ -187,6 +193,9 @@ export const walletAPI = {
   getBalance: async () => api.get('/wallet/balance'),
   addTestFunds: async () => api.post('/wallet/add-test-funds'),
   addDemoFunds: async () => api.post('/wallet/add-demo-funds'),
+  getStatus: async () => api.get('/wallet/status'),
+  getTransactions: async () => api.get('/wallet/transactions'),
+  sendPayment: async (payload) => api.post('/wallet/send-payment', payload),
 };
 
 export const messageAPI = {
