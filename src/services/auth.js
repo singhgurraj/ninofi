@@ -9,6 +9,7 @@ import {
 } from '../store/authSlice';
 import { clearProjects } from '../store/projectSlice';
 import { authAPI, setAuthToken } from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const login = (email, password) => async (dispatch) => {
   try {
@@ -44,12 +45,14 @@ export const logout = () => async (dispatch) => {
     dispatch(clearProjects());
     dispatch(logoutAction());
     setAuthToken(null);
+    await AsyncStorage.removeItem('persist:auth');
     return { success: true };
   } catch (error) {
     console.error('Logout error:', error);
     dispatch(clearProjects());
     dispatch(logoutAction()); // Logout locally even if API call fails
     setAuthToken(null);
+    await AsyncStorage.removeItem('persist:auth');
     return { success: true };
   }
 };

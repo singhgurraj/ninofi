@@ -1,5 +1,13 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+const isAdminFromUser = (user) => {
+  if (!user) return false;
+  if (user.isAdmin) return true;
+  if ((user.userRole || '').toUpperCase() === 'ADMIN') return true;
+  if ((user.role || '').toUpperCase() === 'ADMIN') return true;
+  return false;
+};
+
 const initialState = {
   user: null,
   token: null,
@@ -17,6 +25,7 @@ const authSlice = createSlice({
     loginStart: (state) => {
       state.isLoading = true;
       state.error = null;
+      state.isAdmin = false;
     },
     loginSuccess: (state, action) => {
       state.isLoading = false;
@@ -24,9 +33,7 @@ const authSlice = createSlice({
       state.user = action.payload.user;
       state.token = action.payload.token;
       state.role = action.payload.user.role;
-      state.isAdmin =
-        !!action.payload.user?.isAdmin ||
-        (action.payload.user?.userRole || '').toUpperCase() === 'ADMIN';
+      state.isAdmin = isAdminFromUser(action.payload.user);
       state.error = null;
     },
     loginFailure: (state, action) => {
@@ -43,9 +50,7 @@ const authSlice = createSlice({
       state.user = action.payload.user;
       state.token = action.payload.token;
       state.role = action.payload.user.role;
-      state.isAdmin =
-        !!action.payload.user?.isAdmin ||
-        (action.payload.user?.userRole || '').toUpperCase() === 'ADMIN';
+      state.isAdmin = isAdminFromUser(action.payload.user);
       state.error = null;
     },
     registerFailure: (state, action) => {
@@ -66,6 +71,16 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
+  },
+  extraReducers: (builder) => {
+    builder.addCase('persist/REHYDRATE', (state, action) => {
+      const incoming = action.payload;
+      if (incoming?.user || incoming?.token) {
+        state.isAdmin = isAdminFromUser(incoming.user);
+      } else {
+        state.isAdmin = false;
+      }
+    });
   },
 });
 

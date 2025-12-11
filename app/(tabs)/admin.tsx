@@ -10,18 +10,19 @@ const Stack = createStackNavigator();
 
 export default function AdminTab() {
   const auth = useSelector((state: any) => state.auth || {});
+  const isAuthenticated = !!auth.isAuthenticated;
   const isAdmin =
     auth.isAdmin ||
     auth.user?.isAdmin ||
     (auth.user?.userRole || '').toUpperCase() === 'ADMIN';
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (!isAuthenticated || !isAdmin) {
       router.replace('/(tabs)');
     }
-  }, [isAdmin]);
+  }, [isAdmin, isAuthenticated]);
 
-  if (!isAdmin) return null;
+  if (!isAuthenticated || !isAdmin) return null;
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
