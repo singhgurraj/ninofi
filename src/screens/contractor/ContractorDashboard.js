@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import VerificationBadge from '../../components/VerificationBadge';
-import CheckInButton from '../../components/CheckInButton';
 import { loadNotifications } from '../../services/notifications';
 import { loadContractorProjects, loadOpenProjects } from '../../services/projects';
 import { createConnectAccountLink, fetchStripeStatus } from '../../services/payments';
@@ -391,13 +390,6 @@ const ContractorDashboard = ({ navigation }) => {
                   <Text style={styles.projectMeta}>
                     Budget: ${Number(project.estimatedBudget || 0).toLocaleString()}
                   </Text>
-                  <View style={styles.checkInContainer}>
-                    <CheckInButton
-                      projectId={project.id}
-                      userId={user?.id}
-                      userType="contractor"
-                    />
-                  </View>
                 </TouchableOpacity>
               ))}
         </View>
@@ -741,9 +733,6 @@ const styles = StyleSheet.create({
   projectMeta: {
     color: palette.muted,
     fontSize: 13,
-  },
-  checkInContainer: {
-    marginTop: 10,
   },
   progressBar: {
     height: 6,

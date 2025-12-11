@@ -5,6 +5,7 @@ import palette from '../../styles/palette';
 import { projectAPI } from '../../services/api';
 import { useSelector, useDispatch } from 'react-redux';
 import { addWorkerAssignment, addWorkerProject, removeWorkerProject, updateWorkerAssignment } from '../../store/projectSlice';
+import CheckInButton from '../../components/CheckInButton';
 
 const WorkerProjectScreen = ({ route, navigation }) => {
   const { projectId } = route.params || {};
@@ -109,6 +110,10 @@ const WorkerProjectScreen = ({ route, navigation }) => {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{project?.title || 'Project'}</Text>
         <View style={styles.card}>
+          <Text style={styles.cardTitle}>GPS Check-In</Text>
+          <CheckInButton projectId={projectId} userId={user?.id} userType="worker" />
+        </View>
+        <View style={styles.card}>
           <Text style={styles.cardTitle}>Description</Text>
           <Text style={styles.body}>{project?.description || 'No description provided.'}</Text>
         </View>
@@ -136,6 +141,9 @@ const WorkerProjectScreen = ({ route, navigation }) => {
                   <Text style={styles.contractStatus}>Pay ${Number(a.pay || 0).toLocaleString()}</Text>
                 </View>
                 <Text style={styles.contractMeta}>Due: {a.dueDate || 'TBD'}</Text>
+                <View style={styles.checkInContainer}>
+                  <CheckInButton projectId={projectId} userId={user?.id} userType="worker" />
+                </View>
                 <TouchableOpacity style={styles.submitButton} onPress={() => handleSubmit(a)}>
                   <Text style={styles.submitText}>Submit Work</Text>
                 </TouchableOpacity>
@@ -214,6 +222,9 @@ const styles = StyleSheet.create({
   contractHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   contractTitle: { fontWeight: '700', color: palette.text, flex: 1 },
   contractStatus: { color: palette.muted, fontWeight: '700', marginLeft: 8 },
+  checkInContainer: {
+    marginTop: 6,
+  },
   submitButton: {
     marginTop: 8,
     backgroundColor: palette.primary,

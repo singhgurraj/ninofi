@@ -7032,6 +7032,8 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
           .json({ success: false, message: 'Project has no job site coordinates set' });
       }
       const allowedRadius = Number(projectRow.check_in_radius) || 200;
+      const toleranceMeters = 100; // buffer to account for GPS drift/geocoding offsets
+      const threshold = allowedRadius + toleranceMeters;
 
       const distance = getDistance(
         { latitude: lat, longitude: lon },
@@ -7040,12 +7042,14 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
       if (!Number.isFinite(distance)) {
         return res.status(400).json({ success: false, message: 'Could not calculate distance' });
       }
-      if (distance > allowedRadius) {
+      if (distance > threshold) {
         return res.status(403).json({
           success: false,
           message: 'User is outside the allowed check-in radius',
           distance,
           allowedRadius,
+          threshold,
+          tolerance: toleranceMeters,
         });
       }
 
@@ -7066,6 +7070,8 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         checkInTime: insertResult.rows?.[0]?.check_in_time || new Date().toISOString(),
         distance,
         allowedRadius,
+        threshold,
+        tolerance: toleranceMeters,
       });
     } catch (error) {
       logError('check-in:create:error', { body: req.body }, error);
