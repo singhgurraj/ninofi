@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Image } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { applyToProject, leaveProject } from '../../services/projects';
 import palette from '../../styles/palette';
