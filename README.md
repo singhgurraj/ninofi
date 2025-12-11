@@ -1,19 +1,18 @@
 # NINOFI
 
-**Milestone-based escrow, contracts, and GPS check-ins for home renovation.**
+**Milestone-based escrow and contracts for home renovation.**
 
-NINOFI is a mobile-first platform for homeowners, contractors, and workers. It combines milestone tracking, digital contracts, GPS check-ins, messaging, and payout readiness to keep projects transparent and on schedule.
+NINOFI is a mobile-first platform for homeowners, contractors, and workers. It combines milestone tracking, digital contracts, messaging, and payout readiness to keep projects transparent and on schedule.
 
 ---
 
 ## Highlights
 - 🔒 **Escrow-ready milestones**: Create, fund (UI), submit, and approve milestones.
--, 📍 **GPS check-in**: Workers verify on-site presence against stored job-site coordinates.
--, 📸 **Evidence capture**: Photo uploads with submissions.
--, 📝 **Contracts**: Create, view, sign, and manage per project.
--, 💬 **Messaging & notifications**: In-app chat and alerts.
--, 👤 **Role-specific dashboards**: Homeowner, contractor, and worker flows.
--, 💰 **Stripe Connect (contractors)**: Required for payout-related flows.
+- 📸 **Evidence capture**: Photo uploads with submissions.
+- 📝 **Contracts**: Create, view, sign, and manage per project.
+- 💬 **Messaging & notifications**: In-app chat and alerts.
+- 👤 **Role-specific dashboards**: Homeowner, contractor, and worker flows.
+- 💰 **Stripe Connect (contractors)**: Required for payout-related flows.
 
 ---
 
@@ -37,15 +36,20 @@ NINOFI is a mobile-first platform for homeowners, contractors, and workers. It c
 ## Project Structure
 ```
 ninofi/
-├── app/                     # Expo Router entry (tabs + modal)
+├── app/                          # Expo Router entry (tabs + modal)
 ├── src/
-│   ├── navigation/          # AppNavigator (React Navigation stack)
-│   ├── screens/             # auth / homeowner / contractor / worker / shared
-│   ├── components/          # UI bits + CheckInButton
-│   ├── services/            # API clients (axios), feature services
-│   ├── store/               # Redux slices (auth, projects, invoices, notifications)
-│   └── styles/              # palette, theme
-├── server/                  # Express API (Railway-ready)
+│   ├── navigation/               # AppNavigator (React Navigation stack)
+│   ├── screens/
+│   │   ├── auth/                 # Welcome, login, register, role selection
+│   │   ├── homeowner/            # Dashboards, project create/review/fund
+│   │   ├── contractor/           # Dashboards, find/apply, submit milestones, contracts
+│   │   ├── worker/               # Gigs, assignments, submissions
+│   │   └── shared/               # Chat, profile, wallet, notifications, audits
+│   ├── components/               # Shared UI components
+│   ├── services/                 # API clients (axios), feature service modules
+│   ├── store/                    # Redux slices (auth, projects, invoices, notifications)
+│   └── styles/                   # palette, theme
+├── server/                       # Express API (Railway-ready)
 ├── package.json
 └── README.md
 ```
@@ -78,7 +82,7 @@ Set `EXPO_PUBLIC_API_URL` to your API (e.g., `http://localhost:8081/api` or the 
 
 ## Role Flows
 **Homeowner**
-- Create project (3-step wizard), verify job-site location (geocode or current location), set milestones.
+- Create project (3-step wizard), set milestones.
 - Fund UI, track progress, review/approve submitted milestones.
 - Manage contracts and messaging.
 
@@ -89,16 +93,7 @@ Set `EXPO_PUBLIC_API_URL` to your API (e.g., `http://localhost:8081/api` or the 
 
 **Worker**
 - View assigned gigs/projects.
-- GPS check-in at job site (worker-only entry point is inside the project screen).
 - Submit work proof; track pending/approved tasks.
-
----
-
-## GPS & Check-Ins
-- Projects store `job_site_latitude`, `job_site_longitude`, and `check_in_radius` (default 200m + tolerance).
-- Worker check-ins hit `/api/check-in` and `/api/check-in-status`.
-- Check-in UI: `src/components/CheckInButton.js` (base URL from `EXPO_PUBLIC_API_URL`).
-- Worker-facing check-in lives inside the worker project screen; list-level check-ins were removed.
 
 ---
 
@@ -108,12 +103,13 @@ Set `EXPO_PUBLIC_API_URL` to your API (e.g., `http://localhost:8081/api` or the 
 
 ---
 
-## Current Status
-- Frontend: Auth, role dashboards, project creation with geocode/current-location capture, milestone submission/review UI, contracts, notifications, worker check-in flow.
-- Backend: Express + Postgres on Railway; project create/update persists job-site coords; check-ins stored with distance validation; Stripe Connect onboarding supported for contractors.
+## Contributing
+1. Fork/branch from `main`.
+2. Install deps: `npm install` (and `cd server && npm install` for API).
+3. Set `EXPO_PUBLIC_API_URL` for the Expo app; set DB/Stripe env vars for the server.
+4. Run `npm start` (app) and `npm start` in `server/` (API) for local testing.
+5. Submit PRs with a clear summary and test notes.
 
 ---
 
-## Future Improvements
-- Wire worker submissions to auto-flag milestones as `submitted` (optional).
-- Harden payout/release flows and add push notifications/real-time messaging.
+Built with ❤️ by Team NINOFI.
