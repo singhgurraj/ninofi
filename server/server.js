@@ -7085,8 +7085,9 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
           .status(400)
           .json({ success: false, message: 'Project has no job site coordinates set' });
       }
-      const allowedRadius = Number(projectRow.check_in_radius) || 200;
-      const toleranceMeters = 100; // buffer to account for GPS drift/geocoding offsets
+      const HARD_MAX_RADIUS_METERS = 160; // ~0.1 miles
+      const allowedRadius = Math.min(Number(projectRow.check_in_radius) || 200, HARD_MAX_RADIUS_METERS);
+      const toleranceMeters = 30; // small buffer for GPS drift
       const threshold = allowedRadius + toleranceMeters;
 
       const distance = getDistance(

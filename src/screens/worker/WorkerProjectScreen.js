@@ -113,6 +113,10 @@ const WorkerProjectScreen = ({ route, navigation }) => {
           <CheckInButton projectId={projectId} userId={user?.id} userType="worker" />
         </View>
         <View style={styles.card}>
+          <Text style={styles.cardTitle}>Project Address</Text>
+          <Text style={styles.body}>{project?.address || 'No address provided.'}</Text>
+        </View>
+        <View style={styles.card}>
           <Text style={styles.cardTitle}>Description</Text>
           <Text style={styles.body}>{project?.description || 'No description provided.'}</Text>
         </View>
