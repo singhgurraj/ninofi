@@ -4,7 +4,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import palette from '../../styles/palette';
 import { projectAPI } from '../../services/api';
-import { addWorkerAssignment, addWorkerProject, removeWorkerProject } from '../../store/projectSlice';
+import {
+  addWorkerAssignment,
+  addWorkerProject,
+  removeWorkerAssignmentsByProject,
+  removeWorkerProject,
+} from '../../store/projectSlice';
 
 const WorkerGigsScreen = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -23,20 +28,21 @@ const WorkerGigsScreen = ({ navigation }) => {
         new Set(accepted.map((a) => a.project_id || a.projectId).filter(Boolean))
       );
 
-      const invalid = new Set();
-      await Promise.all(
-        acceptedIds.map(async (pid) => {
-          try {
-            await projectAPI.getProjectDetails(pid);
-          } catch (err) {
-            const code = err?.response?.status;
-            if (code === 404) {
-              invalid.add(pid);
-              dispatch(removeWorkerProject(pid));
-            }
+    const invalid = new Set();
+    await Promise.all(
+      acceptedIds.map(async (pid) => {
+        try {
+          await projectAPI.getProjectDetails(pid);
+        } catch (err) {
+          const code = err?.response?.status;
+          if (code === 404) {
+            invalid.add(pid);
+            dispatch(removeWorkerProject(pid));
+            dispatch(removeWorkerAssignmentsByProject(pid));
           }
-        })
-      );
+        }
+      })
+    );
 
       const filtered = invalid.size
         ? fetched.filter((a) => !invalid.has(a.project_id || a.projectId))
@@ -80,6 +86,10 @@ const WorkerGigsScreen = ({ navigation }) => {
             );
           }
         });
+        const activeProjectIds = new Set(tasks.map((t) => t.projectId).filter(Boolean));
+        (workerAssignments || [])
+          .filter((a) => a.workerId === user?.id && a.projectId && !activeProjectIds.has(a.projectId))
+          .forEach((a) => dispatch(removeWorkerAssignmentsByProject(a.projectId)));
       } catch (err) {
         console.log('worker:tasks:error', err?.response?.data || err.message);
       }
@@ -138,6 +148,7 @@ const WorkerGigsScreen = ({ navigation }) => {
       const status = err?.response?.status;
       if (status === 404) {
         dispatch(removeWorkerProject(projId));
+        dispatch(removeWorkerAssignmentsByProject(projId));
         setApps((prev) => prev.filter((a) => (a.project_id || a.projectId) !== projId));
         loadApplications();
         Alert.alert('Project removed', 'This project is no longer available.');

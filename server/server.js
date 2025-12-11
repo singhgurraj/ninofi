@@ -4021,7 +4021,8 @@ app.delete('/api/projects/:projectId', async (req, res) => {
     await client.query('BEGIN');
     // Remove old notifications tied to this project
     await client.query('DELETE FROM notifications WHERE data->>\'projectId\' = $1', [projectId]);
-    // Delete project (dependent tables assumed ON DELETE CASCADE)
+    // Delete dependent tasks (no FK cascade) then project
+    await client.query('DELETE FROM tasks WHERE project_id = $1', [projectId]);
     await client.query('DELETE FROM projects WHERE id = $1', [projectId]);
 
     // Notify everyone involved (except the actor)
