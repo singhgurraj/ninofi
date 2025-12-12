@@ -166,7 +166,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
       const asset = result.assets?.[0];
       if (!asset) return;
 
-      const dataUri = asset.base64 ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}` : '';
+      const dataUri = asset.base64
+        ? `data:${asset.mimeType || asset.type || 'image/jpeg'};base64,${asset.base64}`
+        : '';
       setAttachments((prev) => {
         const next = [...prev];
         next[index] = {
@@ -221,9 +223,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
         position: milestone.position ?? index,
       })),
       media: attachments
-        .filter((a) => a.url)
+        .filter((a) => a.url || a.dataUri)
         .map((a) => ({
-          url: a.url,
+          url: a.dataUri || a.url,
           label: a.label || '',
         })),
     };
