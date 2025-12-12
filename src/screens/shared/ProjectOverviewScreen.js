@@ -520,6 +520,31 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
           )}
         </View>
 
+        {(project.media?.length || 0) > 0 && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Project Media</Text>
+              {project.assignedContractor?.id ? (
+                <Text style={styles.badgeSmall}>Visible to contractor</Text>
+              ) : null}
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.mediaRow}
+            >
+              {project.media.map((m, idx) => (
+                <Image
+                  key={`${m.id || m.url || 'media'}-${idx}`}
+                  source={{ uri: m.url }}
+                  style={styles.mediaThumb}
+                  resizeMode="cover"
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Milestones</Text>
@@ -1174,6 +1199,25 @@ const styles = StyleSheet.create({
     height: 160,
     borderRadius: 12,
     marginTop: 8,
+  },
+  mediaRow: { gap: 10, paddingVertical: 6 },
+  mediaThumb: {
+    width: 180,
+    height: 140,
+    borderRadius: 12,
+    backgroundColor: '#F2F4F7',
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginRight: 10,
+  },
+  badgeSmall: {
+    backgroundColor: '#EEF2FF',
+    color: palette.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    fontWeight: '700',
+    fontSize: 12,
   },
   submissionActions: {
     flexDirection: 'row',
