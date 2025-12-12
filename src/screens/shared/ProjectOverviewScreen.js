@@ -10,6 +10,7 @@ import {
   signGeneratedContract,
   updateGeneratedContract,
 } from '../../services/contracts';
+import { projectAPI } from '../../services/api';
 import palette from '../../styles/palette';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
@@ -32,6 +33,8 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const [editFields, setEditFields] = useState({ description: '', contractText: '' });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [originalEditFields, setOriginalEditFields] = useState({ description: '', contractText: '' });
+  const [checkIns, setCheckIns] = useState([]);
+  const [checkInsLoading, setCheckInsLoading] = useState(false);
 
   if (!project) {
     return (
@@ -104,6 +107,7 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   useFocusEffect(
     useCallback(() => {
       loadContracts();
+      loadCheckIns();
     }, [loadContracts])
   );
 
@@ -212,6 +216,58 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     }
   };
 
+  const loadCheckIns = useCallback(async () => {
+    if (!project?.id || role !== 'contractor') return;
+    setCheckInsLoading(true);
+    try {
+      const res = await projectAPI.listCheckIns(project.id);
+      setCheckIns(res.data || []);
+    } catch (err) {
+      // quietly ignore
+    } finally {
+      setCheckInsLoading(false);
+    }
+  }, [project?.id, role]);
+
+  const formatDuration = (seconds) => {
+    const total = Math.max(0, Math.floor(seconds || 0));
+    const hrs = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    return `${hrs}h ${mins}m`;
+  };
+
+  const groupedCheckIns = useMemo(() => {
+    const byWorker = {};
+    checkIns.forEach((c) => {
+      const key = c.userId || c.userName || 'Unknown';
+      const durationSeconds =
+        c.durationSeconds ??
+        (c.checkInTime && c.checkOutTime
+          ? Math.max(
+              0,
+              Math.floor(
+                (new Date(c.checkOutTime).getTime() - new Date(c.checkInTime).getTime()) / 1000
+              )
+            )
+          : 0);
+      if (!byWorker[key]) {
+        byWorker[key] = {
+          userName: c.userName || 'Unknown',
+          totalSeconds: 0,
+          entries: [],
+        };
+      }
+      byWorker[key].totalSeconds += durationSeconds || 0;
+      byWorker[key].entries.push({
+        id: c.id,
+        checkInTime: c.checkInTime,
+        checkOutTime: c.checkOutTime,
+        durationSeconds,
+      });
+    });
+    return Object.values(byWorker);
+  }, [checkIns]);
+
   const startEditContract = async (contract) => {
     let contractToEdit = contract;
     if (!contract.contractText) {
@@ -286,6 +342,45 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
             <Text style={styles.typeText}>{project.projectType || 'Project'}</Text>
           </View>
         </View>
+
+        {isContractor && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Worker Check-ins</Text>
+              <Text style={styles.cardMeta}>
+                {checkInsLoading ? 'Loading…' : `${checkIns.length} entries`}
+              </Text>
+            </View>
+            {checkInsLoading && <Text style={styles.muted}>Loading check-ins…</Text>}
+            {!checkInsLoading && groupedCheckIns.length === 0 && (
+              <Text style={styles.muted}>No check-ins recorded yet.</Text>
+            )}
+            {!checkInsLoading &&
+              groupedCheckIns.map((worker) => (
+                <View key={worker.userName} style={styles.checkInGroup}>
+                  <View style={styles.checkInGroupHeader}>
+                    <Text style={styles.checkInName}>{worker.userName}</Text>
+                    <Text style={styles.checkInHours}>{formatDuration(worker.totalSeconds)}</Text>
+                  </View>
+                  {worker.entries.slice(0, 3).map((entry) => (
+                    <View key={entry.id} style={styles.checkInRow}>
+                      <Text style={styles.checkInTime}>
+                        {entry.checkInTime ? new Date(entry.checkInTime).toLocaleString() : '–'}
+                      </Text>
+                      <Text style={styles.checkInDuration}>
+                        {entry.durationSeconds ? formatDuration(entry.durationSeconds) : 'In progress'}
+                      </Text>
+                    </View>
+                  ))}
+                  {worker.entries.length > 3 && (
+                    <Text style={styles.mutedSmall}>
+                      +{worker.entries.length - 3} more entries
+                    </Text>
+                  )}
+                </View>
+              ))}
+          </View>
+        )}
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Description</Text>
@@ -863,6 +958,46 @@ const styles = StyleSheet.create({
   signatureButtons: { flexDirection: 'row', gap: 10, marginTop: 8 },
   back: { fontSize: 20, color: palette.text },
   deleteLink: { color: '#dc2626', fontWeight: '700' },
+  checkInGroup: {
+    marginTop: 10,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+  },
+  checkInGroupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  checkInName: {
+    fontWeight: '800',
+    color: palette.text,
+    fontSize: 15,
+  },
+  checkInHours: {
+    fontWeight: '800',
+    color: palette.primary,
+  },
+  checkInRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  checkInTime: {
+    color: palette.text,
+    flex: 1,
+    marginRight: 8,
+  },
+  checkInDuration: {
+    color: palette.muted,
+    fontWeight: '700',
+  },
+  mutedSmall: {
+    color: palette.muted,
+    fontSize: 12,
+  },
 });
 
 export default ProjectOverviewScreen;

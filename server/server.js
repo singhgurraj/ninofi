@@ -7345,6 +7345,7 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         `
           SELECT
             ci.id,
+            ci.user_id,
             ci.user_type,
             ci.check_in_time,
             ci.check_out_time,
@@ -7363,6 +7364,7 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
 
       const rows = result.rows.map((row) => ({
         id: row.id,
+        userId: row.user_id || null,
         userName: row.user_name || 'Unknown',
         userType: row.user_type || '',
         checkInTime:

@@ -179,6 +179,7 @@ export const projectAPI = {
   submitTaskProof: async (taskId, payload) => api.post(`/tasks/${taskId}/submit`, payload),
   searchContractors: async (params) => api.get('/contractors/search', { params }),
   getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
+  listCheckIns: async (projectId) => api.get(`/check-ins/${projectId}`),
 };
 
 export const paymentsAPI = {
