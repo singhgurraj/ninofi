@@ -1223,14 +1223,33 @@ const toAbsoluteUrl = (raw = '') => {
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^data:/i.test(raw)) return raw;
   if (/^blob:/i.test(raw)) return raw;
-  const base =
-    (process.env.RAILWAY_STATIC_URL &&
-      process.env.RAILWAY_STATIC_URL.startsWith('http') &&
-      process.env.RAILWAY_STATIC_URL) ||
-    (process.env.EXPO_PUBLIC_API_URL &&
-      process.env.EXPO_PUBLIC_API_URL.replace(/\/api$/, ''));
-  if (!base) return raw;
-  const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
+
+  const pickBase = () => {
+    const candidates = [
+      process.env.PUBLIC_MEDIA_BASE,
+      process.env.RAILWAY_STATIC_URL,
+      process.env.RAILWAY_PUBLIC_DOMAIN,
+      process.env.EXPO_PUBLIC_API_URL,
+      process.env.API_BASE_URL,
+    ].filter(Boolean);
+
+    let base = candidates.find((c) => !!c);
+    if (!base && process.env.PORT) {
+      base = `http://localhost:${process.env.PORT}`;
+    }
+    if (!base) {
+      base = 'https://ninofi-production.up.railway.app/api';
+    }
+
+    // Ensure protocol and drop trailing /api for public asset serving.
+    if (!/^https?:\/\//i.test(base)) {
+      base = `https://${base}`;
+    }
+    const withoutApi = base.replace(/\/api$/i, '');
+    return withoutApi.endsWith('/') ? withoutApi.slice(0, -1) : withoutApi;
+  };
+
+  const prefix = pickBase();
   const path = raw.startsWith('/') ? raw : `/${raw}`;
   return `${prefix}${path}`;
 };

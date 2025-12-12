@@ -18,8 +18,25 @@ const resolveBaseUrl = () => {
   return 'https://ninofi-production.up.railway.app/api';
 };
 
-const API_BASE_URL = resolveBaseUrl();
+export const API_BASE_URL = resolveBaseUrl();
 console.log('[api] base URL', API_BASE_URL);
+
+export const getPublicBaseUrl = () => {
+  const root = (API_BASE_URL || '').replace(/\/api$/i, '');
+  if (!root) return '';
+  return root.endsWith('/') ? root.slice(0, -1) : root;
+};
+
+export const resolveAbsoluteUri = (uri) => {
+  if (!uri) return uri;
+  if (/^https?:\/\//i.test(uri) || /^data:/i.test(uri) || /^blob:/i.test(uri)) {
+    return uri;
+  }
+  const base = getPublicBaseUrl();
+  if (!base) return uri;
+  const path = uri.startsWith('/') ? uri : `/${uri}`;
+  return `${base}${path}`;
+};
 
 // Create axios instance
 const api = axios.create({

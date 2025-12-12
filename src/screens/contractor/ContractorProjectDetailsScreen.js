@@ -115,14 +115,16 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Media</Text>
           {project.media && project.media.length ? (
-            project.media.map((m, idx) => (
-              <Image
-                key={`${m.id || m.url || 'media'}-${idx}`}
-                source={{ uri: m.url }}
-                style={styles.mediaImage}
-                resizeMode="cover"
-              />
-            ))
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
+              {project.media.map((m, idx) => (
+                <Image
+                  key={`${m.id || m.url || 'media'}-${idx}`}
+                  source={{ uri: m.url }}
+                  style={styles.mediaImage}
+                  resizeMode="cover"
+                />
+              ))}
+            </ScrollView>
           ) : (
             <Text style={styles.muted}>No media added.</Text>
           )}
@@ -352,6 +354,7 @@ const styles = StyleSheet.create({
   },
   leaveText: { color: '#B91C1C', fontWeight: '800' },
   leaveDisabled: { opacity: 0.7 },
+  mediaRow: { flexDirection: 'row', gap: 10 },
 });
 
 export default ContractorProjectDetailsScreen;

@@ -60,12 +60,11 @@ const CreateProjectScreen = ({ navigation, route }) => {
   const [attachments, setAttachments] = useState(
     existingProject?.media?.length
       ? existingProject.media.map((m) => ({
-          url: m.url || '',
+          uri: m.url || '',
+          dataUri: (m.url || '').startsWith('data:') ? m.url : '',
           label: m.label || '',
-          localUri: '',
-          dataUri: '',
         }))
-      : [{ url: '', label: '', localUri: '', dataUri: '' }]
+      : []
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -102,7 +101,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
   };
 
   const addAttachment = () => {
-    setAttachments((prev) => [...prev, { url: '', label: '' }]);
+    setAttachments((prev) => [...prev, { uri: '', dataUri: '', label: '' }]);
   };
 
   const updateAttachment = (index, field, value) => {
@@ -114,7 +113,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
   };
 
   const removeAttachment = (index) => {
-    setAttachments((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleContinue = () => {
@@ -148,19 +147,34 @@ const CreateProjectScreen = ({ navigation, route }) => {
     }
   }, [existingProject]);
 
-  const pickAttachment = async (index) => {
+  const pickAttachment = async (index = attachments.length, mode = 'library') => {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        Alert.alert('Permission required', 'Please grant photo access to attach images.');
-        return;
+      if (mode === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (perm.status !== 'granted') {
+          Alert.alert('Permission required', 'Please grant camera access to attach images.');
+          return;
+        }
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') {
+          Alert.alert('Permission required', 'Please grant photo access to attach images.');
+          return;
+        }
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        base64: true,
-        quality: 0.7,
-      });
+      const result =
+        mode === 'camera'
+          ? await ImagePicker.launchCameraAsync({
+              base64: true,
+              quality: 0.7,
+              allowsMultipleSelection: false,
+            })
+          : await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              base64: true,
+              quality: 0.7,
+            });
 
       if (result.canceled) return;
       const asset = result.assets?.[0];
@@ -171,12 +185,19 @@ const CreateProjectScreen = ({ navigation, route }) => {
         : '';
       setAttachments((prev) => {
         const next = [...prev];
-        next[index] = {
-          ...next[index],
-          localUri: asset.uri || '',
-          dataUri: dataUri || '',
-          url: dataUri || asset.uri || next[index].url,
-        };
+        if (index >= next.length) {
+          next.push({
+            uri: asset.uri || '',
+            dataUri: dataUri || '',
+            label: '',
+          });
+        } else {
+          next[index] = {
+            ...next[index],
+            uri: asset.uri || '',
+            dataUri: dataUri || '',
+          };
+        }
         return next;
       });
     } catch (err) {
@@ -223,9 +244,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
         position: milestone.position ?? index,
       })),
       media: attachments
-        .filter((a) => a.dataUri || a.localUri || a.url)
+        .filter((a) => a.dataUri || a.uri)
         .map((a) => ({
-          url: a.dataUri || a.url || a.localUri,
+          url: a.dataUri || a.uri,
           label: a.label || '',
         })),
     };
@@ -487,44 +508,39 @@ const CreateProjectScreen = ({ navigation, route }) => {
           </Text>
         </View>
 
-        {attachments.map((attachment, index) => (
-          <View key={`att-${index}`} style={styles.milestoneCard}>
-            <View style={styles.milestoneHeader}>
-              <Text style={styles.milestoneTitle}>Attachment {index + 1}</Text>
-              {attachments.length > 1 && (
-                <TouchableOpacity onPress={() => removeAttachment(index)}>
-                  <Text style={styles.removeButton}>✕</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <TouchableOpacity
-              style={styles.pickButton}
-              onPress={() => pickAttachment(index)}
-            >
-              <Text style={styles.pickButtonText}>
-                {attachment.localUri || attachment.dataUri || attachment.url
-                  ? 'Change Image'
-                  : 'Pick from Library'}
-              </Text>
-            </TouchableOpacity>
-            {(attachment.localUri || attachment.dataUri || attachment.url) ? (
+        <View style={styles.photoGrid}>
+          {attachments.map((attachment, index) => (
+            <View key={`att-${index}`} style={styles.photoTile}>
               <Image
-                source={{ uri: attachment.localUri || attachment.dataUri || attachment.url }}
-                style={styles.preview}
+                source={{ uri: attachment.dataUri || attachment.uri }}
+                style={styles.photo}
               />
-            ) : null}
-            <TextInput
-              style={styles.input}
-              placeholder="Label (optional)"
-              value={attachment.label}
-              onChangeText={(value) => updateAttachment(index, 'label', value)}
-            />
-          </View>
-        ))}
+              <TouchableOpacity style={styles.removePhoto} onPress={() => removeAttachment(index)}>
+                <Text style={styles.removePhotoText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
 
-        <TouchableOpacity style={styles.addButton} onPress={addAttachment}>
-          <Text style={styles.addButtonText}>+ Add Attachment</Text>
-        </TouchableOpacity>
+          {attachments.length < 6 && (
+            <>
+              <TouchableOpacity
+                style={styles.addPhotoButton}
+                onPress={() => pickAttachment(attachments.length, 'camera')}
+              >
+                <Text style={styles.addPhotoIcon}>📷</Text>
+                <Text style={styles.addPhotoText}>Take Photo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.addPhotoButton}
+                onPress={() => pickAttachment(attachments.length, 'library')}
+              >
+                <Text style={styles.addPhotoIcon}>🖼️</Text>
+                <Text style={styles.addPhotoText}>Gallery</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </View>
     );
   };
@@ -943,6 +959,116 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: '#B91C1C',
     fontWeight: '800',
+  },
+  attachmentRow: {
+    marginTop: 8,
+    paddingVertical: 4,
+    gap: 10,
+  },
+  attachmentCard: {
+    width: 180,
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginRight: 10,
+  },
+  attachmentRemove: {
+    alignSelf: 'flex-end',
+  },
+  previewPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FC',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  addAttachmentCard: {
+    width: 120,
+    height: 140,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: palette.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+  },
+  pickRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  mediaPicker: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderStyle: 'dashed',
+  },
+  mediaPickerIcon: { fontSize: 20, marginBottom: 6 },
+  mediaPickerText: { color: palette.text, fontWeight: '700' },
+  cardPickRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  photoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 10,
+  },
+  photoTile: {
+    width: '47%',
+    aspectRatio: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  photo: {
+    width: '100%',
+    height: '100%',
+  },
+  removePhoto: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  removePhotoText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  addPhotoButton: {
+    width: '47%',
+    aspectRatio: 1,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    padding: 10,
+  },
+  addPhotoIcon: {
+    fontSize: 24,
+    marginBottom: 6,
+  },
+  addPhotoText: {
+    color: palette.text,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
 
