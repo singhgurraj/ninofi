@@ -116,6 +116,30 @@ const CreateProjectScreen = ({ navigation, route }) => {
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (existingProject) {
+        setMilestones(normalizeMilestones(existingProject.milestones));
+        setAttachments(normalizeAttachments(existingProject.media));
+      }
+      return undefined;
+    }, [existingProject])
+  );
+
+  useEffect(() => {
+    const normalized = normalizeMilestones(milestones);
+    if (!milestonesEqual(milestones, normalized)) {
+      setMilestones(normalized);
+    }
+  }, [milestones]);
+
+  useEffect(() => {
+    const normalized = normalizeAttachments(attachments);
+    if (!attachmentsEqual(attachments, normalized)) {
+      setAttachments(normalizeAttachments(attachments));
+    }
+  }, [attachments]);
+
   const projectTypes = [
     { id: 'kitchen', label: 'Kitchen', icon: '🍳' },
     { id: 'bathroom', label: 'Bathroom', icon: '🚿' },
@@ -1158,27 +1182,3 @@ const styles = StyleSheet.create({
 });
 
 export default CreateProjectScreen;
-  useFocusEffect(
-    useCallback(() => {
-      if (existingProject) {
-        setMilestones(normalizeMilestones(existingProject.milestones));
-        setAttachments(normalizeAttachments(existingProject.media));
-      }
-      return undefined;
-    }, [existingProject])
-  );
-
-  // Guard against duplicate entries introduced by navigation/route churn
-  useEffect(() => {
-    const normalized = normalizeMilestones(milestones);
-    if (!milestonesEqual(milestones, normalized)) {
-      setMilestones(normalized);
-    }
-  }, [milestones]);
-
-  useEffect(() => {
-    const normalized = normalizeAttachments(attachments);
-    if (!attachmentsEqual(attachments, normalized)) {
-      setAttachments(normalized);
-    }
-  }, [attachments]);
