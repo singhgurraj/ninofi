@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   Alert,
   ActivityIndicator,
@@ -13,6 +13,7 @@ import {
   View,
   Image,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -1157,12 +1158,15 @@ const styles = StyleSheet.create({
 });
 
 export default CreateProjectScreen;
-  useEffect(() => {
-    if (existingProject) {
-      setMilestones(normalizeMilestones(existingProject.milestones));
-      setAttachments(normalizeAttachments(existingProject.media));
-    }
-  }, [existingProject?.id, existingProject?.milestones, existingProject?.media]);
+  useFocusEffect(
+    useCallback(() => {
+      if (existingProject) {
+        setMilestones(normalizeMilestones(existingProject.milestones));
+        setAttachments(normalizeAttachments(existingProject.media));
+      }
+      return undefined;
+    }, [existingProject])
+  );
 
   // Guard against duplicate entries introduced by navigation/route churn
   useEffect(() => {
