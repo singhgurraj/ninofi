@@ -9475,16 +9475,17 @@ app.get('/api/projects/:projectId/contracts/:contractId/pdf', async (req, res) =
       `,
       [contractId]
     );
+    const contractRow = contractResult.rows[0];
+    const sigRows = signatureResult.rows || [];
+
     let base64;
     try {
-      const buffer = await buildContractPdf(contractResult.rows[0], signatureResult.rows || []);
+      const buffer = await buildContractPdf(contractRow, sigRows);
       base64 = buffer.toString('base64');
     } catch (errPdf) {
       logError('contracts:get-generated-pdf:render-fallback', { contractId, projectId }, errPdf);
       const fallbackText =
-        contractResult.rows[0]?.contract_text ||
-        contractResult.rows[0]?.description ||
-        'Contract text unavailable';
+        contractRow?.contract_text || contractRow?.description || 'Contract text unavailable';
       base64 = Buffer.from(fallbackText, 'utf8').toString('base64');
     }
     return res.json({
@@ -9493,10 +9494,31 @@ app.get('/api/projects/:projectId/contracts/:contractId/pdf', async (req, res) =
     });
   } catch (error) {
     logError('contracts:get-generated-pdf:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
-    const message = pool
-      ? 'Failed to generate contract PDF'
-      : 'Database is not configured (set DATABASE_URL)';
-    return res.status(500).json({ message });
+    // Last-resort fallback: try to return the plain text if we can fetch it directly.
+    try {
+      const { projectId, contractId } = req.params;
+      const contractResult = await pool.query(
+        'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+        [contractId, projectId]
+      );
+      if (!contractResult.rows.length) {
+        return res.status(500).json({ message: 'Failed to generate contract PDF' });
+      }
+      const contractRow = contractResult.rows[0];
+      const fallbackText =
+        contractRow?.contract_text || contractRow?.description || 'Contract text unavailable';
+      const base64 = Buffer.from(fallbackText, 'utf8').toString('base64');
+      return res.json({
+        filename: `${contractId}.pdf`,
+        base64,
+      });
+    } catch (_fallbackErr) {
+      logError('contracts:get-generated-pdf:fallback2:error', {}, _fallbackErr);
+      const message = pool
+        ? 'Failed to generate contract PDF'
+        : 'Database is not configured (set DATABASE_URL)';
+      return res.status(500).json({ message });
+    }
   }
 });
 
