@@ -111,7 +111,12 @@ const WorkerProjectScreen = ({ route, navigation }) => {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{project?.title || 'Project'}</Text>
         <View style={styles.checkInWrapper}>
-          <CheckInButton projectId={projectId} userId={user?.id} userType="worker" />
+          <CheckInButton
+            projectId={projectId}
+            userId={user?.id}
+            userType="worker"
+            userName={user?.fullName}
+          />
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Project Address</Text>

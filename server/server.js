@@ -704,6 +704,8 @@ const initDb = async () => {
       latitude NUMERIC,
       longitude NUMERIC,
       distance_from_site INTEGER,
+      check_out_time TIMESTAMPTZ,
+      duration_seconds INTEGER,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -711,6 +713,8 @@ const initDb = async () => {
     'CREATE INDEX IF NOT EXISTS check_ins_project_idx ON check_ins (project_id, check_in_time DESC)'
   );
   await pool.query('CREATE INDEX IF NOT EXISTS check_ins_user_idx ON check_ins (user_id)');
+  await pool.query('ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS check_out_time TIMESTAMPTZ');
+  await pool.query('ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS duration_seconds INTEGER');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_applications (
@@ -7068,19 +7072,13 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
   
   app.post('/api/check-in', async (req, res) => {
     try {
-      const { projectId, userId, userType, latitude, longitude } = req.body || {};
+      const { projectId, userId, userType, latitude, longitude, action: rawAction, checkInId, userName } = req.body || {};
+      const action = (rawAction || 'checkin').toLowerCase();
       if (!projectId || !isUuid(projectId)) {
         return res.status(400).json({ success: false, message: 'Valid projectId is required' });
       }
       if (!userId || !isUuid(userId)) {
         return res.status(400).json({ success: false, message: 'Valid userId is required' });
-      }
-      const lat = Number(latitude);
-      const lon = Number(longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        return res
-          .status(400)
-          .json({ success: false, message: 'Valid latitude and longitude are required' });
       }
 
       await assertDbReady();
@@ -7097,6 +7095,109 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         return res.status(404).json({ success: false, message: 'Project not found' });
       }
       const projectRow = projectResult.rows[0];
+      const participants = await getProjectParticipants(projectId);
+      const contractorId = participants?.contractorId || null;
+      const ownerFallbackId = participants?.ownerId || null;
+
+      const notifyCheckEvent = async (kind, durationSeconds = null, checkInRow = {}) => {
+        const target = contractorId || ownerFallbackId;
+        if (!target) return;
+        const now = new Date();
+        const timeLabel = now.toLocaleTimeString();
+        const durationLabel =
+          durationSeconds !== null && durationSeconds !== undefined
+            ? ` (worked ${formatDurationHuman(durationSeconds)})`
+            : '';
+        const displayName = userName || 'Worker';
+        const body =
+          kind === 'checkout'
+            ? `${displayName} checked out at ${timeLabel}${durationLabel}`
+            : `${displayName} checked in at ${timeLabel}`;
+        await sendNotification(target, 'Worker check-in', body, {
+          projectId,
+          workerId: userId,
+          checkInId: checkInRow.id || null,
+          type: 'check-in',
+          action: kind,
+        });
+      };
+
+      const formatDurationHuman = (secs = 0) => {
+        const total = Math.max(0, Math.floor(secs));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const parts = [];
+        if (hours) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+        if (minutes || !parts.length) parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+        return parts.join(' ');
+      };
+
+      if (action === 'checkout') {
+        const existingOpen = checkInId && isUuid(checkInId)
+          ? await pool.query(
+              `
+                SELECT *
+                FROM check_ins
+                WHERE id = $1 AND project_id = $2 AND user_id = $3
+                ORDER BY check_in_time DESC
+                LIMIT 1
+              `,
+              [checkInId, projectId, userId]
+            )
+          : await pool.query(
+              `
+                SELECT *
+                FROM check_ins
+                WHERE project_id = $1 AND user_id = $2 AND check_out_time IS NULL
+                ORDER BY check_in_time DESC
+                LIMIT 1
+              `,
+              [projectId, userId]
+            );
+
+        if (!existingOpen.rows.length) {
+          return res.status(400).json({ success: false, message: 'No active check-in found' });
+        }
+
+        const activeRow = existingOpen.rows[0];
+        const now = new Date();
+        const start = activeRow.check_in_time instanceof Date
+          ? activeRow.check_in_time
+          : new Date(activeRow.check_in_time);
+        const durationSeconds = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
+
+        const updateRes = await pool.query(
+          `
+            UPDATE check_ins
+            SET check_out_time = NOW(), duration_seconds = $2
+            WHERE id = $1
+            RETURNING id, check_in_time, check_out_time, duration_seconds, distance_from_site
+          `,
+          [activeRow.id, durationSeconds]
+        );
+        const row = updateRes.rows[0];
+        await notifyCheckEvent('checkout', durationSeconds, row);
+        return res.json({
+          success: true,
+          checkInId: row.id,
+          checkInTime: row.check_in_time,
+          checkOutTime: row.check_out_time,
+          durationSeconds: row.duration_seconds !== null ? Number(row.duration_seconds) : null,
+          distance:
+            row.distance_from_site !== null && row.distance_from_site !== undefined
+              ? Number(row.distance_from_site)
+              : null,
+        });
+      }
+
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Valid latitude and longitude are required' });
+      }
+
       const rawLat = projectRow.job_site_latitude;
       const rawLon = projectRow.job_site_longitude;
       if (rawLat === null || rawLat === undefined || rawLon === null || rawLon === undefined) {
@@ -7134,21 +7235,49 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         });
       }
 
-      const checkInId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const existingOpen = await pool.query(
+        `
+          SELECT id, check_in_time, distance_from_site
+          FROM check_ins
+          WHERE project_id = $1 AND user_id = $2 AND check_out_time IS NULL
+          ORDER BY check_in_time DESC
+          LIMIT 1
+        `,
+        [projectId, userId]
+      );
+      if (existingOpen.rows.length) {
+        const row = existingOpen.rows[0];
+        return res.status(200).json({
+          success: true,
+          message: 'Already checked in',
+          checkInId: row.id,
+          checkInTime: row.check_in_time,
+          checkOutTime: null,
+          distance: row.distance_from_site !== null && row.distance_from_site !== undefined ? Number(row.distance_from_site) : null,
+          allowedRadius,
+          threshold,
+          tolerance: toleranceMeters,
+        });
+      }
+
+      const newCheckInId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
       const insertResult = await pool.query(
         `
           INSERT INTO check_ins (id, project_id, user_id, user_type, latitude, longitude, distance_from_site)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
-          RETURNING check_in_time
+          RETURNING id, check_in_time
         `,
-        [checkInId, projectId, userId, userType || null, lat, lon, distance]
+        [newCheckInId, projectId, userId, userType || null, lat, lon, distance]
       );
+      const checkInTime = insertResult.rows?.[0]?.check_in_time || new Date().toISOString();
+
+      await notifyCheckEvent('checkin', null, { id: newCheckInId });
 
       return res.status(201).json({
         success: true,
         message: 'Check-in recorded',
-        checkInId,
-        checkInTime: insertResult.rows?.[0]?.check_in_time || new Date().toISOString(),
+        checkInId: newCheckInId,
+        checkInTime,
         distance,
         allowedRadius,
         threshold,
@@ -7180,6 +7309,8 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
             ci.id,
             ci.user_type,
             ci.check_in_time,
+            ci.check_out_time,
+            ci.duration_seconds,
             ci.distance_from_site,
             ci.latitude,
             ci.longitude,
@@ -7198,15 +7329,23 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         userType: row.user_type || '',
         checkInTime:
           row.check_in_time instanceof Date ? row.check_in_time.toISOString() : row.check_in_time,
-        distance:
-          row.distance_from_site !== null && row.distance_from_site !== undefined
-            ? Number(row.distance_from_site)
-            : null,
-        latitude:
-          row.latitude !== null && row.latitude !== undefined ? Number(row.latitude) : null,
-        longitude:
-          row.longitude !== null && row.longitude !== undefined ? Number(row.longitude) : null,
-      }));
+          distance:
+            row.distance_from_site !== null && row.distance_from_site !== undefined
+              ? Number(row.distance_from_site)
+              : null,
+          checkOutTime:
+            row.check_out_time instanceof Date
+              ? row.check_out_time.toISOString()
+              : row.check_out_time || null,
+          durationSeconds:
+            row.duration_seconds !== null && row.duration_seconds !== undefined
+              ? Number(row.duration_seconds)
+              : null,
+          latitude:
+            row.latitude !== null && row.latitude !== undefined ? Number(row.latitude) : null,
+          longitude:
+            row.longitude !== null && row.longitude !== undefined ? Number(row.longitude) : null,
+        }));
 
       return res.json(rows);
     } catch (error) {
@@ -7224,26 +7363,49 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
       }
 
       await assertDbReady();
-      const startOfDay = new Date();
-      startOfDay.setUTCHours(0, 0, 0, 0);
-
-      const result = await pool.query(
+      const openResult = await pool.query(
         `
-          SELECT check_in_time, distance_from_site
+          SELECT id, check_in_time, check_out_time, duration_seconds, distance_from_site
           FROM check_ins
           WHERE project_id = $1
             AND user_id = $2
-            AND check_in_time >= $3
+            AND check_out_time IS NULL
           ORDER BY check_in_time DESC
           LIMIT 1
         `,
-        [projectId, userId, startOfDay.toISOString()]
+        [projectId, userId]
       );
 
-      const row = result.rows[0];
+      let row = openResult.rows[0];
+
+      if (!row) {
+        const startOfDay = new Date();
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const latestToday = await pool.query(
+          `
+            SELECT id, check_in_time, check_out_time, duration_seconds, distance_from_site
+            FROM check_ins
+            WHERE project_id = $1
+              AND user_id = $2
+              AND check_in_time >= $3
+            ORDER BY check_in_time DESC
+            LIMIT 1
+          `,
+          [projectId, userId, startOfDay.toISOString()]
+        );
+        row = latestToday.rows[0];
+      }
+
       return res.json({
-        checkedIn: !!row,
+        checkedIn: !!row && !row.check_out_time,
         lastCheckIn: row?.check_in_time || null,
+        checkInId: row?.id || null,
+        checkInTime: row?.check_in_time || null,
+        checkOutTime: row?.check_out_time || null,
+        durationSeconds:
+          row?.duration_seconds !== null && row?.duration_seconds !== undefined
+            ? Number(row.duration_seconds)
+            : null,
         distance:
           row?.distance_from_site !== undefined && row?.distance_from_site !== null
             ? Number(row.distance_from_site)

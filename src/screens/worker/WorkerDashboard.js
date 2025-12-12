@@ -14,7 +14,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
-import CheckInButton from '../../components/CheckInButton';
 import { loadNotifications } from '../../services/notifications';
 import { createConnectAccountLink, fetchStripeStatus } from '../../services/payments';
 import { addNotification } from '../../store/notificationSlice';
