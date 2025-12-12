@@ -1221,6 +1221,8 @@ const mapProjectRow = (row = {}, milestones = [], media = []) => ({
 const toAbsoluteUrl = (raw = '') => {
   if (!raw) return raw;
   if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^data:/i.test(raw)) return raw;
+  if (/^blob:/i.test(raw)) return raw;
   const base =
     (process.env.RAILWAY_STATIC_URL &&
       process.env.RAILWAY_STATIC_URL.startsWith('http') &&
