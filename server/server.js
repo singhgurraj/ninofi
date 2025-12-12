@@ -2828,17 +2828,30 @@ app.post('/api/gigs/:gigId/apply', async (req, res) => {
       }
     }
 
+    // If already applied and pending/accepted, block. If applied before and was denied/withdrawn, revive the existing row.
     const existing = await client.query(
       `
-        SELECT 1 FROM project_applications
+        SELECT * FROM project_applications
         WHERE worker_post_id = $1 AND contractor_id = $2
-          AND status IN ('pending','accepted')
         LIMIT 1
       `,
       [gigId, workerId]
     );
     if (existing.rows.length) {
-      return res.status(409).json({ message: 'You already applied to this gig' });
+      const status = (existing.rows[0].status || '').toLowerCase();
+      if (['pending', 'accepted'].includes(status)) {
+        return res.status(409).json({ message: 'You already applied to this gig' });
+      }
+      // Reactivate old application instead of inserting a new one (avoids unique constraint errors)
+      await client.query(
+        `
+          UPDATE project_applications
+          SET status = 'pending', message = $3, updated_at = NOW()
+          WHERE worker_post_id = $1 AND contractor_id = $2
+        `,
+        [gigId, workerId, message || '']
+      );
+      return res.status(200).json({ success: true, revived: true });
     }
 
     const appId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
