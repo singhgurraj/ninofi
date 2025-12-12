@@ -51,7 +51,19 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     );
   }
 
-  const milestones = project.milestones || [];
+  const milestones = useMemo(() => {
+    const list = project?.milestones || [];
+    const seen = new Set();
+    const unique = [];
+    list.forEach((m) => {
+      const key = m.id ? `id-${m.id}` : `name-${m.name || ''}-amt-${m.amount || 0}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      unique.push(m);
+    });
+    return unique;
+  }, [project?.milestones]);
+
   const progress = milestones.length
     ? Math.round(
         (milestones.filter((m) => m.status === 'approved' || m.status === 'completed').length /
