@@ -223,9 +223,9 @@ const CreateProjectScreen = ({ navigation, route }) => {
         position: milestone.position ?? index,
       })),
       media: attachments
-        .filter((a) => a.url || a.dataUri)
+        .filter((a) => a.dataUri || a.localUri || a.url)
         .map((a) => ({
-          url: a.dataUri || a.url,
+          url: a.dataUri || a.url || a.localUri,
           label: a.label || '',
         })),
     };
@@ -483,7 +483,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
         <View style={styles.attachmentsHeader}>
           <Text style={styles.stepTitle}>Inspiration / Drawings</Text>
           <Text style={styles.stepSubtitle}>
-            Add URLs to architectural drawings or inspiration images
+            Add photos from your library (plans, inspiration, notes)
           </Text>
         </View>
 
@@ -502,23 +502,17 @@ const CreateProjectScreen = ({ navigation, route }) => {
               onPress={() => pickAttachment(index)}
             >
               <Text style={styles.pickButtonText}>
-                {attachment.localUri || attachment.url ? 'Change Image' : 'Pick from Library'}
+                {attachment.localUri || attachment.dataUri || attachment.url
+                  ? 'Change Image'
+                  : 'Pick from Library'}
               </Text>
             </TouchableOpacity>
-            {(attachment.localUri || attachment.url) ? (
+            {(attachment.localUri || attachment.dataUri || attachment.url) ? (
               <Image
-                source={{ uri: attachment.localUri || attachment.url }}
+                source={{ uri: attachment.localUri || attachment.dataUri || attachment.url }}
                 style={styles.preview}
               />
             ) : null}
-            <TextInput
-              style={styles.input}
-              placeholder="Image or drawing URL"
-              value={attachment.url}
-              onChangeText={(value) => updateAttachment(index, 'url', value)}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
             <TextInput
               style={styles.input}
               placeholder="Label (optional)"
