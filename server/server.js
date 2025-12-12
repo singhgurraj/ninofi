@@ -7072,7 +7072,18 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
   
   app.post('/api/check-in', async (req, res) => {
     try {
-      const { projectId, userId, userType, latitude, longitude, action: rawAction, checkInId, userName } = req.body || {};
+      const {
+        projectId,
+        userId,
+        userType,
+        latitude,
+        longitude,
+        action: rawAction,
+        checkInId,
+        userName,
+        clientTimestamp,
+        clientTimeLabel,
+      } = req.body || {};
       const action = (rawAction || 'checkin').toLowerCase();
       if (!projectId || !isUuid(projectId)) {
         return res.status(400).json({ success: false, message: 'Valid projectId is required' });
@@ -7100,26 +7111,35 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
       const ownerFallbackId = participants?.ownerId || null;
 
       const notifyCheckEvent = async (kind, durationSeconds = null, checkInRow = {}) => {
-        const target = contractorId || ownerFallbackId;
-        if (!target) return;
         const now = new Date();
-        const timeLabel = now.toLocaleTimeString();
+        const timeForUser = clientTimestamp ? new Date(clientTimestamp) : now;
+        const timeLabel = clientTimeLabel || timeForUser.toLocaleString();
         const durationLabel =
           durationSeconds !== null && durationSeconds !== undefined
             ? ` (worked ${formatDurationHuman(durationSeconds)})`
             : '';
         const displayName = userName || 'Worker';
-        const body =
+        const contractorBody =
           kind === 'checkout'
             ? `${displayName} checked out at ${timeLabel}${durationLabel}`
             : `${displayName} checked in at ${timeLabel}`;
-        await sendNotification(target, 'Worker check-in', body, {
+        const workerBody =
+          kind === 'checkout'
+            ? `You checked out at ${timeLabel}${durationLabel}`
+            : `You checked in at ${timeLabel}`;
+        const payload = {
           projectId,
           workerId: userId,
           checkInId: checkInRow.id || null,
           type: 'check-in',
           action: kind,
-        });
+        };
+        const contractorTarget = contractorId || ownerFallbackId;
+        if (contractorTarget) {
+          await sendNotification(contractorTarget, 'Worker check-in', contractorBody, payload);
+        }
+        // Always notify the worker themself for confirmation
+        await sendNotification(userId, 'Check-in status', workerBody, payload);
       };
 
       const formatDurationHuman = (secs = 0) => {

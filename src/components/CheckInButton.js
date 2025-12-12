@@ -110,6 +110,8 @@ const CheckInButton = ({ projectId, userId, userType, userName, onStatusChange }
           userId,
           userType,
           userName,
+          clientTimestamp: new Date().toISOString(),
+          clientTimeLabel: new Date().toLocaleString(),
           latitude: coords.latitude,
           longitude: coords.longitude,
           action: 'checkin',
@@ -173,6 +175,8 @@ const CheckInButton = ({ projectId, userId, userType, userName, onStatusChange }
           userType,
           userName,
           checkInId,
+          clientTimestamp: new Date().toISOString(),
+          clientTimeLabel: new Date().toLocaleString(),
         }),
       });
       const data = await res.json();
