@@ -7212,9 +7212,11 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
           .status(400)
           .json({ success: false, message: 'Project has no job site coordinates set' });
       }
-      const HARD_MAX_RADIUS_METERS = 160; // ~0.1 miles
-      const allowedRadius = Math.min(Number(projectRow.check_in_radius) || 200, HARD_MAX_RADIUS_METERS);
-      const toleranceMeters = 30; // small buffer for GPS drift
+      const HARD_MAX_RADIUS_METERS = 500; // keep small, but cap reasonable for bad geocodes
+      const MIN_RADIUS_METERS = 120;
+      const baseRadius = Number(projectRow.check_in_radius) || 200;
+      const allowedRadius = Math.min(Math.max(baseRadius, MIN_RADIUS_METERS), HARD_MAX_RADIUS_METERS);
+      const toleranceMeters = 35; // small buffer for GPS drift
       const threshold = allowedRadius + toleranceMeters;
 
       const distance = getDistance(
@@ -7232,6 +7234,10 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
           allowedRadius,
           threshold,
           tolerance: toleranceMeters,
+          projectLat: siteLat,
+          projectLon: siteLon,
+          userLat: lat,
+          userLon: lon,
         });
       }
 

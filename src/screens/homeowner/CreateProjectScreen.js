@@ -130,14 +130,10 @@ const CreateProjectScreen = ({ navigation, route }) => {
         return;
       }
       if (!locationVerified) {
-        Alert.alert(
-          'Location not verified',
-          'Recommended: Verify location for GPS check-ins.',
-          [
-            { text: 'Verify now', style: 'cancel' },
-            { text: 'Continue', onPress: () => setStep(3) },
-          ]
-        );
+        Alert.alert('Location not verified', 'Recommended: Verify location for GPS check-ins.', [
+          { text: 'Verify now', onPress: () => verifyLocation() },
+          { text: 'Continue anyway', style: 'default', onPress: () => setStep(3) },
+        ]);
         return;
       }
       setStep(3);
@@ -398,15 +394,26 @@ const CreateProjectScreen = ({ navigation, route }) => {
         value={formData.address}
         onChangeText={(value) => updateField('address', value)}
       />
-      {verifyingLocation && (
-        <View style={styles.locationStatusRow}>
-          <ActivityIndicator size="small" color={palette.primary} />
-          <Text style={styles.statusText}>Verifying location...</Text>
-        </View>
-      )}
-      <TouchableOpacity style={styles.useCurrentButton} onPress={useCurrentLocation}>
-        <Text style={styles.useCurrentText}>Use Current Location</Text>
-      </TouchableOpacity>
+      <View style={styles.locationStatusRow}>
+        {verifyingLocation ? (
+          <>
+            <ActivityIndicator size="small" color={palette.primary} />
+            <Text style={styles.statusText}>Verifying location...</Text>
+          </>
+        ) : locationVerified ? (
+          <Text style={styles.verifiedText}>✓ Address verified for GPS check-ins</Text>
+        ) : (
+          <Text style={styles.statusText}>Not verified yet</Text>
+        )}
+      </View>
+      <View style={styles.locationButtons}>
+        <TouchableOpacity style={styles.verifyButton} onPress={verifyLocation} disabled={verifyingLocation}>
+          <Text style={styles.verifyButtonText}>Verify Address</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.useCurrentButton} onPress={useCurrentLocation} disabled={verifyingLocation}>
+          <Text style={styles.useCurrentText}>Use Current Location</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -732,8 +739,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   useCurrentButton: {
-    alignSelf: 'flex-start',
-    paddingVertical: 10,
+    flex: 1,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
@@ -743,6 +750,30 @@ const styles = StyleSheet.create({
   useCurrentText: {
     color: palette.text,
     fontWeight: '700',
+    textAlign: 'center',
+  },
+  verifyButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: palette.primary,
+    alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  verifyButtonText: {
+    color: '#fff',
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  locationButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
   },
   typeGrid: {
     flexDirection: 'row',

@@ -83,7 +83,8 @@ const CheckInButton = ({ projectId, userId, userType, userName, onStatusChange }
       throw new Error('Location permission is required to check in.');
     }
     const position = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
+      accuracy: Location.Accuracy.High,
+      mayShowUserSettingsDialog: true,
     });
     const coords = position?.coords;
     if (!coords?.latitude || !coords?.longitude) {
