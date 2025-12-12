@@ -54,6 +54,15 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
 
   const applied = appliedProjectIds.includes(project.id);
 
+  const mediaList = Array.isArray(project.media)
+    ? project.media.filter((m, idx, arr) => {
+        const key = (m.id || m.url || '').toString();
+        if (!key) return true;
+        const firstIndex = arr.findIndex((x) => (x.id || x.url || '').toString() === key);
+        return firstIndex === idx;
+      })
+    : [];
+
   const handleLeave = async () => {
     if (!user?.id) {
       Alert.alert('Not signed in', 'Please log in as a contractor.');
@@ -114,11 +123,11 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Media</Text>
-          {project.media && project.media.length ? (
+          {mediaList.length ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
-              {project.media.map((m, idx) => (
+              {mediaList.map((m, idx) => (
                 <Image
-                  key={`${m.id || m.url || 'media'}-${idx}`}
+                  key={`${m.id || 'media'}-${idx}-${m.url || 'uri'}`}
                   source={{ uri: m.url }}
                   style={styles.mediaImage}
                   resizeMode="cover"
@@ -154,10 +163,10 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Images</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
-            {project.media?.length ? (
-              project.media.map((m, idx) => (
+            {mediaList.length ? (
+              mediaList.map((m, idx) => (
                 <Image
-                  key={`${m.id || m.url || 'media'}-${idx}`}
+                  key={`${m.id || 'media'}-${idx}-${m.url || 'uri'}`}
                   source={{ uri: m.url }}
                   style={styles.media}
                 />

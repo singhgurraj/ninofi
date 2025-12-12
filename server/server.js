@@ -1223,6 +1223,8 @@ const toAbsoluteUrl = (raw = '') => {
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^data:/i.test(raw)) return raw;
   if (/^blob:/i.test(raw)) return raw;
+  if (/^file:/i.test(raw)) return raw;
+  if (/^content:/i.test(raw)) return raw;
 
   const pickBase = () => {
     const candidates = [

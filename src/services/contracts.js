@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system';
+import { Buffer } from 'buffer';
 import { projectAPI } from './api';
 
 export const createContractDraft = async ({ projectId, createdBy, title, terms }) => {
@@ -115,7 +116,30 @@ export const downloadGeneratedContractPdf = async (projectId, contractId) => {
   if (!projectId || !contractId) {
     return { success: false, error: 'projectId and contractId are required' };
   }
+
+  const saveBase64 = async (base64, filename = 'contract.pdf') => {
+    const dir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+    const uri = `${dir}${filename}`;
+    await FileSystem.writeAsStringAsync(uri, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return uri;
+  };
+
   try {
+    // Prefer binary to avoid parse issues (then fall back to JSON)
+    const binRes = await projectAPI.getGeneratedContractPdf(projectId, contractId, {
+      responseType: 'arraybuffer',
+      params: { mode: 'binary', ts: Date.now() }, // cache bust
+      headers: { Accept: 'application/pdf' },
+    });
+    const buffer = Buffer.from(binRes?.data || '');
+    if (buffer.length) {
+      const b64 = buffer.toString('base64');
+      const uri = await saveBase64(b64, `${contractId}.pdf`);
+      return { success: true, uri };
+    }
+    // Fallback to JSON if binary is empty
     const res = await projectAPI.getGeneratedContractPdf(projectId, contractId, {
       responseType: 'json',
       params: { mode: 'json' },
@@ -123,25 +147,17 @@ export const downloadGeneratedContractPdf = async (projectId, contractId) => {
     const data = res?.data;
     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
     const { base64, filename, message } = parsed || {};
-    if (!base64) {
-      return { success: false, error: message || 'No PDF returned' };
+    if (base64) {
+      const uri = await saveBase64(base64, filename || 'contract.pdf');
+      return { success: true, uri };
     }
-    const dir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-    const uri = `${dir}${filename || 'contract.pdf'}`;
-    await FileSystem.writeAsStringAsync(uri, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    return { success: true, uri };
+    throw new Error(message || 'No PDF returned');
   } catch (error) {
     try {
       const data = error?.response?.data;
       const parsed = typeof data === 'string' ? JSON.parse(data) : data;
       if (parsed?.base64) {
-        const dir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-        const uri = `${dir}${parsed.filename || 'contract.pdf'}`;
-        await FileSystem.writeAsStringAsync(uri, parsed.base64, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+        const uri = await saveBase64(parsed.base64, parsed.filename || 'contract.pdf');
         return { success: true, uri };
       }
     } catch (fallbackErr) {

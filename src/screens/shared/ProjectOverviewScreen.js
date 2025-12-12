@@ -533,9 +533,16 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.mediaRow}
             >
-              {project.media.map((m, idx) => (
+              {project.media
+                .filter((m, idx, arr) => {
+                  const key = (m.id || m.url || '').toString();
+                  if (!key) return true;
+                  const first = arr.findIndex((x) => (x.id || x.url || '').toString() === key);
+                  return first === idx;
+                })
+                .map((m, idx) => (
                 <Image
-                  key={`${m.id || m.url || 'media'}-${idx}`}
+                  key={`${m.id || 'media'}-${idx}-${m.url || 'uri'}`}
                   source={{ uri: m.url }}
                   style={styles.mediaThumb}
                   resizeMode="cover"
