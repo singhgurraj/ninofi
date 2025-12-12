@@ -4357,12 +4357,14 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
       if (!grouped.has(row.id)) {
         grouped.set(row.id, {
           project: row,
-          milestones: [],
-          media: [],
+          milestones: new Map(),
+          media: new Map(),
         });
       }
-      if (row.milestone_id) {
-        grouped.get(row.id).milestones.push(
+      const bucket = grouped.get(row.id);
+      if (row.milestone_id && !bucket.milestones.has(row.milestone_id)) {
+        bucket.milestones.set(
+          row.milestone_id,
           mapMilestoneRow({
             id: row.milestone_id,
             name: row.milestone_name,
@@ -4373,8 +4375,9 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
           })
         );
       }
-      if (row.media_id) {
-        grouped.get(row.id).media.push(
+      if (row.media_id && !bucket.media.has(row.media_id)) {
+        bucket.media.set(
+          row.media_id,
           mapMediaRow({
             id: row.media_id,
             url: row.media_url,
@@ -4386,7 +4389,7 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
     }
 
     const payload = Array.from(grouped.values()).map(({ project, milestones, media }) =>
-      mapProjectRow(project, milestones, media)
+      mapProjectRow(project, Array.from(milestones.values()), Array.from(media.values()))
     )[0];
 
     return res.json(payload);
