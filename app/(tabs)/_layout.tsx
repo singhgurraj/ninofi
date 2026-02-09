@@ -2,27 +2,33 @@ import { Tabs } from 'expo-router';
 import React from 'react';
 import { useSelector } from 'react-redux';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import Constants from 'expo-constants';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { isAdminUser } from '../../src/utils/auth';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const isAuthenticated = useSelector((state: any) => state.auth?.isAuthenticated);
-  const userEmail = useSelector((state: any) => state.auth?.user?.email);
-  const adminEmails = (Constants.expoConfig?.extra?.adminEmails || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  const isAdmin =
-    (userEmail ? adminEmails.includes(userEmail.toLowerCase()) : false) ||
-    useSelector((state: any) => (state.auth?.user?.role || '').toUpperCase() === 'ADMIN');
+  const auth = useSelector((state: any) => state.auth || {});
+  const isAuthenticated = auth.isAuthenticated === true;
+  const isAdmin = isAuthenticated && isAdminUser(auth.user);
+  const tabKey = `${isAuthenticated ? auth.user?.id || 'user' : 'guest'}:${isAdmin ? 'admin' : 'user'}`;
+
+  const adminOptions = isAdmin
+    ? {
+        title: 'Admin',
+        tabBarIcon: ({ color, size }) => (
+          <Ionicons name="shield-checkmark" color={color} size={size ?? 24} />
+        ),
+      }
+    : {
+        href: null,
+      };
 
   return (
     <Tabs
-      key={isAuthenticated ? 'app-tabs' : 'guest-tabs'}
+      key={tabKey}
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
@@ -38,25 +44,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen name="admin" options={adminOptions} />
       {isAuthenticated && (
         <>
-          <Tabs.Screen
-            name="admin"
-            options={{
-              title: 'Admin',
-              href: isAdmin ? undefined : null,
-              tabBarButton: isAdmin ? undefined : () => null,
-              tabBarIcon: ({ color, size }) => (
-                <Ionicons name="shield-checkmark" color={color} size={size ?? 24} />
-              ),
-            }}
-          />
           <Tabs.Screen
             name="invoices"
             options={{
               title: 'Invoices',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="document-text-sharp" color={color} size={size ?? 24} />
+                <Ionicons name="receipt-outline" color={color} size={size ?? 24} />
               ),
             }}
           />
@@ -65,7 +61,7 @@ export default function TabLayout() {
             options={{
               title: 'Settings',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="settings-sharp" color={color} size={size ?? 24} />
+                <Ionicons name="cog-outline" color={color} size={size ?? 24} />
               ),
             }}
           />

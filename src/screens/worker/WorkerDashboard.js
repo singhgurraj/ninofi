@@ -11,20 +11,37 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import palette from '../../styles/palette';
-import CheckInButton from '../../components/CheckInButton';
 import { loadNotifications } from '../../services/notifications';
-import { createConnectAccountLink } from '../../services/payments';
+import { createConnectAccountLink, fetchStripeStatus } from '../../services/payments';
+import { addNotification } from '../../store/notificationSlice';
+import { projectAPI } from '../../services/api';
+import {
+  addWorkerAssignment,
+  addWorkerProject,
+  removeWorkerAssignmentsByProject,
+} from '../../store/projectSlice';
 
 const WorkerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const { items: notifications } = useSelector((state) => state.notifications);
+  const { workerAssignments, workerProjects } = useSelector((state) => state.projects);
   const unreadCount = notifications.filter((n) => !n.read).length;
   const [isConnectingStripe, setIsConnectingStripe] = useState(false);
-  const isStripeConnected =
-    !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+  const [stripeStatus, setStripeStatus] = useState(null);
+  const prevStripeStatusRef = useRef(null);
+  const isStripeConnected = !!(
+    (stripeStatus?.accountId || user?.stripe_account_id) &&
+    (
+      stripeStatus?.payoutsEnabled ||
+      stripeStatus?.chargesEnabled ||
+      user?.stripePayoutsEnabled ||
+      user?.stripeChargesEnabled
+    )
+  );
   const [hasSeenConnected, setHasSeenConnected] = useState(false);
   const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
   const lastConnectedRef = useRef(false);
@@ -44,6 +61,54 @@ const WorkerDashboard = ({ navigation }) => {
     }
   }, [dispatch, user?.id]);
 
+  const syncStripeNotification = useCallback(
+    (status) => {
+      const connected = !!(
+        (status?.accountId || user?.stripe_account_id) &&
+        (status?.payoutsEnabled || status?.chargesEnabled || user?.stripePayoutsEnabled || user?.stripeChargesEnabled)
+      );
+      if (connected) {
+        prevStripeStatusRef.current = {
+          connected,
+          payoutsEnabled: status?.payoutsEnabled,
+          chargesEnabled: status?.chargesEnabled,
+        };
+        return;
+      }
+      const prev = prevStripeStatusRef.current;
+      const changed =
+        !prev ||
+        prev.connected !== connected ||
+        prev.payoutsEnabled !== status?.payoutsEnabled ||
+        prev.chargesEnabled !== status?.chargesEnabled;
+      if (changed) {
+        dispatch(
+          addNotification({
+            title: 'Stripe status',
+            body: connected ? 'Bank connected and ready.' : 'Stripe onboarding pending verification.',
+            read: false,
+            createdAt: new Date().toISOString(),
+          })
+        );
+        prevStripeStatusRef.current = {
+          connected,
+          payoutsEnabled: status?.payoutsEnabled,
+          chargesEnabled: status?.chargesEnabled,
+        };
+      }
+    },
+    [dispatch, user?.stripe_account_id, user?.stripeChargesEnabled, user?.stripePayoutsEnabled]
+  );
+
+  const loadStripeStatus = useCallback(async () => {
+    if (!user?.id) return;
+    const res = await fetchStripeStatus(user.id);
+    if (res.success) {
+      setStripeStatus(res.data);
+      syncStripeNotification(res.data);
+    }
+  }, [user?.id, syncStripeNotification]);
+
   const handleConnectBank = useCallback(async () => {
     if (!user?.id) {
       Alert.alert('Unavailable', 'Sign in first.');
@@ -56,6 +121,10 @@ const WorkerDashboard = ({ navigation }) => {
       Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
       return;
     }
+    if (res.data) {
+      setStripeStatus(res.data);
+      syncStripeNotification(res.data);
+    }
     const url = res.data?.url;
     if (url) {
       try {
@@ -64,16 +133,71 @@ const WorkerDashboard = ({ navigation }) => {
         Alert.alert('Error', 'Could not open Stripe onboarding link');
       }
     }
-  }, [user?.id]);
+    loadStripeStatus();
+  }, [user?.id, loadStripeStatus]);
+
+  const loadWorkerTasks = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const taskRes = await projectAPI.listWorkerTasks(user.id);
+      const tasks = taskRes.data?.tasks || [];
+      const existingIds = new Set((workerAssignments || []).map((a) => a.id));
+      tasks.forEach((t) => {
+        const mapped = {
+          id: t.id,
+          projectId: t.projectId,
+          projectTitle: t.projectTitle,
+          projectDescription: t.projectDescription,
+          workerId: user.id,
+          description: t.description,
+          dueDate: t.dueDate || '',
+          pay: t.pay || 0,
+          status: t.status,
+          proofImageUrl: t.proofImageUrl || null,
+        };
+        if (!existingIds.has(mapped.id)) {
+          dispatch(addWorkerAssignment(mapped));
+        }
+        if (mapped.projectId) {
+          dispatch(
+            addWorkerProject({
+              id: mapped.projectId,
+              title: mapped.projectTitle || '',
+              description: mapped.projectDescription || '',
+            })
+          );
+        }
+      });
+      const activeProjectIds = new Set(tasks.map((t) => t.projectId).filter(Boolean));
+      (workerAssignments || [])
+        .filter((a) => a.workerId === user?.id && a.projectId && !activeProjectIds.has(a.projectId))
+        .forEach((a) => dispatch(removeWorkerAssignmentsByProject(a.projectId)));
+    } catch (err) {
+      console.log('worker:tasks:error', err?.response?.data || err.message);
+    }
+  }, [user?.id, workerAssignments, dispatch]);
 
   useEffect(() => {
     fetchNotifs();
-  }, [fetchNotifs]);
+    loadStripeStatus();
+    loadWorkerTasks();
+  }, [fetchNotifs, loadStripeStatus]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadStripeStatus();
+      }
+    });
+    return () => sub.remove();
+  }, [loadStripeStatus]);
 
   useFocusEffect(
     useCallback(() => {
       fetchNotifs();
-    }, [fetchNotifs])
+      loadStripeStatus();
+      loadWorkerTasks();
+    }, [fetchNotifs, loadStripeStatus])
   );
 
   useEffect(() => {
@@ -98,6 +222,29 @@ const WorkerDashboard = ({ navigation }) => {
     }
     lastConnectedRef.current = isStripeConnected;
   }, [hasSeenConnected, hasSeenLoaded, isStripeConnected]);
+
+  // Derive current gigs from accepted applications and assigned tasks
+  const acceptedProjects = new Set(
+    (workerAssignments || [])
+      .filter((a) => a.workerId === user?.id && a.projectId)
+      .map((a) => a.projectId)
+  );
+  (workerProjects || [])
+    .filter((p) => p?.id)
+    .forEach((p) => acceptedProjects.add(p.id));
+
+  const currentGigs = Array.from(acceptedProjects).map((pid) => {
+    const project = (workerProjects || []).find((p) => p.id === pid);
+    const pay = (workerAssignments || [])
+      .filter((a) => a.projectId === pid)
+      .reduce((sum, a) => sum + Number(a.pay || 0), 0);
+    return {
+      id: pid,
+      title: project?.title || 'Project',
+      description: project?.description || '',
+      pay,
+    };
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -188,21 +335,23 @@ const WorkerDashboard = ({ navigation }) => {
                 My Applications
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={handleConnectBank}
-              disabled={isConnectingStripe}
-            >
-              <Text style={styles.actionIcon}>🏦</Text>
-              <Text
-                style={styles.actionText}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
+            {!isStripeConnected && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={handleConnectBank}
+                disabled={isConnectingStripe}
               >
-                {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.actionIcon}>🏦</Text>
+                <Text
+                  style={styles.actionText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {isStripeConnected && (
               <TouchableOpacity
@@ -226,32 +375,29 @@ const WorkerDashboard = ({ navigation }) => {
         {/* Current Gigs */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Your Current Gigs</Text>
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateIcon}>📦</Text>
-            <Text style={styles.emptyStateText}>No active gigs</Text>
-            <Text style={styles.emptyStateSubtext}>Apply for gigs to get started</Text>
-          </View>
-          {/* Example gig card with check-in button. Replace with real gig list when available. */}
-          {/* {activeGigs?.map((gig) => (
-            <View key={gig.id} style={styles.gigCard}>
-              <View style={styles.gigHeader}>
-                <Text style={styles.gigTitle}>{gig.title}</Text>
-                <Text style={styles.gigPay}>${gig.pay}</Text>
-              </View>
-              <Text style={styles.gigContractor}>{gig.contractorName || 'Contractor'}</Text>
-              <View style={styles.gigDetails}>
-                <View style={styles.gigDetail}>
-                  <Text style={styles.gigDetailIcon}>📍</Text>
-                  <Text style={styles.gigDetailText}>{gig.address || 'No address provided'}</Text>
-                </View>
-              </View>
-              <CheckInButton
-                projectId={gig.projectId}
-                userId={user?.id}
-                userType="worker"
-              />
+          {currentGigs.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateIcon}>📦</Text>
+              <Text style={styles.emptyStateText}>No active gigs</Text>
+              <Text style={styles.emptyStateSubtext}>Apply for gigs to get started</Text>
             </View>
-          ))} */}
+          ) : (
+            currentGigs.map((gig) => (
+              <View key={gig.id} style={styles.gigCard}>
+                <View style={styles.gigHeader}>
+                  <Text style={styles.gigTitle}>{gig.title}</Text>
+                  <Text style={styles.gigPay}>${gig.pay.toLocaleString()}</Text>
+                </View>
+                <Text style={styles.gigContractor}>{gig.description || 'Active project'}</Text>
+                <TouchableOpacity
+                  style={styles.applyButton}
+                  onPress={() => navigation.navigate('WorkerProject', { projectId: gig.id })}
+                >
+                  <Text style={styles.applyButtonText}>Open Project</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>

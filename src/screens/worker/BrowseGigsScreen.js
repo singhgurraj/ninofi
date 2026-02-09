@@ -14,7 +14,7 @@ const BrowseGigsScreen = ({ navigation }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await projectAPI.listOpenGigs();
+      const res = await projectAPI.listOpenGigs(user?.id);
       setGigs(res.data || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load gigs');
@@ -37,7 +37,8 @@ const BrowseGigsScreen = ({ navigation }) => {
       Alert.alert('Applied', 'Your application was sent.');
       loadGigs();
     } catch (err) {
-      Alert.alert('Error', err.response?.data?.message || 'Failed to apply');
+      const msg = err.response?.data?.message || 'Failed to apply';
+      Alert.alert('Error', msg);
     }
   };
 

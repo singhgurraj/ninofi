@@ -27,7 +27,7 @@ const FindJobsScreen = ({ navigation }) => {
   );
 
   const renderMediaThumb = (media = []) => {
-    const first = media[0];
+    const first = media.find((m) => m?.url);
     if (!first?.url) return null;
     return <Image source={{ uri: first.url }} style={styles.thumb} />;
   };

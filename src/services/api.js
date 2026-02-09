@@ -18,8 +18,25 @@ const resolveBaseUrl = () => {
   return 'https://ninofi-production.up.railway.app/api';
 };
 
-const API_BASE_URL = resolveBaseUrl();
+export const API_BASE_URL = resolveBaseUrl();
 console.log('[api] base URL', API_BASE_URL);
+
+export const getPublicBaseUrl = () => {
+  const root = (API_BASE_URL || '').replace(/\/api$/i, '');
+  if (!root) return '';
+  return root.endsWith('/') ? root.slice(0, -1) : root;
+};
+
+export const resolveAbsoluteUri = (uri) => {
+  if (!uri) return uri;
+  if (/^https?:\/\//i.test(uri) || /^data:/i.test(uri) || /^blob:/i.test(uri)) {
+    return uri;
+  }
+  const base = getPublicBaseUrl();
+  if (!base) return uri;
+  const path = uri.startsWith('/') ? uri : `/${uri}`;
+  return `${base}${path}`;
+};
 
 // Create axios instance
 const api = axios.create({
@@ -120,6 +137,8 @@ export const projectAPI = {
   deleteApplication: async (applicationId, contractorId) =>
     api.delete(`/applications/${applicationId}`, { data: contractorId ? { contractorId } : {} }),
   getProjectDetails: async (projectId) => api.get(`/projects/${projectId}/details`),
+  listProjectTasks: async (projectId) => api.get(`/projects/${projectId}/tasks`),
+  decideTask: async (taskId, decision, message) => api.post(`/tasks/${taskId}/decision`, { decision, message }),
   leaveProject: async (projectId, payload) => api.post(`/projects/${projectId}/leave`, payload),
   getProjectPersonnel: async (projectId, userId) =>
     api.get(`/projects/${projectId}/personnel`, { params: { userId } }),
@@ -134,6 +153,8 @@ export const projectAPI = {
     api.get(`/projects/${projectId}/contracts/${contractId}`),
   updateGeneratedContract: async (projectId, contractId, payload) =>
     api.put(`/projects/${projectId}/contracts/${contractId}`, payload),
+  getGeneratedContractPdf: async (projectId, contractId, config = {}) =>
+    api.get(`/projects/${projectId}/contracts/${contractId}/pdf`, config),
   listApprovedContractsForContractor: async (contractorId) =>
     api.get(`/contracts/approved/${contractorId}`),
   listApprovedContractsForUser: async (userId) => api.get(`/contracts/approved/user/${userId}`),
@@ -167,11 +188,10 @@ export const projectAPI = {
   appendAudit: async (payload) => api.post('/audit', payload),
   getCompliance: async (userId) => api.get(`/compliance/user/${userId}`),
   uploadCompliance: async (payload) => api.post('/compliance', payload),
-  getAdminAnalytics: async (headers) => api.get('/admin/analytics', { headers }),
-  getAdminUsers: async (headers) => api.get('/admin/users', { headers }),
-  getAdminDisputes: async (headers) => api.get('/admin/disputes', { headers }),
-  resolveDispute: async (id, payload, headers) =>
-    api.post(`/admin/disputes/${id}/resolve`, payload, { headers }),
+  getAdminAnalytics: async () => api.get('/admin/analytics'),
+  getAdminUsers: async () => api.get('/admin/users'),
+  getAdminDisputes: async () => api.get('/admin/disputes'),
+  resolveDispute: async (id, payload) => api.post(`/admin/disputes/${id}/resolve`, payload),
   getAdminPendingTasks: async () => api.get('/admin/tasks/pending'),
   postAdminTaskDecision: async (taskId, payload) => api.post(`/admin/tasks/${taskId}/decision`, payload),
   submitGigWork: async (projectId, payload) => api.post(`/gigs/${projectId}/submit-work`, payload),
@@ -180,6 +200,7 @@ export const projectAPI = {
   submitTaskProof: async (taskId, payload) => api.post(`/tasks/${taskId}/submit`, payload),
   searchContractors: async (params) => api.get('/contractors/search', { params }),
   getContractorProfile: async (contractorId) => api.get(`/contractors/${contractorId}/profile`),
+  listCheckIns: async (projectId) => api.get(`/check-ins/${projectId}`),
 };
 
 export const paymentsAPI = {

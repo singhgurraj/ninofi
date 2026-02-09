@@ -14,14 +14,30 @@ import {
   fetchContractorProjectsFailure,
   withdrawApplicationLocal,
 } from '../store/projectSlice';
-import { projectAPI } from './api';
+import { projectAPI, resolveAbsoluteUri } from './api';
+
+const normalizeMediaUrls = (media = []) =>
+  (Array.isArray(media) ? media : [])
+    .filter((m) => m && (m.url || m.dataUri))
+    .map((m) => ({
+      ...m,
+      url: resolveAbsoluteUri(m.url || m.dataUri),
+    }))
+    .filter((m) => !!m.url);
+
+const normalizeProjectMedia = (project) =>
+  project ? { ...project, media: normalizeMediaUrls(project.media) } : project;
+
+const normalizeProjects = (projects = []) =>
+  Array.isArray(projects) ? projects.map((p) => normalizeProjectMedia(p)) : [];
 
 export const loadProjectsForUser = (userId) => async (dispatch) => {
   if (!userId) return;
   try {
     dispatch(fetchProjectsStart());
     const response = await projectAPI.getProjectsForUser(userId);
-    dispatch(fetchProjectsSuccess(response.data || []));
+    const projects = normalizeProjects(response.data || []);
+    dispatch(fetchProjectsSuccess(projects));
     return { success: true };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to load projects';
@@ -40,7 +56,7 @@ export const saveProject = (project) => async (dispatch) => {
     const response = hasId
       ? await projectAPI.updateProject(project.id, project)
       : await projectAPI.createProject(project);
-    const saved = response.data;
+    const saved = normalizeProjectMedia(response.data);
     if (hasId) {
       dispatch(updateProject(saved));
     } else {
@@ -70,7 +86,8 @@ export const loadOpenProjects = (contractorId) => async (dispatch) => {
   try {
     dispatch(fetchOpenProjectsStart());
     const response = await projectAPI.getOpenProjects(contractorId);
-    dispatch(fetchOpenProjectsSuccess(response.data || []));
+    const projects = normalizeProjects(response.data || []);
+    dispatch(fetchOpenProjectsSuccess(projects));
     return { success: true };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to load projects';
@@ -96,7 +113,8 @@ export const loadContractorProjects = (contractorId) => async (dispatch) => {
   try {
     dispatch(fetchContractorProjectsStart());
     const response = await projectAPI.getProjectsForContractor(contractorId);
-    dispatch(fetchContractorProjectsSuccess(response.data || []));
+    const projects = normalizeProjects(response.data || []);
+    dispatch(fetchContractorProjectsSuccess(projects));
     return { success: true };
   } catch (error) {
     const msg = error.response?.data?.message || 'Failed to load projects';
@@ -119,7 +137,13 @@ export const withdrawApplication = (applicationId, projectId, contractorId) => a
   }
 };
 
-export const getProjectDetails = (projectId) => projectAPI.getProjectDetails(projectId);
+export const getProjectDetails = async (projectId) => {
+  const res = await projectAPI.getProjectDetails(projectId);
+  if (res?.data) {
+    res.data = normalizeProjectMedia(res.data);
+  }
+  return res;
+};
 
 export const leaveProject = async (projectId, payload, dispatch) => {
   if (!projectId) {

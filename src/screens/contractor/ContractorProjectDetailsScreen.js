@@ -25,8 +25,7 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
     project?.owner?.id &&
     user?.id &&
     project.assignedContractor.id === user.id;
-  const canLeaveProject =
-    canLeave || project?.assignedContractor?.id === user?.id || (user?.role || '').toLowerCase() === 'contractor';
+  const canLeaveProject = !!canLeave;
 
   if (!project) {
     return (
@@ -54,6 +53,15 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
   };
 
   const applied = appliedProjectIds.includes(project.id);
+
+  const mediaList = Array.isArray(project.media)
+    ? project.media.filter((m, idx, arr) => {
+        const key = (m.id || m.url || '').toString();
+        if (!key) return true;
+        const firstIndex = arr.findIndex((x) => (x.id || x.url || '').toString() === key);
+        return firstIndex === idx;
+      })
+    : [];
 
   const handleLeave = async () => {
     if (!user?.id) {
@@ -114,10 +122,28 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
         </View>
 
         <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Media</Text>
+          {mediaList.length ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
+              {mediaList.map((m, idx) => (
+                <Image
+                  key={`${m.id || 'media'}-${idx}-${m.url || 'uri'}`}
+                  source={{ uri: m.url }}
+                  style={styles.mediaImage}
+                  resizeMode="cover"
+                />
+              ))}
+            </ScrollView>
+          ) : (
+            <Text style={styles.muted}>No media added.</Text>
+          )}
+        </View>
+
+        <View style={styles.card}>
           <Text style={styles.sectionTitle}>Milestones</Text>
           {project.milestones?.length ? (
             project.milestones.map((m, idx) => (
-              <View key={m.id || idx} style={styles.milestone}>
+              <View key={`${m.id || 'milestone'}-${idx}`} style={styles.milestone}>
                 <View>
                   <Text style={styles.milestoneTitle}>{m.name}</Text>
                   <Text style={styles.milestoneMeta}>
@@ -137,10 +163,10 @@ const ContractorProjectDetailsScreen = ({ route, navigation }) => {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Images</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaRow}>
-            {project.media?.length ? (
-              project.media.map((m, idx) => (
+            {mediaList.length ? (
+              mediaList.map((m, idx) => (
                 <Image
-                  key={`${m.id || m.url || 'media'}-${idx}`}
+                  key={`${m.id || 'media'}-${idx}-${m.url || 'uri'}`}
                   source={{ uri: m.url }}
                   style={styles.media}
                 />
@@ -337,6 +363,7 @@ const styles = StyleSheet.create({
   },
   leaveText: { color: '#B91C1C', fontWeight: '800' },
   leaveDisabled: { opacity: 0.7 },
+  mediaRow: { flexDirection: 'row', gap: 10 },
 });
 
 export default ContractorProjectDetailsScreen;

@@ -1,5 +1,13 @@
 import { createSlice } from '@reduxjs/toolkit';
 
+const isAdminFromUser = (user) => {
+  if (!user) return false;
+  if (user.isAdmin) return true;
+  if ((user.userRole || '').toUpperCase() === 'ADMIN') return true;
+  if ((user.role || '').toUpperCase() === 'ADMIN') return true;
+  return false;
+};
+
 const initialState = {
   user: null,
   token: null,
@@ -7,6 +15,7 @@ const initialState = {
   isLoading: false,
   error: null,
   role: null, // 'homeowner', 'contractor', 'worker'
+  isAdmin: false,
 };
 
 const authSlice = createSlice({
@@ -16,6 +25,11 @@ const authSlice = createSlice({
     loginStart: (state) => {
       state.isLoading = true;
       state.error = null;
+      state.user = null;
+      state.token = null;
+      state.role = null;
+      state.isAuthenticated = false;
+      state.isAdmin = false;
     },
     loginSuccess: (state, action) => {
       state.isLoading = false;
@@ -23,15 +37,26 @@ const authSlice = createSlice({
       state.user = action.payload.user;
       state.token = action.payload.token;
       state.role = action.payload.user.role;
+      state.isAdmin = isAdminFromUser(action.payload.user);
       state.error = null;
     },
     loginFailure: (state, action) => {
       state.isLoading = false;
       state.error = action.payload;
+      state.user = null;
+      state.token = null;
+      state.isAuthenticated = false;
+      state.role = null;
+      state.isAdmin = false;
     },
     registerStart: (state) => {
       state.isLoading = true;
       state.error = null;
+      state.user = null;
+      state.token = null;
+      state.role = null;
+      state.isAuthenticated = false;
+      state.isAdmin = false;
     },
     registerSuccess: (state, action) => {
       state.isLoading = false;
@@ -39,17 +64,24 @@ const authSlice = createSlice({
       state.user = action.payload.user;
       state.token = action.payload.token;
       state.role = action.payload.user.role;
+      state.isAdmin = isAdminFromUser(action.payload.user);
       state.error = null;
     },
     registerFailure: (state, action) => {
       state.isLoading = false;
       state.error = action.payload;
+      state.user = null;
+      state.token = null;
+      state.isAuthenticated = false;
+      state.role = null;
+      state.isAdmin = false;
     },
     logout: (state) => {
       state.user = null;
       state.token = null;
       state.isAuthenticated = false;
       state.role = null;
+      state.isAdmin = false;
       state.error = null;
     },
     setRole: (state, action) => {
@@ -58,6 +90,18 @@ const authSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
+  },
+  extraReducers: (builder) => {
+    builder.addCase('persist/REHYDRATE', (state) => {
+      // Ignore any persisted auth; require a fresh login every app start.
+      state.user = null;
+      state.token = null;
+      state.isAuthenticated = false;
+      state.role = null;
+      state.isAdmin = false;
+      state.isLoading = false;
+      state.error = null;
+    });
   },
 });
 

@@ -3,6 +3,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Linking,
   SafeAreaView,
   ScrollView,
@@ -13,9 +14,10 @@ import {
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { loadNotifications } from '../../services/notifications';
-import { createConnectAccountLink } from '../../services/payments';
+import { createConnectAccountLink, fetchStripeStatus } from '../../services/payments';
 import { loadProjectsForUser } from '../../services/projects';
 import palette from '../../styles/palette';
+import { addNotification } from '../../store/notificationSlice';
 
 const HomeownerDashboard = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -24,8 +26,14 @@ const HomeownerDashboard = ({ navigation }) => {
   const { items: notifications } = useSelector((state) => state.notifications);
   const unreadCount = notifications.filter((n) => !n.read).length;
   const [isConnectingStripe, setIsConnectingStripe] = useState(false);
+  const [stripeStatus, setStripeStatus] = useState(null);
+  const prevStripeStatusRef = useRef(null);
   const isStripeConnected =
-    !!(user?.stripe_account_id || user?.isStripeConnected || user?.stripeChargesEnabled || user?.stripePayoutsEnabled);
+    !!((stripeStatus?.accountId || user?.stripe_account_id) &&
+    (stripeStatus?.payoutsEnabled ||
+      stripeStatus?.chargesEnabled ||
+      user?.stripePayoutsEnabled ||
+      user?.stripeChargesEnabled));
   const [hasSeenConnected, setHasSeenConnected] = useState(false);
   const [hasSeenLoaded, setHasSeenLoaded] = useState(false);
   const lastConnectedRef = useRef(false);
@@ -37,9 +45,67 @@ const HomeownerDashboard = ({ navigation }) => {
     }
   }, [dispatch, user?.id]);
 
+  const syncStripeNotification = useCallback(
+    (status) => {
+      const connected = !!(
+        (status?.accountId || user?.stripe_account_id) &&
+        (status?.payoutsEnabled || status?.chargesEnabled || user?.stripePayoutsEnabled || user?.stripeChargesEnabled)
+      );
+      if (connected) {
+        prevStripeStatusRef.current = {
+          connected,
+          payoutsEnabled: status?.payoutsEnabled,
+          chargesEnabled: status?.chargesEnabled,
+        };
+        return;
+      }
+      const prev = prevStripeStatusRef.current;
+      const changed =
+        !prev ||
+        prev.connected !== connected ||
+        prev.payoutsEnabled !== status?.payoutsEnabled ||
+        prev.chargesEnabled !== status?.chargesEnabled;
+      if (changed) {
+        dispatch(
+          addNotification({
+            title: 'Stripe status',
+            body: connected ? 'Bank connected and ready.' : 'Stripe onboarding pending verification.',
+            read: false,
+            createdAt: new Date().toISOString(),
+          })
+        );
+        prevStripeStatusRef.current = {
+          connected,
+          payoutsEnabled: status?.payoutsEnabled,
+          chargesEnabled: status?.chargesEnabled,
+        };
+      }
+    },
+    [dispatch, user?.stripe_account_id, user?.stripeChargesEnabled, user?.stripePayoutsEnabled]
+  );
+
+  const loadStripeStatus = useCallback(async () => {
+    if (!user?.id) return;
+    const res = await fetchStripeStatus(user.id);
+    if (res.success) {
+      setStripeStatus(res.data);
+      syncStripeNotification(res.data);
+    }
+  }, [user?.id, syncStripeNotification]);
+
   useEffect(() => {
     fetchProjects();
-  }, [fetchProjects]);
+    loadStripeStatus();
+  }, [fetchProjects, loadStripeStatus]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        loadStripeStatus();
+      }
+    });
+    return () => sub.remove();
+  }, [loadStripeStatus]);
 
   useEffect(() => {
     const loadSeen = async () => {
@@ -67,7 +133,8 @@ const HomeownerDashboard = ({ navigation }) => {
   useFocusEffect(
     useCallback(() => {
       fetchProjects();
-    }, [fetchProjects])
+      loadStripeStatus();
+    }, [fetchProjects, loadStripeStatus])
   );
 
   const handleConnectBank = useCallback(async () => {
@@ -82,6 +149,10 @@ const HomeownerDashboard = ({ navigation }) => {
       Alert.alert('Error', res.error || 'Failed to start Stripe onboarding');
       return;
     }
+    if (res.data) {
+      setStripeStatus(res.data);
+      syncStripeNotification(res.data);
+    }
     const url = res.data?.url;
     if (url) {
       try {
@@ -90,7 +161,8 @@ const HomeownerDashboard = ({ navigation }) => {
         Alert.alert('Error', 'Could not open Stripe onboarding link');
       }
     }
-  }, [user?.id]);
+    loadStripeStatus();
+  }, [user?.id, loadStripeStatus]);
 
   const stats = {
     activeProjects: projects?.length || 0,
@@ -188,21 +260,23 @@ const HomeownerDashboard = ({ navigation }) => {
                 Contracts
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={handleConnectBank}
-              disabled={isConnectingStripe}
-            >
-              <Text style={styles.actionIcon}>🏦</Text>
-              <Text
-                style={styles.actionText}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.85}
+            {!isStripeConnected && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={handleConnectBank}
+                disabled={isConnectingStripe}
               >
-                {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.actionIcon}>🏦</Text>
+                <Text
+                  style={styles.actionText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {isConnectingStripe ? 'Opening...' : 'Connect Bank'}
+                </Text>
+              </TouchableOpacity>
+            )}
             {isStripeConnected && (
               <TouchableOpacity
                 style={styles.actionButton}

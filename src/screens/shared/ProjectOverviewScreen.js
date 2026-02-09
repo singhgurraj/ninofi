@@ -1,6 +1,6 @@
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Dimensions, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Image, PanResponder } from 'react-native';
 import { useSelector } from 'react-redux';
 import {
   fetchGeneratedContract,
@@ -9,7 +9,9 @@ import {
   deleteGeneratedContract,
   signGeneratedContract,
   updateGeneratedContract,
+  downloadGeneratedContractPdf,
 } from '../../services/contracts';
+import { projectAPI } from '../../services/api';
 import palette from '../../styles/palette';
 
 const ProjectOverviewScreen = ({ route, navigation }) => {
@@ -32,6 +34,14 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   const [editFields, setEditFields] = useState({ description: '', contractText: '' });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [originalEditFields, setOriginalEditFields] = useState({ description: '', contractText: '' });
+  const [checkIns, setCheckIns] = useState([]);
+  const [checkInsLoading, setCheckInsLoading] = useState(false);
+  const [checkInsModal, setCheckInsModal] = useState({ open: false, workerName: '', entries: [] });
+  const [tasks, setTasks] = useState([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [fullScreenMedia, setFullScreenMedia] = useState({ open: false, index: 0, items: [] });
+  const screenWidth = Dimensions.get('window').width;
 
   if (!project) {
     return (
@@ -41,7 +51,19 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     );
   }
 
-  const milestones = project.milestones || [];
+  const milestones = useMemo(() => {
+    const list = project?.milestones || [];
+    const seen = new Set();
+    const unique = [];
+    list.forEach((m) => {
+      const key = m.id ? `id-${m.id}` : `name-${m.name || ''}-amt-${m.amount || 0}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      unique.push(m);
+    });
+    return unique;
+  }, [project?.milestones]);
+
   const progress = milestones.length
     ? Math.round(
         (milestones.filter((m) => m.status === 'approved' || m.status === 'completed').length /
@@ -75,6 +97,48 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     () => contracts.filter((c) => isFullySigned(c)),
     [contracts, isFullySigned]
   );
+  const projectMedia = useMemo(() => {
+    const media = project?.media || [];
+    return media.filter((m, idx, arr) => {
+      const key = (m.id || m.url || '').toString();
+      if (!key) return true;
+      const first = arr.findIndex((x) => (x.id || x.url || '').toString() === key);
+      return first === idx;
+    });
+  }, [project?.media]);
+
+  const fullScreenScrollRef = useRef(null);
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dy) > Math.abs(gestureState.dx) && Math.abs(gestureState.dy) > 10,
+      onPanResponderRelease: (_, gestureState) => {
+        if (Math.abs(gestureState.dy) > 50) {
+          setFullScreenMedia({ open: false, index: 0, items: [] });
+        }
+      },
+    })
+  ).current;
+
+  useEffect(() => {
+    if (fullScreenMedia.open && fullScreenScrollRef.current) {
+      fullScreenScrollRef.current.scrollTo({
+        x: fullScreenMedia.index * screenWidth,
+        animated: false,
+      });
+    }
+  }, [fullScreenMedia.open, fullScreenMedia.index, screenWidth]);
+
+  const openMediaFullScreen = useCallback((items = [], startIndex = 0) => {
+    const clean = (items || []).map((m) => (typeof m === 'string' ? m : m?.url)).filter(Boolean);
+    if (!clean.length) return;
+    const safeIndex = Math.min(Math.max(startIndex, 0), clean.length - 1);
+    setFullScreenMedia({ open: true, index: safeIndex, items: clean });
+  }, []);
+
+  const closeFullScreenMedia = useCallback(() => {
+    setFullScreenMedia({ open: false, index: 0, items: [] });
+  }, []);
 
   const loadContracts = useCallback(async () => {
     if (!project?.id) return;
@@ -104,7 +168,9 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
   useFocusEffect(
     useCallback(() => {
       loadContracts();
-    }, [loadContracts])
+      loadCheckIns();
+      loadTasks();
+    }, [loadContracts, loadTasks])
   );
 
   const handleProposeContract = async () => {
@@ -212,6 +278,108 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
     }
   };
 
+  const loadCheckIns = useCallback(async () => {
+    if (!project?.id || role !== 'contractor') return;
+    setCheckInsLoading(true);
+    try {
+      const res = await projectAPI.listCheckIns(project.id);
+      setCheckIns(res.data || []);
+    } catch (err) {
+      // quietly ignore
+    } finally {
+      setCheckInsLoading(false);
+    }
+  }, [project?.id, role]);
+
+  const formatDuration = (seconds) => {
+    const total = Math.max(0, Math.floor(seconds || 0));
+    const hrs = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    return `${hrs}h ${mins}m`;
+  };
+
+  const groupedCheckIns = useMemo(() => {
+    const byWorker = {};
+    checkIns.forEach((c) => {
+      const key = c.userId || c.userName || 'Unknown';
+      const durationSeconds =
+        c.durationSeconds ??
+        (c.checkInTime && c.checkOutTime
+          ? Math.max(
+              0,
+              Math.floor(
+                (new Date(c.checkOutTime).getTime() - new Date(c.checkInTime).getTime()) / 1000
+              )
+            )
+          : 0);
+      if (!byWorker[key]) {
+        byWorker[key] = {
+          userName: c.userName || 'Unknown',
+          totalSeconds: 0,
+          entries: [],
+        };
+      }
+      byWorker[key].totalSeconds += durationSeconds || 0;
+      byWorker[key].entries.push({
+        id: c.id,
+        checkInTime: c.checkInTime,
+        checkOutTime: c.checkOutTime,
+        durationSeconds,
+      });
+    });
+    return Object.values(byWorker).map((w) => ({
+      ...w,
+      entries: w.entries.sort(
+        (a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime()
+      ),
+    }));
+  }, [checkIns]);
+
+  const loadTasks = useCallback(async () => {
+    if (!project?.id || role !== 'contractor') return;
+    setTasksLoading(true);
+    try {
+      const res = await projectAPI.listProjectTasks(project.id);
+      setTasks(res.data?.tasks || []);
+    } catch (err) {
+      // ignore
+    } finally {
+      setTasksLoading(false);
+    }
+  }, [project?.id, role]);
+
+  const submissions = useMemo(
+    () =>
+      tasks.filter((t) =>
+        ['SUBMITTED', 'UNDER_REVIEW'].includes((t.status || '').toUpperCase())
+      ),
+    [tasks]
+  );
+
+  const decideTask = useCallback(
+    async (taskId, decision) => {
+      if (!taskId || !decision) return;
+      const confirm = decision.toLowerCase() === 'approve'
+        ? 'Approve this submission?'
+        : 'Send back for changes?';
+      Alert.alert('Confirm', confirm, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes',
+          onPress: async () => {
+            try {
+              await projectAPI.decideTask(taskId, decision);
+              loadTasks();
+            } catch (err) {
+              Alert.alert('Error', err?.response?.data?.message || 'Failed to update task');
+            }
+          },
+        },
+      ]);
+    },
+    [loadTasks]
+  );
+
   const startEditContract = async (contract) => {
     let contractToEdit = contract;
     if (!contract.contractText) {
@@ -287,6 +455,105 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
           </View>
         </View>
 
+        {isContractor && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Worker Check-ins</Text>
+              <Text style={styles.cardMeta}>
+                {checkInsLoading ? 'Loading…' : `${checkIns.length} entries`}
+              </Text>
+            </View>
+            {checkInsLoading && <Text style={styles.muted}>Loading check-ins…</Text>}
+            {!checkInsLoading && groupedCheckIns.length === 0 && (
+              <Text style={styles.muted}>No check-ins recorded yet.</Text>
+            )}
+            {!checkInsLoading &&
+              groupedCheckIns.map((worker) => (
+                <View key={worker.userName} style={styles.checkInGroup}>
+                  <View style={styles.checkInGroupHeader}>
+                    <Text style={styles.checkInName}>{worker.userName}</Text>
+                    <Text style={styles.checkInHours}>{formatDuration(worker.totalSeconds)}</Text>
+                  </View>
+                  {worker.entries.slice(0, 3).map((entry) => (
+                    <View key={entry.id} style={styles.checkInRow}>
+                      <Text style={styles.checkInTime}>
+                        {entry.checkInTime ? new Date(entry.checkInTime).toLocaleString() : '–'}
+                      </Text>
+                      <Text style={styles.checkInDuration}>
+                        {entry.durationSeconds ? formatDuration(entry.durationSeconds) : 'In progress'}
+                      </Text>
+                    </View>
+                  ))}
+                  {worker.entries.length > 3 && (
+                    <TouchableOpacity
+                      onPress={() =>
+                        setCheckInsModal({
+                          open: true,
+                          workerName: worker.userName,
+                          entries: worker.entries,
+                        })
+                      }
+                    >
+                      <Text style={styles.mutedSmall}>
+                        +{worker.entries.length - 3} more entries (view all)
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+          </View>
+        )}
+
+        {isContractor && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Work Submissions</Text>
+              <Text style={styles.cardMeta}>
+                {tasksLoading ? 'Loading…' : `${submissions.length} pending`}
+              </Text>
+            </View>
+            {tasksLoading && <Text style={styles.muted}>Loading submissions…</Text>}
+            {!tasksLoading && submissions.length === 0 && (
+              <Text style={styles.muted}>No pending submissions.</Text>
+            )}
+            {!tasksLoading &&
+              submissions.map((t) => (
+                <View key={t.id} style={styles.contractCard}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.contractTitle}>{t.title || 'Assigned Work'}</Text>
+                    <Text style={styles.contractMeta}>{t.workerName || 'Worker'}</Text>
+                  </View>
+                  {t.description ? <Text style={styles.body}>{t.description}</Text> : null}
+                  {t.proofImageUrl ? (
+                    <TouchableOpacity onPress={() => openMediaFullScreen([t.proofImageUrl], 0)}>
+                      <Image
+                        source={{ uri: t.proofImageUrl }}
+                        style={styles.proofImage}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={styles.mutedSmall}>No proof image attached.</Text>
+                  )}
+                  <View style={styles.submissionActions}>
+                    <TouchableOpacity
+                      style={[styles.secondaryButton, styles.approveButton]}
+                      onPress={() => decideTask(t.id, 'approve')}
+                    >
+                      <Text style={styles.secondaryText}>Approve</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.secondaryButton, styles.denyButton]}
+                      onPress={() => decideTask(t.id, 'deny')}
+                    >
+                      <Text style={[styles.secondaryText, styles.denyText]}>Request Changes</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+          </View>
+        )}
+
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Description</Text>
           <Text style={styles.body}>{project.description || 'No description provided.'}</Text>
@@ -310,6 +577,28 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
             <Text style={styles.detailText}>Contractor: Unassigned</Text>
           )}
         </View>
+
+        {(project.media?.length || 0) > 0 && (
+          <View style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Project Media</Text>
+              {project.assignedContractor?.id ? (
+                <Text style={styles.badgeSmall}>Visible to contractor</Text>
+              ) : null}
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.mediaRow}
+            >
+              {projectMedia.map((m, idx) => (
+                <TouchableOpacity key={`${m.id || 'media'}-${idx}-${m.url || 'uri'}`} onPress={() => openMediaFullScreen(projectMedia, idx)}>
+                  <Image source={{ uri: m.url }} style={styles.mediaThumb} resizeMode="cover" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
@@ -496,6 +785,44 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
         )}
       </ScrollView>
 
+      <Modal visible={checkInsModal.open} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {checkInsModal.workerName || 'Worker'} – All Check-ins
+              </Text>
+              <TouchableOpacity onPress={() => setCheckInsModal({ open: false, workerName: '', entries: [] })}>
+                <Text style={styles.closeText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {checkInsModal.entries.length === 0 ? (
+              <Text style={styles.muted}>No entries.</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 400 }}>
+                {checkInsModal.entries.map((entry) => (
+                  <View key={entry.id} style={styles.checkInRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.checkInTime}>
+                        {entry.checkInTime ? new Date(entry.checkInTime).toLocaleString() : '–'}
+                      </Text>
+                      <Text style={styles.checkInTime}>
+                        {entry.checkOutTime
+                          ? `Out: ${new Date(entry.checkOutTime).toLocaleString()}`
+                          : 'In progress'}
+                      </Text>
+                    </View>
+                    <Text style={styles.checkInDuration}>
+                      {entry.durationSeconds ? formatDuration(entry.durationSeconds) : '—'}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={proposeOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -626,20 +953,71 @@ const ProjectOverviewScreen = ({ route, navigation }) => {
                     );
                   })()}
                 </View>
-                <TouchableOpacity style={styles.secondaryButton}>
+                <TouchableOpacity
+                  style={styles.downloadLink}
+                  disabled={downloadingPdf}
+                  hitSlop={8}
+                  onPress={async () => {
+                    if (!project?.id || !viewing?.id) return;
+                    setDownloadingPdf(true);
+                    const res = await downloadGeneratedContractPdf(project.id, viewing.id);
+                    setDownloadingPdf(false);
+                    if (res.success) {
+                      Alert.alert('Downloaded', `Saved to: ${res.uri}`);
+                    } else {
+                      Alert.alert('Error', res.error || 'Failed to download');
+                    }
+                  }}
+                >
                   <Text
-                    style={styles.secondaryText}
+                    style={[styles.actionLink, downloadingPdf && styles.disabled]}
                     numberOfLines={1}
                     adjustsFontSizeToFit
                     minimumFontScale={0.85}
                   >
-                    Download as PDF (coming soon)
+                    {downloadingPdf ? 'Downloading…' : 'Download as PDF'}
                   </Text>
                 </TouchableOpacity>
               </>
     )}
           </ScrollView>
         </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={fullScreenMedia.open}
+        animationType="fade"
+        transparent
+        statusBarTranslucent
+        onRequestClose={closeFullScreenMedia}
+      >
+        <View style={styles.fullscreenOverlay} {...panResponder.panHandlers}>
+          <ScrollView
+            ref={fullScreenScrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => {
+              const nextIndex = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
+              setFullScreenMedia((prev) => ({ ...prev, index: nextIndex }));
+            }}
+          >
+            {fullScreenMedia.items.map((uri, idx) => (
+              <View key={`${uri}-${idx}`} style={[styles.fullscreenImageWrapper, { width: screenWidth }]}>
+                <Image source={{ uri }} style={styles.fullscreenImage} resizeMode="contain" />
+              </View>
+            ))}
+          </ScrollView>
+          <View style={styles.fullscreenTopBar}>
+            <Text style={styles.fullscreenCounter}>
+              {fullScreenMedia.index + 1} / {fullScreenMedia.items.length || 1}
+            </Text>
+            <TouchableOpacity onPress={closeFullScreenMedia} hitSlop={10}>
+              <Text style={[styles.closeText, styles.fullscreenClose]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.fullscreenHint}>Swipe left/right to browse, swipe down to close.</Text>
+        </View>
       </Modal>
 
       <Modal visible={Boolean(editingContract)} animationType="slide" transparent>
@@ -838,6 +1216,12 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   modalTitle: { fontSize: 18, fontWeight: '700', color: palette.text },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  closeText: { fontSize: 18, color: palette.text, fontWeight: '800' },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 6 },
   secondaryButton: {
     padding: 14,
@@ -861,8 +1245,121 @@ const styles = StyleSheet.create({
   signatureBlock: { marginTop: 14, gap: 6 },
   signatureText: { color: palette.text, fontSize: 13 },
   signatureButtons: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  downloadLink: { alignSelf: 'flex-start', marginTop: 12 },
   back: { fontSize: 20, color: palette.text },
   deleteLink: { color: '#dc2626', fontWeight: '700' },
+  checkInGroup: {
+    marginTop: 10,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+  },
+  checkInGroupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  checkInName: {
+    fontWeight: '800',
+    color: palette.text,
+    fontSize: 15,
+  },
+  checkInHours: {
+    fontWeight: '800',
+    color: palette.primary,
+  },
+  checkInRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  checkInTime: {
+    color: palette.text,
+    flex: 1,
+    marginRight: 8,
+  },
+  checkInDuration: {
+    color: palette.muted,
+    fontWeight: '700',
+  },
+  mutedSmall: {
+    color: palette.muted,
+    fontSize: 12,
+  },
+  proofImage: {
+    width: '100%',
+    height: 160,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  mediaRow: { gap: 10, paddingVertical: 6 },
+  mediaThumb: {
+    width: 180,
+    height: 140,
+    borderRadius: 12,
+    backgroundColor: '#F2F4F7',
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginRight: 10,
+  },
+  badgeSmall: {
+    backgroundColor: '#EEF2FF',
+    color: palette.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  submissionActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  approveButton: {
+    flex: 1,
+    borderColor: palette.success,
+  },
+  denyButton: {
+    flex: 1,
+    borderColor: palette.error,
+  },
+  denyText: { color: palette.error, fontWeight: '700' },
+  fullscreenOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenImageWrapper: {
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenImage: {
+    width: '100%',
+    height: '100%',
+  },
+  fullscreenTopBar: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  fullscreenCounter: { color: '#fff', fontWeight: '700' },
+  fullscreenHint: {
+    position: 'absolute',
+    bottom: 26,
+    color: '#e5e7eb',
+    textAlign: 'center',
+    width: '100%',
+  },
+  fullscreenClose: { color: '#fff' },
 });
 
 export default ProjectOverviewScreen;

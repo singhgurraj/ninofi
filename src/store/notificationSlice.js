@@ -17,9 +17,11 @@ const notificationSlice = createSlice({
     },
     addNotification: {
       reducer: (state, action) => {
-        const exists = state.items.find((n) => n.id === action.payload.id);
-        if (!exists) {
-          state.items.unshift(action.payload);
+        const idx = state.items.findIndex((n) => n.id === action.payload.id);
+        if (idx >= 0) {
+          state.items[idx] = { ...state.items[idx], ...action.payload, read: false };
+        } else {
+          state.items.unshift({ ...action.payload, read: false });
         }
       },
       prepare: (data) => ({

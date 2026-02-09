@@ -1,4 +1,6 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { Buffer } from 'buffer';
 import { projectAPI } from './api';
 
 export const createContractDraft = async ({ projectId, createdBy, title, terms }) => {
@@ -107,6 +109,92 @@ export const signGeneratedContract = async ({ projectId, contractId, userId, sig
     return { success: true, data: res.data };
   } catch (error) {
     const msg = error.response?.data?.message || 'Failed to sign contract';
+    return { success: false, error: msg };
+  }
+};
+
+export const downloadGeneratedContractPdf = async (projectId, contractId) => {
+  if (!projectId || !contractId) {
+    return { success: false, error: 'projectId and contractId are required' };
+  }
+
+  const saveBase64 = async (base64, filename = 'contract.pdf') => {
+    const dir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+    const uri = `${dir}${filename}`;
+    console.log('[contracts] Saving file to', uri);
+    await FileSystem.writeAsStringAsync(uri, base64, {
+      // Use string literal encoding for Expo FileSystem on RN
+      encoding: 'base64',
+    });
+    return uri;
+  };
+
+  try {
+    // Prefer binary to avoid parse issues (then fall back to JSON)
+    console.log('[contracts] Fetching binary PDF…', { projectId, contractId });
+    const binRes = await projectAPI.getGeneratedContractPdf(projectId, contractId, {
+      responseType: 'arraybuffer',
+      params: { mode: 'binary', ts: Date.now() }, // cache bust
+      headers: { Accept: 'application/pdf' },
+    });
+    console.log('[contracts] Binary response status', binRes?.status, 'headers', binRes?.headers);
+    const buffer = Buffer.from(binRes?.data || '');
+    if (buffer.length) {
+      console.log('[contracts] Binary buffer length', buffer.length);
+      const b64 = buffer.toString('base64');
+      const uri = await saveBase64(b64, `${contractId}.pdf`);
+      if (await Sharing.isAvailableAsync()) {
+        console.log('[contracts] Opening share sheet for', uri);
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Save Contract' });
+      }
+      return { success: true, uri };
+    }
+    // Fallback to JSON if binary is empty
+    console.log('[contracts] Binary empty, fetching JSON…');
+    const res = await projectAPI.getGeneratedContractPdf(projectId, contractId, {
+      responseType: 'json',
+      params: { mode: 'json' },
+    });
+    console.log('[contracts] JSON response status', res?.status, 'headers', res?.headers);
+    const data = res?.data;
+    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    console.log('[contracts] JSON body', parsed);
+    const { base64, filename, message } = parsed || {};
+    if (base64) {
+      const uri = await saveBase64(base64, filename || 'contract.pdf');
+      if (await Sharing.isAvailableAsync()) {
+        console.log('[contracts] Opening share sheet for', uri);
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Save Contract' });
+      }
+      return { success: true, uri };
+    }
+    throw new Error(message || 'No PDF returned');
+  } catch (error) {
+    console.log('[contracts] download error', {
+      message: error?.message,
+      status: error?.response?.status,
+      data: error?.response?.data,
+      stack: error?.stack,
+    });
+    try {
+      const data = error?.response?.data;
+      const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+      console.log('[contracts] fallback parsed error body', parsed);
+      if (parsed?.base64) {
+        const uri = await saveBase64(parsed.base64, parsed.filename || 'contract.pdf');
+        if (await Sharing.isAvailableAsync()) {
+          console.log('[contracts] Opening share sheet for', uri);
+          await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Save Contract' });
+        }
+        return { success: true, uri };
+      }
+    } catch (fallbackErr) {
+      // ignore and surface original error
+    }
+    const status = error?.response?.status;
+    const msg =
+      error?.response?.data?.message ||
+      (status ? `Download failed (status ${status})` : 'Failed to download contract');
     return { success: false, error: msg };
   }
 };

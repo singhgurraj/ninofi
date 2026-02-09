@@ -72,11 +72,18 @@ const TaskCard = ({ task, onDecision }) => {
 const AdminTasksScreen = () => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const loadTasks = async () => {
     setLoading(true);
+    setError(null);
     const res = await fetchAdminPendingTasks();
-    if (res.success) setTasks(res.data);
+    if (res.success) {
+      setTasks(res.data);
+    } else {
+      setTasks([]);
+      setError(res.error || 'Unable to load tasks');
+    }
     setLoading(false);
   };
 
@@ -93,13 +100,15 @@ const AdminTasksScreen = () => {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.header}>Admin Task Review</Text>
         {loading && <Text style={styles.muted}>Loading…</Text>}
-        {!loading && tasks.length === 0 ? (
+        {!loading && error && <Text style={styles.error}>{error}</Text>}
+        {!loading && !error && tasks.length === 0 && (
           <Text style={styles.muted}>No tasks pending review.</Text>
-        ) : (
-          tasks.map((task) => (
-            <TaskCard key={task.id} task={task} onDecision={handleDecisionRemove} />
-          ))
         )}
+        {!loading && !error && tasks.length > 0
+          ? tasks.map((task) => (
+              <TaskCard key={task.id} task={task} onDecision={handleDecisionRemove} />
+            ))
+          : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -127,6 +136,7 @@ const styles = StyleSheet.create({
   body: { color: palette.text, fontSize: 14 },
   image: { width: '100%', height: 180, borderRadius: 12, backgroundColor: palette.border },
   muted: { color: palette.muted, fontSize: 14 },
+  error: { color: '#EF4444', fontSize: 14 },
   input: {
     backgroundColor: '#f7f7f9',
     borderRadius: 12,

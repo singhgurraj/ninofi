@@ -31,6 +31,7 @@ const ENV_VARIABLES = [
   { key: 'NODE_ENV', label: 'Node environment' },
   { key: 'JWT_SECRET', label: 'JWT signing secret' },
   { key: 'JWT_EXPIRES_IN', label: 'JWT expiration (e.g., 7d, 1h)' },
+  { key: 'EXPO_PUBLIC_ADMIN_EMAILS', label: 'Admin allowlist emails (comma-separated)' },
   { key: 'DATABASE_URL', label: 'PostgreSQL connection URL (Railway)' },
   { key: 'DATABASE_SSL', label: 'Force Postgres SSL (true/false)' },
   { key: 'PGSSLMODE', label: 'Postgres SSL mode (require/disable)' },
@@ -703,6 +704,8 @@ const initDb = async () => {
       latitude NUMERIC,
       longitude NUMERIC,
       distance_from_site INTEGER,
+      check_out_time TIMESTAMPTZ,
+      duration_seconds INTEGER,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -710,6 +713,8 @@ const initDb = async () => {
     'CREATE INDEX IF NOT EXISTS check_ins_project_idx ON check_ins (project_id, check_in_time DESC)'
   );
   await pool.query('CREATE INDEX IF NOT EXISTS check_ins_user_idx ON check_ins (user_id)');
+  await pool.query('ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS check_out_time TIMESTAMPTZ');
+  await pool.query('ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS duration_seconds INTEGER');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_applications (
@@ -1116,19 +1121,25 @@ const assertDbReady = async () => {
   return dbReady;
 };
 
-const mapDbUser = (row = {}) => ({
-  id: row.id,
-  fullName: row.full_name,
-  email: row.email,
-  phone: row.phone || '',
-  role: row.role,
-  profilePhotoUrl: row.profile_photo_url || '',
-  rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
-  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
-  stripeAccountId: row.stripe_account_id || null,
-  stripeChargesEnabled: !!row.stripe_charges_enabled,
-  stripePayoutsEnabled: !!row.stripe_payouts_enabled,
-});
+const mapDbUser = (row = {}) => {
+  const adminRole = (row.user_role || '').toUpperCase();
+  const isAdmin = adminRole === 'ADMIN' || (row.role || '').toUpperCase() === 'ADMIN';
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email,
+    phone: row.phone || '',
+    role: row.role,
+    userRole: adminRole || 'USER',
+    isAdmin,
+    profilePhotoUrl: row.profile_photo_url || '',
+    rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    stripeAccountId: row.stripe_account_id || null,
+    stripeChargesEnabled: !!row.stripe_charges_enabled,
+    stripePayoutsEnabled: !!row.stripe_payouts_enabled,
+  };
+};
 
 const getUserByEmail = async (email) => {
   await assertDbReady();
@@ -1207,9 +1218,47 @@ const mapProjectRow = (row = {}, milestones = [], media = []) => ({
   acceptedApplicationId: row.accepted_app_id,
 });
 
+const toAbsoluteUrl = (raw = '') => {
+  if (!raw) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^data:/i.test(raw)) return raw;
+  if (/^blob:/i.test(raw)) return raw;
+  if (/^file:/i.test(raw)) return raw;
+  if (/^content:/i.test(raw)) return raw;
+
+  const pickBase = () => {
+    const candidates = [
+      process.env.PUBLIC_MEDIA_BASE,
+      process.env.RAILWAY_STATIC_URL,
+      process.env.RAILWAY_PUBLIC_DOMAIN,
+      process.env.EXPO_PUBLIC_API_URL,
+      process.env.API_BASE_URL,
+    ].filter(Boolean);
+
+    let base = candidates.find((c) => !!c);
+    if (!base && process.env.PORT) {
+      base = `http://localhost:${process.env.PORT}`;
+    }
+    if (!base) {
+      base = 'https://ninofi-production.up.railway.app/api';
+    }
+
+    // Ensure protocol and drop trailing /api for public asset serving.
+    if (!/^https?:\/\//i.test(base)) {
+      base = `https://${base}`;
+    }
+    const withoutApi = base.replace(/\/api$/i, '');
+    return withoutApi.endsWith('/') ? withoutApi.slice(0, -1) : withoutApi;
+  };
+
+  const prefix = pickBase();
+  const path = raw.startsWith('/') ? raw : `/${raw}`;
+  return `${prefix}${path}`;
+};
+
 const mapMediaRow = (row = {}) => ({
   id: row.id,
-  url: row.url,
+  url: toAbsoluteUrl(row.url || ''),
   label: row.label || '',
 });
 
@@ -2075,6 +2124,33 @@ const signJwt = (userId) => {
   return jwt.sign({ sub: userId }, secret, { expiresIn });
 };
 
+const getAdminAllowlist = () =>
+  (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+
+const ensureAdminRoleForAllowlistedUser = async (user) => {
+  if (!user?.id) return user;
+  const emailNormalized = (user.email_normalized || user.email || '').toLowerCase();
+  if (!emailNormalized) return user;
+
+  const allowlist = getAdminAllowlist();
+  if (!allowlist.includes(emailNormalized)) {
+    return user;
+  }
+
+  if ((user.user_role || '').toUpperCase() === 'ADMIN') {
+    return user;
+  }
+
+  const result = await pool.query(
+    'UPDATE users SET user_role = $1 WHERE id = $2 RETURNING *',
+    ['ADMIN', user.id]
+  );
+  return result.rows[0] || { ...user, user_role: 'ADMIN' };
+};
+
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -2106,10 +2182,7 @@ const requireAdmin = async (req, res, next) => {
     const userRes = await pool.query('SELECT user_role, email_normalized FROM users WHERE id = $1 LIMIT 1', [req.userId]);
     const role = (userRes.rows[0]?.user_role || '').toUpperCase();
     const emailNormalized = (userRes.rows[0]?.email_normalized || '').toLowerCase();
-    const allowlist = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
+    const allowlist = getAdminAllowlist();
     const isAllowlisted = emailNormalized && allowlist.includes(emailNormalized);
     if (role !== 'ADMIN' && !isAllowlisted) {
       return res.status(403).json({ message: 'Admin access required' });
@@ -2209,7 +2282,7 @@ const stripExistingSignaturesSection = (text = '') => {
 const persistMedia = async (projectId, mediaItems = []) => {
   const saved = [];
   for (const item of mediaItems) {
-    if (!item.url) continue;
+    if (!item?.url) continue;
     if (!isDataUri(item.url)) {
       saved.push({ url: item.url, label: item.label || '' });
       continue;
@@ -2221,12 +2294,23 @@ const persistMedia = async (projectId, mediaItems = []) => {
       const mimeType = mimeMatch?.[1] || 'image/jpeg';
       const extension = mimeType.split('/')[1] || 'jpg';
       const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
-      const projectDir = path.join(UPLOAD_DIR, projectId);
-      await fs.promises.mkdir(projectDir, { recursive: true });
-      const filePath = path.join(projectDir, filename);
-      await fs.promises.writeFile(filePath, base64Data || '', 'base64');
-      const relativePath = path.relative(__dirname, filePath);
-      saved.push({ url: `/${relativePath}`, label: item.label || '' });
+
+      // If using stub storage, persist to local uploads for accessibility.
+      if (storageService?.provider === 'stub-storage') {
+        const projectDir = path.join(UPLOAD_DIR, projectId);
+        await fs.promises.mkdir(projectDir, { recursive: true });
+        const filePath = path.join(projectDir, filename);
+        await fs.promises.writeFile(filePath, base64Data || '', 'base64');
+        const relativePath = path.relative(__dirname, filePath);
+        saved.push({ url: `/${relativePath}`, label: item.label || '' });
+        continue;
+      }
+
+      // Otherwise, use configured storage provider (e.g., S3/GCS) and return signed URL.
+      const storageKey = `projects/${projectId}/${filename}`;
+      const uploadResult = await storageService.uploadFile(storageKey, base64Data || '', mimeType);
+      const signed = await storageService.getSignedUrl(uploadResult.key || storageKey);
+      saved.push({ url: signed?.url || uploadResult.url || item.url, label: item.label || '' });
     } catch (err) {
       console.error('Error saving media file:', err);
     }
@@ -2339,20 +2423,6 @@ const appendAudit = async ({
   } catch (err) {
     console.error('appendAudit error', err);
   }
-};
-
-const isAdminRequest = (req) => {
-  const key = req.headers['x-admin-key'] || req.body?.adminKey || req.query?.adminKey;
-  if (process.env.ADMIN_KEY && key && key === process.env.ADMIN_KEY) return true;
-  return false;
-};
-
-const requireAdminKey = (req, res) => {
-  if (!isAdminRequest(req)) {
-    res.status(403).json({ message: 'Admin access required' });
-    return false;
-  }
-  return true;
 };
 
 app.get('/', (req, res) => {
@@ -2781,17 +2851,30 @@ app.post('/api/gigs/:gigId/apply', async (req, res) => {
       }
     }
 
+    // If already applied and pending/accepted, block. If applied before and was denied/withdrawn, revive the existing row.
     const existing = await client.query(
       `
-        SELECT 1 FROM project_applications
+        SELECT * FROM project_applications
         WHERE worker_post_id = $1 AND contractor_id = $2
-          AND status IN ('pending','accepted')
         LIMIT 1
       `,
       [gigId, workerId]
     );
     if (existing.rows.length) {
-      return res.status(409).json({ message: 'You already applied to this gig' });
+      const status = (existing.rows[0].status || '').toLowerCase();
+      if (['pending', 'accepted'].includes(status)) {
+        return res.status(409).json({ message: 'You already applied to this gig' });
+      }
+      // Reactivate old application instead of inserting a new one (avoids unique constraint errors)
+      await client.query(
+        `
+          UPDATE project_applications
+          SET status = 'pending', message = $3, updated_at = NOW()
+          WHERE worker_post_id = $1 AND contractor_id = $2
+        `,
+        [gigId, workerId, message || '']
+      );
+      return res.status(200).json({ success: true, revived: true });
     }
 
     const appId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
@@ -3682,9 +3765,11 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    const userWithAdminRole = await ensureAdminRoleForAllowlistedUser(user);
+
     return res.json({
-      user: mapDbUser(user),
-      token: signJwt(user.id),
+      user: mapDbUser(userWithAdminRole),
+      token: signJwt(userWithAdminRole.id),
     });
   } catch (error) {
     console.error('Error logging in:', error);
@@ -4295,12 +4380,14 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
       if (!grouped.has(row.id)) {
         grouped.set(row.id, {
           project: row,
-          milestones: [],
-          media: [],
+          milestones: new Map(),
+          media: new Map(),
         });
       }
-      if (row.milestone_id) {
-        grouped.get(row.id).milestones.push(
+      const bucket = grouped.get(row.id);
+      if (row.milestone_id && !bucket.milestones.has(row.milestone_id)) {
+        bucket.milestones.set(
+          row.milestone_id,
           mapMilestoneRow({
             id: row.milestone_id,
             name: row.milestone_name,
@@ -4311,8 +4398,9 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
           })
         );
       }
-      if (row.media_id) {
-        grouped.get(row.id).media.push(
+      if (row.media_id && !bucket.media.has(row.media_id)) {
+        bucket.media.set(
+          row.media_id,
           mapMediaRow({
             id: row.media_id,
             url: row.media_url,
@@ -4324,7 +4412,7 @@ app.get('/api/projects/:projectId/details', async (req, res) => {
     }
 
     const payload = Array.from(grouped.values()).map(({ project, milestones, media }) =>
-      mapProjectRow(project, milestones, media)
+      mapProjectRow(project, Array.from(milestones.values()), Array.from(media.values()))
     )[0];
 
     return res.json(payload);
@@ -4939,7 +5027,7 @@ app.post('/api/stripe/connect/account-link', async (req, res) => {
     await assertDbReady();
     const userRow = await getUserById(contractorId);
     const userRole = (userRow.role || '').toLowerCase();
-    if (!userRow || !['contractor', 'worker'].includes(userRole)) {
+    if (!userRow || !['contractor', 'worker', 'homeowner'].includes(userRole)) {
       return res.status(404).json({ message: 'User not eligible for payouts' });
     }
 
@@ -5016,7 +5104,7 @@ app.get('/api/stripe/connect/status', async (req, res) => {
     await assertDbReady();
     const userRow = await getUserById(contractorId);
     const role = (userRow?.role || '').toLowerCase();
-    if (!userRow || !['contractor', 'worker'].includes(role)) {
+    if (!userRow || !['contractor', 'worker', 'homeowner'].includes(role)) {
       return res.status(404).json({ message: 'User not eligible for payouts' });
     }
     if (!userRow.stripe_account_id) {
@@ -5290,10 +5378,11 @@ app.get('/api/gigs/worker/:workerId/tasks', requireAuth, async (req, res) => {
         FROM tasks t
         JOIN projects p ON p.id = t.project_id
         WHERE t.worker_id = $1
+          AND t.status NOT IN ($2, $3, $4)
         ORDER BY t.created_at DESC
         LIMIT 100
       `,
-      [workerId]
+      [workerId, TASK_STATUSES.PAID_OUT, TASK_STATUSES.VERIFIED, TASK_STATUSES.CANCELLED]
     );
       const tasks = rows.rows.map((t) => ({
         id: t.id,
@@ -5312,6 +5401,132 @@ app.get('/api/gigs/worker/:workerId/tasks', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('gigs:worker:tasks:error', error);
     return res.status(500).json({ message: 'Failed to load tasks' });
+  }
+});
+
+app.get('/api/projects/:projectId/tasks', requireAuth, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    if (!projectId || !isUuid(projectId)) {
+      return res.status(400).json({ message: 'Valid projectId is required' });
+    }
+    await assertDbReady();
+    const projectRow = await getProjectById(projectId);
+    if (!projectRow) return res.status(404).json({ message: 'Project not found' });
+    const participants = await getProjectParticipants(projectId);
+    const contractorIds = await getProjectContractorIds(projectId);
+    const isOwner = participants?.ownerId === req.userId;
+    const isContractor = contractorIds && contractorIds.has(req.userId);
+    if (!isOwner && !isContractor) {
+      return res.status(403).json({ message: 'Not authorized to view tasks for this project' });
+    }
+    const rows = await pool.query(
+      `
+        SELECT t.*, u.full_name AS worker_name
+        FROM tasks t
+        LEFT JOIN users u ON u.id = t.worker_id
+        WHERE t.project_id = $1
+        ORDER BY t.updated_at DESC NULLS LAST, t.created_at DESC
+        LIMIT 200
+      `,
+      [projectId]
+    );
+    const tasks = rows.rows.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      projectId: t.project_id,
+      workerId: t.worker_id,
+      workerName: t.worker_name || '',
+      status: t.status,
+      proofImageUrl: t.proof_image_url || null,
+      pay: Number(t.escrow_amount_cents || 0) / 100,
+      dueDate: t.due_date || null,
+      createdAt: t.created_at,
+      updatedAt: t.updated_at,
+    }));
+    return res.json({ tasks });
+  } catch (error) {
+    console.error('tasks:list:project:error', error);
+    return res.status(500).json({ message: 'Failed to load tasks' });
+  }
+});
+
+app.post('/api/tasks/:taskId/decision', requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskId } = req.params;
+    const { decision, message } = req.body || {};
+    const normalized = (decision || '').toUpperCase();
+    if (!['APPROVE', 'DENY'].includes(normalized)) {
+      return res.status(400).json({ message: 'decision must be APPROVE or DENY' });
+    }
+    await assertDbReady();
+    await client.query('BEGIN');
+    const taskRes = await client.query('SELECT * FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+    if (!taskRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Task not found' });
+    }
+    const task = taskRes.rows[0];
+    const projectRow = task.project_id ? await getProjectById(task.project_id) : null;
+    const participants = task.project_id ? await getProjectParticipants(task.project_id) : null;
+    const contractorIds = task.project_id ? await getProjectContractorIds(task.project_id) : new Set();
+    const isOwner = participants?.ownerId === req.userId || projectRow?.user_id === req.userId;
+    const isContractor = contractorIds && contractorIds.has(req.userId);
+    if (!isOwner && !isContractor && task.creator_id !== req.userId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'Not authorized to decide this task' });
+    }
+    if (![TASK_STATUSES.SUBMITTED, TASK_STATUSES.UNDER_REVIEW].includes(task.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Task not ready for decision' });
+    }
+    if (normalized === 'DENY') {
+      await client.query(
+        `
+          UPDATE tasks
+          SET status = $1, denied_at = NOW(), admin_message = $2, updated_at = NOW()
+          WHERE id = $3
+        `,
+        [TASK_STATUSES.ASSIGNED, message || null, taskId]
+      );
+      if (task.worker_id) {
+        await sendNotification(
+          task.worker_id,
+          'Work needs changes',
+          message || 'Submission was rejected. Please resubmit.',
+          { type: 'task-denied', taskId, projectId: task.project_id }
+        );
+      }
+      await client.query('COMMIT');
+      return res.json({ success: true, status: TASK_STATUSES.ASSIGNED });
+    }
+
+    await client.query(
+      `
+        UPDATE tasks
+        SET status = $1, verified_at = NOW(), updated_at = NOW()
+        WHERE id = $2
+      `,
+      [TASK_STATUSES.VERIFIED, taskId]
+    );
+    if (task.worker_id) {
+      await sendNotification(
+        task.worker_id,
+        'Work approved',
+        'Your submission was approved.',
+        { type: 'task-approved', taskId, projectId: task.project_id }
+      );
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, status: TASK_STATUSES.VERIFIED });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('tasks:decision:error', error);
+    return res.status(500).json({ message: 'Failed to update task status' });
+  } finally {
+    client.release();
   }
 });
 
@@ -7022,19 +7237,24 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
   
   app.post('/api/check-in', async (req, res) => {
     try {
-      const { projectId, userId, userType, latitude, longitude } = req.body || {};
+      const {
+        projectId,
+        userId,
+        userType,
+        latitude,
+        longitude,
+        action: rawAction,
+        checkInId,
+        userName,
+        clientTimestamp,
+        clientTimeLabel,
+      } = req.body || {};
+      const action = (rawAction || 'checkin').toLowerCase();
       if (!projectId || !isUuid(projectId)) {
         return res.status(400).json({ success: false, message: 'Valid projectId is required' });
       }
       if (!userId || !isUuid(userId)) {
         return res.status(400).json({ success: false, message: 'Valid userId is required' });
-      }
-      const lat = Number(latitude);
-      const lon = Number(longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        return res
-          .status(400)
-          .json({ success: false, message: 'Valid latitude and longitude are required' });
       }
 
       await assertDbReady();
@@ -7051,6 +7271,130 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         return res.status(404).json({ success: false, message: 'Project not found' });
       }
       const projectRow = projectResult.rows[0];
+      const participants = await getProjectParticipants(projectId);
+      const contractorSet = await getProjectContractorIds(projectId);
+      const contractorId =
+        (contractorSet && contractorSet.size && Array.from(contractorSet)[0]) ||
+        participants?.contractorId ||
+        null;
+      const ownerFallbackId = participants?.ownerId || null;
+
+      const notifyCheckEvent = async (kind, durationSeconds = null, checkInRow = {}) => {
+        const now = new Date();
+        const timeForUser = clientTimestamp ? new Date(clientTimestamp) : now;
+        const timeLabel = clientTimeLabel || timeForUser.toLocaleString();
+        const durationLabel =
+          durationSeconds !== null && durationSeconds !== undefined
+            ? ` (worked ${formatDurationHuman(durationSeconds)})`
+            : '';
+        const displayName = userName || 'Worker';
+        const contractorBody =
+          kind === 'checkout'
+            ? `${displayName} checked out at ${timeLabel}${durationLabel}`
+            : `${displayName} checked in at ${timeLabel}`;
+        const workerBody =
+          kind === 'checkout'
+            ? `You checked out at ${timeLabel}${durationLabel}`
+            : `You checked in at ${timeLabel}`;
+        const payload = {
+          projectId,
+          workerId: userId,
+          checkInId: checkInRow.id || null,
+          type: 'check-in',
+          action: kind,
+        };
+        const targets = new Set();
+        if (contractorSet && contractorSet.size) {
+          contractorSet.forEach((id) => targets.add(id));
+        }
+        if (contractorId) targets.add(contractorId);
+        if (ownerFallbackId) targets.add(ownerFallbackId);
+
+        for (const targetId of targets) {
+          if (!targetId || targetId === userId) continue;
+          await sendNotification(targetId, 'Worker check-in', contractorBody, payload);
+        }
+
+        // Always notify the worker themself for confirmation
+        await sendNotification(userId, 'Check-in status', workerBody, payload);
+      };
+
+      const formatDurationHuman = (secs = 0) => {
+        const total = Math.max(0, Math.floor(secs));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const parts = [];
+        if (hours) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+        if (minutes || !parts.length) parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+        return parts.join(' ');
+      };
+
+      if (action === 'checkout') {
+        const existingOpen = checkInId && isUuid(checkInId)
+          ? await pool.query(
+              `
+                SELECT *
+                FROM check_ins
+                WHERE id = $1 AND project_id = $2 AND user_id = $3
+                ORDER BY check_in_time DESC
+                LIMIT 1
+              `,
+              [checkInId, projectId, userId]
+            )
+          : await pool.query(
+              `
+                SELECT *
+                FROM check_ins
+                WHERE project_id = $1 AND user_id = $2 AND check_out_time IS NULL
+                ORDER BY check_in_time DESC
+                LIMIT 1
+              `,
+              [projectId, userId]
+            );
+
+        if (!existingOpen.rows.length) {
+          return res.status(400).json({ success: false, message: 'No active check-in found' });
+        }
+
+        const activeRow = existingOpen.rows[0];
+        const now = new Date();
+        const start = activeRow.check_in_time instanceof Date
+          ? activeRow.check_in_time
+          : new Date(activeRow.check_in_time);
+        const durationSeconds = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
+
+        const updateRes = await pool.query(
+          `
+            UPDATE check_ins
+            SET check_out_time = NOW(), duration_seconds = $2
+            WHERE id = $1
+            RETURNING id, check_in_time, check_out_time, duration_seconds, distance_from_site
+          `,
+          [activeRow.id, durationSeconds]
+        );
+        const row = updateRes.rows[0];
+        await notifyCheckEvent('checkout', durationSeconds, row);
+        return res.json({
+          success: true,
+          checkInId: row.id,
+          checkInTime: row.check_in_time,
+          checkOutTime: row.check_out_time,
+          durationSeconds: row.duration_seconds !== null ? Number(row.duration_seconds) : null,
+          distance:
+            row.distance_from_site !== null && row.distance_from_site !== undefined
+              ? Number(row.distance_from_site)
+              : null,
+        });
+      }
+
+      const lat = Number(latitude);
+      const lon = Number(longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Valid latitude and longitude are required' });
+      }
+
       const rawLat = projectRow.job_site_latitude;
       const rawLon = projectRow.job_site_longitude;
       if (rawLat === null || rawLat === undefined || rawLon === null || rawLon === undefined) {
@@ -7065,8 +7409,11 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
           .status(400)
           .json({ success: false, message: 'Project has no job site coordinates set' });
       }
-      const allowedRadius = Number(projectRow.check_in_radius) || 200;
-      const toleranceMeters = 100; // buffer to account for GPS drift/geocoding offsets
+      const HARD_MAX_RADIUS_METERS = 500; // keep small, but cap reasonable for bad geocodes
+      const MIN_RADIUS_METERS = 120;
+      const baseRadius = Number(projectRow.check_in_radius) || 200;
+      const allowedRadius = Math.min(Math.max(baseRadius, MIN_RADIUS_METERS), HARD_MAX_RADIUS_METERS);
+      const toleranceMeters = 35; // small buffer for GPS drift
       const threshold = allowedRadius + toleranceMeters;
 
       const distance = getDistance(
@@ -7084,24 +7431,56 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
           allowedRadius,
           threshold,
           tolerance: toleranceMeters,
+          projectLat: siteLat,
+          projectLon: siteLon,
+          userLat: lat,
+          userLon: lon,
         });
       }
 
-      const checkInId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
+      const existingOpen = await pool.query(
+        `
+          SELECT id, check_in_time, distance_from_site
+          FROM check_ins
+          WHERE project_id = $1 AND user_id = $2 AND check_out_time IS NULL
+          ORDER BY check_in_time DESC
+          LIMIT 1
+        `,
+        [projectId, userId]
+      );
+      if (existingOpen.rows.length) {
+        const row = existingOpen.rows[0];
+        return res.status(200).json({
+          success: true,
+          message: 'Already checked in',
+          checkInId: row.id,
+          checkInTime: row.check_in_time,
+          checkOutTime: null,
+          distance: row.distance_from_site !== null && row.distance_from_site !== undefined ? Number(row.distance_from_site) : null,
+          allowedRadius,
+          threshold,
+          tolerance: toleranceMeters,
+        });
+      }
+
+      const newCheckInId = crypto.randomUUID?.() || crypto.randomBytes(16).toString('hex');
       const insertResult = await pool.query(
         `
           INSERT INTO check_ins (id, project_id, user_id, user_type, latitude, longitude, distance_from_site)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
-          RETURNING check_in_time
+          RETURNING id, check_in_time
         `,
-        [checkInId, projectId, userId, userType || null, lat, lon, distance]
+        [newCheckInId, projectId, userId, userType || null, lat, lon, distance]
       );
+      const checkInTime = insertResult.rows?.[0]?.check_in_time || new Date().toISOString();
+
+      await notifyCheckEvent('checkin', null, { id: newCheckInId });
 
       return res.status(201).json({
         success: true,
         message: 'Check-in recorded',
-        checkInId,
-        checkInTime: insertResult.rows?.[0]?.check_in_time || new Date().toISOString(),
+        checkInId: newCheckInId,
+        checkInTime,
         distance,
         allowedRadius,
         threshold,
@@ -7131,8 +7510,11 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
         `
           SELECT
             ci.id,
+            ci.user_id,
             ci.user_type,
             ci.check_in_time,
+            ci.check_out_time,
+            ci.duration_seconds,
             ci.distance_from_site,
             ci.latitude,
             ci.longitude,
@@ -7147,19 +7529,28 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
 
       const rows = result.rows.map((row) => ({
         id: row.id,
+        userId: row.user_id || null,
         userName: row.user_name || 'Unknown',
         userType: row.user_type || '',
         checkInTime:
           row.check_in_time instanceof Date ? row.check_in_time.toISOString() : row.check_in_time,
-        distance:
-          row.distance_from_site !== null && row.distance_from_site !== undefined
-            ? Number(row.distance_from_site)
-            : null,
-        latitude:
-          row.latitude !== null && row.latitude !== undefined ? Number(row.latitude) : null,
-        longitude:
-          row.longitude !== null && row.longitude !== undefined ? Number(row.longitude) : null,
-      }));
+          distance:
+            row.distance_from_site !== null && row.distance_from_site !== undefined
+              ? Number(row.distance_from_site)
+              : null,
+          checkOutTime:
+            row.check_out_time instanceof Date
+              ? row.check_out_time.toISOString()
+              : row.check_out_time || null,
+          durationSeconds:
+            row.duration_seconds !== null && row.duration_seconds !== undefined
+              ? Number(row.duration_seconds)
+              : null,
+          latitude:
+            row.latitude !== null && row.latitude !== undefined ? Number(row.latitude) : null,
+          longitude:
+            row.longitude !== null && row.longitude !== undefined ? Number(row.longitude) : null,
+        }));
 
       return res.json(rows);
     } catch (error) {
@@ -7177,26 +7568,49 @@ app.get('/api/work-hours/project/:projectId/summary', async (req, res) => {
       }
 
       await assertDbReady();
-      const startOfDay = new Date();
-      startOfDay.setUTCHours(0, 0, 0, 0);
-
-      const result = await pool.query(
+      const openResult = await pool.query(
         `
-          SELECT check_in_time, distance_from_site
+          SELECT id, check_in_time, check_out_time, duration_seconds, distance_from_site
           FROM check_ins
           WHERE project_id = $1
             AND user_id = $2
-            AND check_in_time >= $3
+            AND check_out_time IS NULL
           ORDER BY check_in_time DESC
           LIMIT 1
         `,
-        [projectId, userId, startOfDay.toISOString()]
+        [projectId, userId]
       );
 
-      const row = result.rows[0];
+      let row = openResult.rows[0];
+
+      if (!row) {
+        const startOfDay = new Date();
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const latestToday = await pool.query(
+          `
+            SELECT id, check_in_time, check_out_time, duration_seconds, distance_from_site
+            FROM check_ins
+            WHERE project_id = $1
+              AND user_id = $2
+              AND check_in_time >= $3
+            ORDER BY check_in_time DESC
+            LIMIT 1
+          `,
+          [projectId, userId, startOfDay.toISOString()]
+        );
+        row = latestToday.rows[0];
+      }
+
       return res.json({
-        checkedIn: !!row,
+        checkedIn: !!row && !row.check_out_time,
         lastCheckIn: row?.check_in_time || null,
+        checkInId: row?.id || null,
+        checkInTime: row?.check_in_time || null,
+        checkOutTime: row?.check_out_time || null,
+        durationSeconds:
+          row?.duration_seconds !== null && row?.duration_seconds !== undefined
+            ? Number(row.duration_seconds)
+            : null,
         distance:
           row?.distance_from_site !== undefined && row?.distance_from_site !== null
             ? Number(row.distance_from_site)
@@ -8498,9 +8912,8 @@ app.post('/api/compliance/check-expiry', async (_req, res) => {
   }
 });
 
-app.get('/api/admin/analytics', async (req, res) => {
+app.get('/api/admin/analytics', requireAdmin, async (req, res) => {
   try {
-    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const projects = await pool.query('SELECT COUNT(*) FROM projects');
     const users = await pool.query('SELECT COUNT(*) FROM users');
@@ -8519,11 +8932,10 @@ app.get('/api/admin/analytics', async (req, res) => {
   }
 });
 
-app.get('/api/admin/users', async (req, res) => {
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
-    const result = await pool.query('SELECT id, full_name, email, role, created_at, profile_photo_url FROM users ORDER BY created_at DESC LIMIT 200');
+    const result = await pool.query('SELECT id, full_name, email, role, user_role, created_at, profile_photo_url FROM users ORDER BY created_at DESC LIMIT 200');
     return res.json(result.rows.map(mapDbUser));
   } catch (error) {
     logError('admin:users:error', {}, error);
@@ -8532,9 +8944,8 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-app.get('/api/admin/disputes', async (req, res) => {
+app.get('/api/admin/disputes', requireAdmin, async (req, res) => {
   try {
-    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const result = await pool.query('SELECT * FROM disputes ORDER BY created_at DESC LIMIT 200');
     return res.json(result.rows.map(mapDisputeRow));
@@ -8545,9 +8956,8 @@ app.get('/api/admin/disputes', async (req, res) => {
   }
 });
 
-app.post('/api/admin/disputes/:id/resolve', async (req, res) => {
+app.post('/api/admin/disputes/:id/resolve', requireAdmin, async (req, res) => {
   try {
-    if (!requireAdminKey(req, res)) return;
     const { id } = req.params;
     const { status, resolutionNotes } = req.body || {};
     if (!id || !status) {
@@ -8708,9 +9118,8 @@ app.get('/api/contractors/:contractorId/profile', async (req, res) => {
   }
 });
 
-app.get('/api/admin/flags', async (req, res) => {
+app.get('/api/admin/flags', requireAdmin, async (req, res) => {
   try {
-    if (!requireAdminKey(req, res)) return;
     await assertDbReady();
     const result = await pool.query('SELECT * FROM flags ORDER BY created_at DESC LIMIT 200');
     return res.json(result.rows);
@@ -8721,9 +9130,8 @@ app.get('/api/admin/flags', async (req, res) => {
   }
 });
 
-app.post('/api/admin/flags/:id/resolve', async (req, res) => {
+app.post('/api/admin/flags/:id/resolve', requireAdmin, async (req, res) => {
   try {
-    if (!requireAdminKey(req, res)) return;
     const { id } = req.params;
     await assertDbReady();
     await pool.query("UPDATE flags SET status = 'resolved', updated_at = NOW() WHERE id = $1", [id]);
@@ -9033,6 +9441,115 @@ app.get('/api/projects/:projectId/contracts/:contractId', async (req, res) => {
       ? 'Failed to fetch contract'
       : 'Database is not configured (set DATABASE_URL)';
     return res.status(500).json({ message });
+  }
+});
+
+const buildContractPdf = async (contractRow, signatures = []) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ bufferPages: true, margin: 50 });
+      const chunks = [];
+      doc.on('data', (c) => chunks.push(c));
+      doc.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        resolve(buffer);
+      });
+      doc.fontSize(18).text(contractRow.description || 'Contract', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12).text(contractRow.contract_text || 'No contract text provided');
+      doc.moveDown().fontSize(14).text('Signatures', { underline: true });
+      signatures.forEach((sig, idx) => {
+        doc
+          .fontSize(12)
+          .text(
+            `${idx + 1}. ${sig.signer_role || sig.signer_role_db || 'Signer'} - ${
+              sig.signer_name || ''
+            } at ${sig.signed_at instanceof Date ? sig.signed_at.toISOString() : sig.signed_at || ''}`
+          );
+      });
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+};
+
+app.get('/api/projects/:projectId/contracts/:contractId/pdf', async (req, res) => {
+  try {
+    const { projectId, contractId } = req.params;
+    const mode = (req.query?.mode || '').toLowerCase();
+    const wantBinary = mode === 'binary' || mode === 'pdf';
+    if (!projectId || !contractId) {
+      return res.status(400).json({ message: 'projectId and contractId are required' });
+    }
+    await assertDbReady();
+    const contractResult = await pool.query(
+      'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [contractId, projectId]
+    );
+    if (!contractResult.rows.length) {
+      return res.status(404).json({ message: 'Contract not found' });
+    }
+    const signatureResult = await pool.query(
+      `
+        SELECT gcs.*, u.full_name AS signer_name, u.role AS signer_role
+        FROM generated_contract_signatures gcs
+        LEFT JOIN users u ON u.id = gcs.user_id
+        WHERE gcs.contract_id = $1
+        ORDER BY gcs.signed_at ASC
+      `,
+      [contractId]
+    );
+    const contractRow = contractResult.rows[0];
+    const sigRows = signatureResult.rows || [];
+
+    let buffer;
+    try {
+      buffer = await buildContractPdf(contractRow, sigRows);
+    } catch (errPdf) {
+      logError('contracts:get-generated-pdf:render-fallback', { contractId, projectId }, errPdf);
+      const fallbackText =
+        contractRow?.contract_text || contractRow?.description || 'Contract text unavailable';
+      buffer = Buffer.from(fallbackText, 'utf8');
+    }
+
+    if (wantBinary) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${contractId}.pdf"`);
+      return res.send(buffer);
+    }
+
+    const base64 = buffer.toString('base64');
+    return res.json({
+      filename: `${contractId}.pdf`,
+      base64,
+    });
+  } catch (error) {
+    logError('contracts:get-generated-pdf:error', { projectId: req.params?.projectId, contractId: req.params?.contractId }, error);
+    // Last-resort fallback: always return a base64 payload so the client can save something.
+    try {
+      const { projectId, contractId } = req.params;
+      let fallbackText = 'Contract text unavailable';
+      if (pool) {
+        const contractResult = await pool.query(
+          'SELECT * FROM generated_contracts WHERE id = $1 AND project_id = $2 LIMIT 1',
+          [contractId, projectId]
+        );
+        if (contractResult.rows.length) {
+          const row = contractResult.rows[0];
+          fallbackText = row.contract_text || row.description || fallbackText;
+        }
+      }
+      const base64 = Buffer.from(fallbackText, 'utf8').toString('base64');
+      return res.json({
+        filename: `${contractId}.pdf`,
+        base64,
+      });
+    } catch (_fallbackErr) {
+      logError('contracts:get-generated-pdf:fallback2:error', {}, _fallbackErr);
+      const base64 = Buffer.from('Contract text unavailable', 'utf8').toString('base64');
+      return res.json({ filename: `${req.params?.contractId || 'contract'}.pdf`, base64 });
+    }
   }
 });
 
@@ -9678,19 +10195,31 @@ app.get('/api/monitoring/stats', (_req, res) => {
 
 app.get('/stripe/return', (req, res) => {
   console.log('stripe:return', req.query || {});
-  const deeplink =
+  const envDeeplink =
     process.env.MOBILE_DEEPLINK_URL ||
     process.env.EXPO_PUBLIC_MOBILE_DEEPLINK_URL ||
-    process.env.EXPO_PUBLIC_DEEPLINK_URL;
-  if (deeplink) {
+    process.env.EXPO_PUBLIC_DEEPLINK_URL ||
+    process.env.EXPO_PUBLIC_SCHEME ||
+    process.env.SCHEME;
+  const deeplinkUrl = (() => {
+    if (!envDeeplink) return null;
+    // If only a scheme was provided, expand to scheme://
+    if (!envDeeplink.includes('://')) return `${envDeeplink}://`;
+    return envDeeplink;
+  })();
+  if (deeplinkUrl) {
     return res.send(`<!doctype html>
     <html>
       <head><meta charset="utf-8"><title>Connected</title></head>
       <body>
         <p>You’re all set. Returning to the app…</p>
         <script>
-          window.location.href = ${JSON.stringify(deeplink)};
+          window.location.href = ${JSON.stringify(deeplinkUrl)};
+          setTimeout(() => {
+            window.location.href = ${JSON.stringify(deeplinkUrl)};
+          }, 400);
         </script>
+        <p>If you are not redirected, tap <a href=${JSON.stringify(deeplinkUrl)}>Return to app</a>.</p>
       </body>
     </html>`);
   }

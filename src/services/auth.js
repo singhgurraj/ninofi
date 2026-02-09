@@ -9,6 +9,7 @@ import {
 } from '../store/authSlice';
 import { clearProjects } from '../store/projectSlice';
 import { authAPI, setAuthToken } from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const login = (email, password) => async (dispatch) => {
   try {
@@ -16,6 +17,7 @@ export const login = (email, password) => async (dispatch) => {
     const response = await authAPI.login(email, password);
     dispatch(loginSuccess(response.data));
     setAuthToken(response.data?.token);
+    await AsyncStorage.removeItem('persist:auth'); // drop any stale persisted admin flag
     return { success: true };
   } catch (error) {
     const errorMessage = error.response?.data?.message || 'Login failed';
@@ -44,12 +46,14 @@ export const logout = () => async (dispatch) => {
     dispatch(clearProjects());
     dispatch(logoutAction());
     setAuthToken(null);
+    await AsyncStorage.removeItem('persist:auth');
     return { success: true };
   } catch (error) {
     console.error('Logout error:', error);
     dispatch(clearProjects());
     dispatch(logoutAction()); // Logout locally even if API call fails
     setAuthToken(null);
+    await AsyncStorage.removeItem('persist:auth');
     return { success: true };
   }
 };

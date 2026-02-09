@@ -1,16 +1,5 @@
 import { useCallback, useState } from 'react';
-import {
-  Alert,
-  ActivityIndicator,
-  Modal,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import palette from '../../styles/palette';
 import { walletAPI } from '../../services/api';
@@ -19,7 +8,6 @@ const WalletScreen = ({ navigation }) => {
   const [available, setAvailable] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [addingFunds, setAddingFunds] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [sendModalVisible, setSendModalVisible] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState('');
@@ -66,18 +54,8 @@ const WalletScreen = ({ navigation }) => {
   };
 
   const handleAddFunds = useCallback(async () => {
-    setAddingFunds(true);
-    setError(null);
-    try {
-      await walletAPI.addDemoFunds();
-      await loadData();
-      Alert.alert('Success', 'Added $13 test funds.');
-    } catch (_err) {
-      setError('Could not add demo funds.');
-    } finally {
-      setAddingFunds(false);
-    }
-  }, [loadData]);
+    Alert.alert('Coming soon', 'Analytics will be available soon.');
+  }, []);
 
   const handleSendPayment = useCallback(async () => {
     if (!recipientEmail || !amount) {
@@ -136,18 +114,11 @@ const WalletScreen = ({ navigation }) => {
               <Text style={styles.withdrawText}>Withdraw</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.analyticsButton, addingFunds && styles.disabledButton]}
-              onPress={__DEV__ ? handleAddFunds : () => setSendModalVisible(true)}
-              disabled={addingFunds}
+              style={styles.analyticsButton}
+              onPress={handleAddFunds}
             >
-              {addingFunds ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.analyticsIcon}>{__DEV__ ? '💵' : '💸'}</Text>
-              )}
-              <Text style={styles.analyticsText}>
-                {__DEV__ ? (addingFunds ? 'Adding…' : 'Add $13 Test Funds') : 'Send Payment'}
-              </Text>
+              <Text style={styles.analyticsIcon}>📈</Text>
+              <Text style={styles.analyticsText}>Analytics</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -346,9 +317,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  disabledButton: {
-    opacity: 0.7,
   },
   section: {
     padding: 20,

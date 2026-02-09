@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   Alert,
   ActivityIndicator,
@@ -13,11 +13,72 @@ import {
   View,
   Image,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { saveProject, removeProject } from '../../services/projects';
 import palette from '../../styles/palette';
+
+const normalizeMilestones = (list = []) => {
+  const seen = new Set();
+  const normalized = [];
+  list.forEach((m, idx) => {
+    const keyParts = [
+      (m.name || '').trim().toLowerCase(),
+      Number(m.amount) || 0,
+      (m.description || '').trim().toLowerCase(),
+      (m.status || '').trim().toLowerCase(),
+    ];
+    const key = keyParts.join('|');
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push({
+      name: m.name || '',
+      amount: m.amount?.toString?.() || '',
+      description: m.description || '',
+      position: m.position ?? idx,
+    });
+  });
+  return normalized.length ? normalized : [{ name: '', amount: '', description: '' }];
+};
+
+const normalizeAttachments = (list = []) => {
+  const seen = new Set();
+  const normalized = [];
+  list.forEach((m, idx) => {
+    const url = m.url || m.uri || '';
+    const dataUri = m.dataUri || (url.startsWith('data:') ? url : '');
+    const key = m.id ? `id-${m.id}` : `${url}|${m.label || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (url || dataUri) {
+      normalized.push({
+        uri: url,
+        dataUri,
+        label: m.label || '',
+      });
+    }
+  });
+  return normalized;
+};
+
+const milestonesEqual = (a = [], b = []) =>
+  a.length === b.length &&
+  a.every(
+    (m, i) =>
+      m.name === b[i].name &&
+      m.amount === b[i].amount &&
+      m.description === b[i].description &&
+      (m.position ?? i) === (b[i].position ?? i)
+  );
+
+const attachmentsEqual = (a = [], b = []) =>
+  a.length === b.length &&
+  a.every(
+    (m, i) =>
+      m.uri === b[i].uri && m.dataUri === b[i].dataUri && (m.label || '') === (b[i].label || '')
+  );
 
 const CreateProjectScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
@@ -47,27 +108,37 @@ const CreateProjectScreen = ({ navigation, route }) => {
     )
   );
   const [verifyingLocation, setVerifyingLocation] = useState(false);
-  const [milestones, setMilestones] = useState([
-    ...(existingProject?.milestones?.length
-      ? existingProject.milestones.map((m, idx) => ({
-          name: m.name || '',
-          amount: m.amount?.toString?.() || '',
-          description: m.description || '',
-          position: idx,
-        }))
-      : [{ name: '', amount: '', description: '' }]),
-  ]);
+  const [milestones, setMilestones] = useState(() =>
+    normalizeMilestones(existingProject?.milestones)
+  );
   const [attachments, setAttachments] = useState(
-    existingProject?.media?.length
-      ? existingProject.media.map((m) => ({
-          url: m.url || '',
-          label: m.label || '',
-          localUri: '',
-          dataUri: '',
-        }))
-      : [{ url: '', label: '', localUri: '', dataUri: '' }]
+    normalizeAttachments(existingProject?.media)
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (existingProject) {
+        setMilestones(normalizeMilestones(existingProject.milestones));
+        setAttachments(normalizeAttachments(existingProject.media));
+      }
+      return undefined;
+    }, [existingProject])
+  );
+
+  useEffect(() => {
+    const normalized = normalizeMilestones(milestones);
+    if (!milestonesEqual(milestones, normalized)) {
+      setMilestones(normalized);
+    }
+  }, [milestones]);
+
+  useEffect(() => {
+    const normalized = normalizeAttachments(attachments);
+    if (!attachmentsEqual(attachments, normalized)) {
+      setAttachments(normalizeAttachments(attachments));
+    }
+  }, [attachments]);
 
   const projectTypes = [
     { id: 'kitchen', label: 'Kitchen', icon: '🍳' },
@@ -86,7 +157,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
   };
 
   const addMilestone = () => {
-    setMilestones([...milestones, { name: '', amount: '', description: '' }]);
+    setMilestones((prev) => normalizeMilestones([...prev, { name: '', amount: '', description: '' }]));
   };
 
   const removeMilestone = (index) => {
@@ -102,7 +173,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
   };
 
   const addAttachment = () => {
-    setAttachments((prev) => [...prev, { url: '', label: '' }]);
+    setAttachments((prev) => [...prev, { uri: '', dataUri: '', label: '' }]);
   };
 
   const updateAttachment = (index, field, value) => {
@@ -114,7 +185,7 @@ const CreateProjectScreen = ({ navigation, route }) => {
   };
 
   const removeAttachment = (index) => {
-    setAttachments((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleContinue = () => {
@@ -130,14 +201,10 @@ const CreateProjectScreen = ({ navigation, route }) => {
         return;
       }
       if (!locationVerified) {
-        Alert.alert(
-          'Location not verified',
-          'Recommended: Verify location for GPS check-ins.',
-          [
-            { text: 'Verify now', style: 'cancel' },
-            { text: 'Continue', onPress: () => setStep(3) },
-          ]
-        );
+        Alert.alert('Location not verified', 'Recommended: Verify location for GPS check-ins.', [
+          { text: 'Verify now', onPress: () => verifyLocation() },
+          { text: 'Continue anyway', style: 'default', onPress: () => setStep(3) },
+        ]);
         return;
       }
       setStep(3);
@@ -152,33 +219,57 @@ const CreateProjectScreen = ({ navigation, route }) => {
     }
   }, [existingProject]);
 
-  const pickAttachment = async (index) => {
+  const pickAttachment = async (index = attachments.length, mode = 'library') => {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        Alert.alert('Permission required', 'Please grant photo access to attach images.');
-        return;
+      if (mode === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (perm.status !== 'granted') {
+          Alert.alert('Permission required', 'Please grant camera access to attach images.');
+          return;
+        }
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') {
+          Alert.alert('Permission required', 'Please grant photo access to attach images.');
+          return;
+        }
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        base64: true,
-        quality: 0.7,
-      });
+      const result =
+        mode === 'camera'
+          ? await ImagePicker.launchCameraAsync({
+              base64: true,
+              quality: 0.7,
+              allowsMultipleSelection: false,
+            })
+          : await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              base64: true,
+              quality: 0.7,
+            });
 
       if (result.canceled) return;
       const asset = result.assets?.[0];
       if (!asset) return;
 
-      const dataUri = asset.base64 ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}` : '';
+      const dataUri = asset.base64
+        ? `data:${asset.mimeType || asset.type || 'image/jpeg'};base64,${asset.base64}`
+        : '';
       setAttachments((prev) => {
         const next = [...prev];
-        next[index] = {
-          ...next[index],
-          localUri: asset.uri || '',
-          dataUri: dataUri || '',
-          url: dataUri || asset.uri || next[index].url,
-        };
+        if (index >= next.length) {
+          next.push({
+            uri: asset.uri || '',
+            dataUri: dataUri || '',
+            label: '',
+          });
+        } else {
+          next[index] = {
+            ...next[index],
+            uri: asset.uri || '',
+            dataUri: dataUri || '',
+          };
+        }
         return next;
       });
     } catch (err) {
@@ -193,8 +284,13 @@ const CreateProjectScreen = ({ navigation, route }) => {
       return;
     }
 
+    const cleanedMilestones = normalizeMilestones(milestones);
+    const cleanedAttachments = normalizeAttachments(attachments);
     const budgetValue = parseFloat(formData.estimatedBudget);
-    const totalMilestones = milestones.reduce((sum, m) => sum + (parseFloat(m.amount) || 0), 0);
+    const totalMilestones = cleanedMilestones.reduce(
+      (sum, m) => sum + (parseFloat(m.amount) || 0),
+      0
+    );
 
     if (Number.isNaN(budgetValue)) {
       Alert.alert('Invalid Budget', 'Please enter a valid budget amount');
@@ -218,18 +314,16 @@ const CreateProjectScreen = ({ navigation, route }) => {
       job_site_latitude: jobSiteLatitude,
       job_site_longitude: jobSiteLongitude,
       check_in_radius: 200,
-      milestones: milestones.map((milestone, index) => ({
+      milestones: cleanedMilestones.map((milestone, index) => ({
         name: milestone.name,
         amount: parseFloat(milestone.amount) || null,
         description: milestone.description,
         position: milestone.position ?? index,
       })),
-      media: attachments
-        .filter((a) => a.url)
-        .map((a) => ({
-          url: a.url,
-          label: a.label || '',
-        })),
+      media: cleanedAttachments.map((a) => ({
+        url: a.dataUri || a.uri,
+        label: a.label || '',
+      })),
     };
 
     try {
@@ -295,6 +389,22 @@ const CreateProjectScreen = ({ navigation, route }) => {
       const coords = position?.coords;
       if (!coords?.latitude || !coords?.longitude) {
         throw new Error('Could not read current location.');
+      }
+      const [geo] = (await Location.reverseGeocodeAsync(coords)) || [];
+      const composedAddress = geo
+        ? [
+            geo.name,
+            geo.street,
+            geo.city,
+            geo.region,
+            geo.postalCode,
+            geo.country,
+          ]
+            .filter(Boolean)
+            .join(', ')
+        : '';
+      if (composedAddress) {
+        updateField('address', composedAddress);
       }
       setJobSiteLatitude(coords.latitude);
       setJobSiteLongitude(coords.longitude);
@@ -376,28 +486,12 @@ const CreateProjectScreen = ({ navigation, route }) => {
       />
 
       <Text style={styles.label}>Project Address *</Text>
-      <View style={styles.addressRow}>
-        <TextInput
-          style={[styles.input, styles.addressInput]}
-          placeholder="Enter project location"
-          value={formData.address}
-          onChangeText={(value) => updateField('address', value)}
-        />
-        <TouchableOpacity
-          style={[
-            styles.verifyButton,
-            (!formData.address || verifyingLocation) && styles.verifyButtonDisabled,
-          ]}
-          onPress={verifyLocation}
-          disabled={!formData.address || verifyingLocation}
-        >
-          {verifyingLocation ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.verifyButtonText}>Verify</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      <TextInput
+        style={styles.input}
+        placeholder="Enter project location"
+        value={formData.address}
+        onChangeText={(value) => updateField('address', value)}
+      />
       <View style={styles.locationStatusRow}>
         {verifyingLocation ? (
           <>
@@ -405,14 +499,19 @@ const CreateProjectScreen = ({ navigation, route }) => {
             <Text style={styles.statusText}>Verifying location...</Text>
           </>
         ) : locationVerified ? (
-          <Text style={styles.verifiedText}>✓ Location verified</Text>
+          <Text style={styles.verifiedText}>✓ Address verified for GPS check-ins</Text>
         ) : (
-          <Text style={styles.warningText}>Recommended: Verify location for GPS check-ins</Text>
+          <Text style={styles.statusText}>Not verified yet</Text>
         )}
       </View>
-      <TouchableOpacity style={styles.useCurrentButton} onPress={useCurrentLocation}>
-        <Text style={styles.useCurrentText}>Use Current Location</Text>
-      </TouchableOpacity>
+      <View style={styles.locationButtons}>
+        <TouchableOpacity style={styles.verifyButton} onPress={verifyLocation} disabled={verifyingLocation}>
+          <Text style={styles.verifyButtonText}>Verify Address</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.useCurrentButton} onPress={useCurrentLocation} disabled={verifyingLocation}>
+          <Text style={styles.useCurrentText}>Use Current Location</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -480,54 +579,59 @@ const CreateProjectScreen = ({ navigation, route }) => {
         <View style={styles.attachmentsHeader}>
           <Text style={styles.stepTitle}>Inspiration / Drawings</Text>
           <Text style={styles.stepSubtitle}>
-            Add URLs to architectural drawings or inspiration images
+            Add photos from your library (plans, inspiration, notes)
           </Text>
         </View>
 
-        {attachments.map((attachment, index) => (
-          <View key={`att-${index}`} style={styles.milestoneCard}>
-            <View style={styles.milestoneHeader}>
-              <Text style={styles.milestoneTitle}>Attachment {index + 1}</Text>
-              {attachments.length > 1 && (
-                <TouchableOpacity onPress={() => removeAttachment(index)}>
-                  <Text style={styles.removeButton}>✕</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <TouchableOpacity
-              style={styles.pickButton}
-              onPress={() => pickAttachment(index)}
+        <View style={styles.attachmentContainer}>
+          {attachments.length === 0 ? (
+            <Text style={styles.attachmentEmpty}>No photos added yet.</Text>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              decelerationRate={attachments.length > 2 ? 'fast' : 'normal'}
+              snapToInterval={attachments.length > 2 ? 252 : undefined}
+              disableIntervalMomentum
+              contentContainerStyle={styles.attachmentRow}
             >
-              <Text style={styles.pickButtonText}>
-                {attachment.localUri || attachment.url ? 'Change Image' : 'Pick from Library'}
-              </Text>
-            </TouchableOpacity>
-            {(attachment.localUri || attachment.url) ? (
-              <Image
-                source={{ uri: attachment.localUri || attachment.url }}
-                style={styles.preview}
-              />
-            ) : null}
-            <TextInput
-              style={styles.input}
-              placeholder="Image or drawing URL"
-              value={attachment.url}
-              onChangeText={(value) => updateAttachment(index, 'url', value)}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Label (optional)"
-              value={attachment.label}
-              onChangeText={(value) => updateAttachment(index, 'label', value)}
-            />
-          </View>
-        ))}
+              {attachments.map((attachment, index) => (
+                <View key={`att-${index}`} style={styles.attachmentTile}>
+                  <Image
+                    source={{ uri: attachment.dataUri || attachment.uri }}
+                    style={styles.attachmentImage}
+                  />
+                  <TouchableOpacity
+                    style={styles.removePhoto}
+                    onPress={() => removeAttachment(index)}
+                  >
+                    <Text style={styles.removePhotoText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </View>
 
-        <TouchableOpacity style={styles.addButton} onPress={addAttachment}>
-          <Text style={styles.addButtonText}>+ Add Attachment</Text>
-        </TouchableOpacity>
+        {attachments.length < 6 && (
+          <View style={styles.addPhotoRow}>
+            <TouchableOpacity
+              style={styles.addPhotoButton}
+              onPress={() => pickAttachment(attachments.length, 'camera')}
+            >
+              <Text style={styles.addPhotoIcon}>📷</Text>
+              <Text style={styles.addPhotoText}>Take Photo</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.addPhotoButton}
+              onPress={() => pickAttachment(attachments.length, 'library')}
+            >
+              <Text style={styles.addPhotoIcon}>🖼️</Text>
+              <Text style={styles.addPhotoText}>Gallery</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
@@ -723,35 +827,6 @@ const styles = StyleSheet.create({
     height: 100,
     textAlignVertical: 'top',
   },
-  addressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  addressInput: {
-    flex: 1,
-  },
-  verifyButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: palette.primary,
-    borderRadius: 12,
-    minWidth: 90,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#111827',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
-  },
-  verifyButtonDisabled: {
-    backgroundColor: palette.border,
-  },
-  verifyButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
   locationStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -767,8 +842,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   useCurrentButton: {
-    alignSelf: 'flex-start',
-    paddingVertical: 10,
+    flex: 1,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
@@ -778,6 +853,30 @@ const styles = StyleSheet.create({
   useCurrentText: {
     color: palette.text,
     fontWeight: '700',
+    textAlign: 'center',
+  },
+  verifyButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: palette.primary,
+    alignItems: 'center',
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  verifyButtonText: {
+    color: '#fff',
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  locationButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
   },
   typeGrid: {
     flexDirection: 'row',
@@ -951,6 +1050,134 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: '#B91C1C',
     fontWeight: '800',
+  },
+  attachmentRow: {
+    marginTop: 8,
+    paddingVertical: 4,
+    gap: 10,
+  },
+  attachmentCard: {
+    width: 180,
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginRight: 10,
+  },
+  attachmentRemove: {
+    alignSelf: 'flex-end',
+  },
+  previewPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FC',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  addAttachmentCard: {
+    width: 120,
+    height: 140,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: palette.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+  },
+  pickRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  mediaPicker: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderStyle: 'dashed',
+  },
+  mediaPickerIcon: { fontSize: 20, marginBottom: 6 },
+  mediaPickerText: { color: palette.text, fontWeight: '700' },
+  cardPickRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  attachmentContainer: {
+    marginTop: 10,
+    minHeight: 180,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  attachmentRow: {
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 10,
+  },
+  attachmentTile: {
+    width: 240,
+    height: 160,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  attachmentImage: {
+    width: '100%',
+    height: '100%',
+  },
+  attachmentEmpty: {
+    textAlign: 'center',
+    color: palette.muted,
+  },
+  removePhoto: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  removePhotoText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  addPhotoRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  addPhotoButton: {
+    flex: 1,
+    height: 120,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    padding: 10,
+  },
+  addPhotoIcon: {
+    fontSize: 24,
+    marginBottom: 6,
+  },
+  addPhotoText: {
+    color: palette.text,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
 

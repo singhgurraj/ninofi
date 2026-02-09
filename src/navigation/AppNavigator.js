@@ -1,7 +1,6 @@
 import { createStackNavigator } from '@react-navigation/stack';
 import React from 'react';
 import { useSelector } from 'react-redux';
-import Constants from 'expo-constants';
 import { useEffect } from 'react';
 
 // Auth screens
@@ -71,11 +70,6 @@ const MainStack = createStackNavigator();
 const AppNavigator = () => {
   const auth = useSelector((state) => state.auth);
   const { isAuthenticated, role } = auth;
-  const adminEmails = (Constants.expoConfig?.extra?.adminEmails || process.env.EXPO_PUBLIC_ADMIN_EMAILS || '')
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  const isAdmin = auth?.user?.email && adminEmails.includes(auth.user.email.toLowerCase());
 
   useEffect(() => {
     if (isAuthenticated && auth?.token) {

@@ -1,11 +1,8 @@
 import { projectAPI } from './api';
 
-const adminKey = process.env.EXPO_PUBLIC_ADMIN_KEY;
-const authHeaders = adminKey ? { 'x-admin-key': adminKey } : {};
-
 export const fetchAdminAnalytics = async () => {
   try {
-    const res = await projectAPI.getAdminAnalytics(authHeaders);
+    const res = await projectAPI.getAdminAnalytics();
     return { success: true, data: res.data };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to load analytics';
@@ -15,7 +12,7 @@ export const fetchAdminAnalytics = async () => {
 
 export const fetchAdminUsers = async () => {
   try {
-    const res = await projectAPI.getAdminUsers(authHeaders);
+    const res = await projectAPI.getAdminUsers();
     return { success: true, data: res.data || [] };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to load users';
@@ -25,7 +22,7 @@ export const fetchAdminUsers = async () => {
 
 export const fetchAdminDisputes = async () => {
   try {
-    const res = await projectAPI.getAdminDisputes(authHeaders);
+    const res = await projectAPI.getAdminDisputes();
     return { success: true, data: res.data || [] };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to load disputes';
@@ -35,11 +32,7 @@ export const fetchAdminDisputes = async () => {
 
 export const resolveDispute = async (id, status, resolutionNotes) => {
   try {
-    const res = await projectAPI.resolveDispute(
-      id,
-      { status, resolutionNotes },
-      authHeaders
-    );
+    const res = await projectAPI.resolveDispute(id, { status, resolutionNotes });
     return { success: true, data: res.data };
   } catch (error) {
     const message = error.response?.data?.message || 'Failed to resolve dispute';
